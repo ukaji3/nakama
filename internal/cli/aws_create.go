@@ -1,6 +1,11 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/ukaji3/nakama/internal/awsx"
+	"github.com/ukaji3/nakama/internal/service"
+)
 
 type createFlags struct {
 	name              string
@@ -25,7 +30,25 @@ func newAWSCreateCommand() *cobra.Command {
 The whole flow takes ~15-20 minutes (CloudFront propagation dominates).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return errNotImplemented
+			ctx := withCancel(cmd)
+			clients, err := awsx.NewClients(ctx)
+			if err != nil {
+				return err
+			}
+			out, err := service.NewService(clients).CreateInstance(ctx, service.CreateInstanceInput{
+				Name:              f.name,
+				InstanceType:      f.instanceType,
+				CodeServerVersion: f.codeServerVersion,
+			})
+			if err != nil {
+				return err
+			}
+			fallback := "instance created\n" +
+				"  name              : " + out.Name + "\n" +
+				"  instance_id       : " + out.InstanceID + "\n" +
+				"  url               : " + out.URL + "\n" +
+				"  password          : " + out.Password
+			return renderOutput(cmd.OutOrStdout(), global.Output, out, fallback)
 		},
 	}
 	cmd.Flags().StringVar(&f.name, "name", "", "Logical name of the instance (required, [a-z0-9][a-z0-9-]*)")

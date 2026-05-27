@@ -31,8 +31,13 @@ type Clients struct {
 	SSM          SSMAPI
 	Tagging      TaggingAPI
 	IAM          IAMAPI
+	STS          STSAPI
 	AMIResolver  AMIResolver
 	IPDiscoverer IPDiscoverer
+
+	// AccountID is the AWS account that holds the credentials used by
+	// this Clients. Resolved once at construction time via STS.
+	AccountID string
 }
 
 // NewClients loads the default AWS configuration and constructs the
@@ -42,7 +47,16 @@ func NewClients(ctx context.Context) (*Clients, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newClientsFromConfig(cfg), nil
+	c := newClientsFromConfig(cfg)
+
+	idOut, err := c.STS.GetCallerIdentity(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if idOut != nil && idOut.Account != nil {
+		c.AccountID = *idOut.Account
+	}
+	return c, nil
 }
 
 // awsConfig is exported only as a hook for tests that wish to
@@ -55,6 +69,7 @@ func newClientsFromConfig(cfg aws.Config) *Clients {
 		SSM:          newSSMClient(cfg),
 		Tagging:      newTaggingClient(cfg),
 		IAM:          newIAMClient(cfg),
+		STS:          newSTSClient(cfg),
 		AMIResolver:  newAMIResolver(cfg),
 		IPDiscoverer: NewHTTPIPDiscoverer(),
 	}
