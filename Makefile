@@ -75,6 +75,16 @@ vuln: ## govulncheck
 .PHONY: ci
 ci: fmt-check vet test build ## CI ローカル相当 (fmt-check + vet + test + build)
 
+.PHONY: release-snapshot
+release-snapshot: ## GoReleaser をローカルで試走 (タグなし、publish しない)
+	@command -v goreleaser >/dev/null || { echo "goreleaser not installed: https://goreleaser.com/install/"; exit 1; }
+	goreleaser release --snapshot --clean --skip=publish
+
+.PHONY: release-check
+release-check: ## .goreleaser.yaml の構文検証
+	@command -v goreleaser >/dev/null || { echo "goreleaser not installed: https://goreleaser.com/install/"; exit 1; }
+	goreleaser check
+
 .PHONY: clean
 clean: ## 生成物の削除
-	rm -rf $(BIN_DIR) coverage.out coverage.html
+	rm -rf $(BIN_DIR) coverage.out coverage.html dist/

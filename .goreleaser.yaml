@@ -1,0 +1,84 @@
+# GoReleaser configuration for nakama.
+# https://goreleaser.com/
+
+version: 2
+
+project_name: nakama
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: nakama
+    main: ./cmd/nakama
+    binary: nakama
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/ukaji3/nakama/internal/version.Version={{.Version}}
+      - -X github.com/ukaji3/nakama/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/ukaji3/nakama/internal/version.BuildDate={{.Date}}
+
+# Produce a single fat binary that runs on both Apple Silicon and
+# Intel Macs in addition to the per-arch artifacts.
+universal_binaries:
+  - id: nakama-darwin-universal
+    ids: [nakama]
+    replace: false
+    name_template: nakama
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_
+      {{- if eq .Arch "all" }}universal
+      {{- else }}{{ .Arch }}
+      {{- end }}
+    files:
+      - LICENSE*
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}'
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+
+release:
+  github:
+    owner: ukaji3
+    name: nakama
+  draft: false
+  prerelease: auto
+  name_template: '{{ .ProjectName }} {{ .Tag }}'
+  header: |
+    ## nakama {{ .Tag }}
+
+    See [docs/requirements.md](https://github.com/ukaji3/nakama/blob/{{ .Tag }}/docs/requirements.md)
+    for the v1 functional surface and limits.
+  footer: |
+    ---
+    Built with `goreleaser` against commit `{{ .ShortCommit }}` on
+    `{{ .Date }}`.
