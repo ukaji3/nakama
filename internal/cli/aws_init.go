@@ -1,17 +1,11 @@
 package cli
 
 import (
-	"errors"
-
 	"github.com/spf13/cobra"
 
 	"github.com/ukaji3/nakama/internal/awsx"
 	"github.com/ukaji3/nakama/internal/service"
 )
-
-// errNotImplemented is returned by the few commands that still have
-// stub bodies. It is replaced as each feature lands.
-var errNotImplemented = errors.New("not implemented yet (scaffold)")
 
 func newAWSInitCommand() *cobra.Command {
 	return &cobra.Command{

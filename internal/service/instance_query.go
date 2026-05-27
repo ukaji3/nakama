@@ -142,16 +142,15 @@ func (s *Service) fetchInstanceStateAndType(ctx context.Context, instanceID stri
 		}
 		return "", "", fmt.Errorf("DescribeInstances: %w", err)
 	}
-	for _, r := range out.Reservations {
-		for _, i := range r.Instances {
-			st := ""
-			if i.State != nil {
-				st = string(i.State.Name)
-			}
-			return st, string(i.InstanceType), nil
-		}
+	if len(out.Reservations) == 0 || len(out.Reservations[0].Instances) == 0 {
+		return "", "", nil
 	}
-	return "", "", nil
+	i := out.Reservations[0].Instances[0]
+	st := ""
+	if i.State != nil {
+		st = string(i.State.Name)
+	}
+	return st, string(i.InstanceType), nil
 }
 
 // ssmGetOptional returns the value of an SSM parameter, or "" when

@@ -23,7 +23,7 @@ import (
 
 // AWS-managed CloudFront policy IDs.
 const (
-	managedCachePolicyCachingDisabled = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+	managedCachePolicyCachingDisabled   = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
 	managedOriginRequestPolicyAllViewer = "216adef6-5c7f-47e4-b989-5492eafa07d3"
 )
 
@@ -79,10 +79,10 @@ func (s *Service) privateDNSNameForInstance(ctx context.Context, instanceID stri
 func (s *Service) createInstanceVPCOrigin(ctx context.Context, instanceName, instanceID string) (string, error) {
 	out, err := s.clients.CloudFront.CreateVpcOrigin(ctx, &cloudfront.CreateVpcOriginInput{
 		VpcOriginEndpointConfig: &cftypes.VpcOriginEndpointConfig{
-			Name:               aws.String(naming.EC2(instanceName) + "-origin"),
-			Arn:                aws.String(s.ec2InstanceARN(instanceID)),
-			HTTPPort:           aws.Int32(int32(config.CodeServerPort)),
-			HTTPSPort:          aws.Int32(443),
+			Name:                 aws.String(naming.EC2(instanceName) + "-origin"),
+			Arn:                  aws.String(s.ec2InstanceARN(instanceID)),
+			HTTPPort:             aws.Int32(int32(config.CodeServerPort)),
+			HTTPSPort:            aws.Int32(443),
 			OriginProtocolPolicy: cftypes.OriginProtocolPolicyHttpOnly,
 			OriginSslProtocols: &cftypes.OriginSslProtocols{
 				Quantity: aws.Int32(1),
@@ -167,7 +167,7 @@ func (s *Service) createInstanceDistribution(ctx context.Context, instanceName, 
 				VpcOriginConfig: &cftypes.VpcOriginConfig{
 					VpcOriginId: aws.String(vpcOriginID),
 				},
-				CustomHeaders: &cftypes.CustomHeaders{Quantity: aws.Int32(0)},
+				CustomHeaders:      &cftypes.CustomHeaders{Quantity: aws.Int32(0)},
 				ConnectionAttempts: aws.Int32(3),
 				ConnectionTimeout:  aws.Int32(10),
 				OriginShield:       &cftypes.OriginShield{Enabled: aws.Bool(false)},
@@ -187,9 +187,9 @@ func (s *Service) createInstanceDistribution(ctx context.Context, instanceName, 
 					Items:    []cftypes.Method{cftypes.MethodGet, cftypes.MethodHead},
 				},
 			},
-			Compress:               aws.Bool(false),
-			CachePolicyId:          aws.String(managedCachePolicyCachingDisabled),
-			OriginRequestPolicyId:  aws.String(managedOriginRequestPolicyAllViewer),
+			Compress:              aws.Bool(false),
+			CachePolicyId:         aws.String(managedCachePolicyCachingDisabled),
+			OriginRequestPolicyId: aws.String(managedOriginRequestPolicyAllViewer),
 		},
 		ViewerCertificate: &cftypes.ViewerCertificate{
 			CloudFrontDefaultCertificate: aws.Bool(true),

@@ -22,21 +22,21 @@ const (
 
 // Component values (used as tag value for KeyComponent).
 const (
-	ComponentVPC          = "vpc"
-	ComponentSubnetPublic = "subnet-public"
+	ComponentVPC           = "vpc"
+	ComponentSubnetPublic  = "subnet-public"
 	ComponentSubnetPrivate = "subnet-private"
-	ComponentIGW          = "igw"
-	ComponentNATGW        = "natgw"
-	ComponentEIP          = "eip"
-	ComponentRouteTable   = "rtb"
-	ComponentEC2          = "ec2"
-	ComponentENI          = "eni"
-	ComponentSG           = "sg"
-	ComponentEBS          = "ebs"
-	ComponentCloudFront   = "cloudfront"
-	ComponentVPCOrigin    = "vpc-origin"
-	ComponentWAF          = "waf"
-	ComponentIAM          = "iam"
+	ComponentIGW           = "igw"
+	ComponentNATGW         = "natgw"
+	ComponentEIP           = "eip"
+	ComponentRouteTable    = "rtb"
+	ComponentEC2           = "ec2"
+	ComponentENI           = "eni"
+	ComponentSG            = "sg"
+	ComponentEBS           = "ebs"
+	ComponentCloudFront    = "cloudfront"
+	ComponentVPCOrigin     = "vpc-origin"
+	ComponentWAF           = "waf"
+	ComponentIAM           = "iam"
 )
 
 // Base returns the minimum tag set every nakama-managed resource carries.

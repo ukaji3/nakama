@@ -50,7 +50,17 @@ vet: ## go vet
 
 .PHONY: fmt
 fmt: ## gofmt -w
-	gofmt -w -s .
+	gofmt -s -w .
+
+.PHONY: fmt-check
+fmt-check: ## gofmt -s -d (CI: fail when not formatted)
+	@out=$$(gofmt -s -l .); \
+	if [ -n "$$out" ]; then \
+		echo "::error::the following files are not gofmt -s formatted:"; \
+		echo "$$out"; \
+		gofmt -s -d $$out; \
+		exit 1; \
+	fi
 
 .PHONY: lint
 lint: ## golangci-lint (要インストール)
@@ -63,7 +73,7 @@ vuln: ## govulncheck
 	govulncheck ./...
 
 .PHONY: ci
-ci: vet test build ## CI ローカル相当 (vet + test + build)
+ci: fmt-check vet test build ## CI ローカル相当 (fmt-check + vet + test + build)
 
 .PHONY: clean
 clean: ## 生成物の削除
