@@ -24,6 +24,9 @@ func newAMIResolver(cfg aws.Config) AMIResolver {
 	return &ssmAMIResolver{ssm: ssm.NewFromConfig(cfg)}
 }
 
+// LatestUbuntu2604AMD64 implements AMIResolver by reading the
+// canonical SSM public parameter for the latest Ubuntu 26.04 LTS
+// amd64 AMI in the configured region.
 func (r *ssmAMIResolver) LatestUbuntu2604AMD64(ctx context.Context) (string, error) {
 	out, err := r.ssm.GetParameter(ctx, &ssm.GetParameterInput{
 		Name: aws.String(nakamaConfig.UbuntuAMISSMParameter),

@@ -104,6 +104,9 @@ func (p *AWSCLICredentialsProvider) Retrieve(ctx context.Context) (aws.Credentia
 	runner := p.commandRunner
 	if runner == nil {
 		runner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			// #nosec G204 -- name is hard-coded to "aws"; args contain
+			// only static flags + the operator-supplied profile name
+			// already validated upstream by AWS CLI itself.
 			cmd := exec.CommandContext(ctx, name, args...)
 			return cmd.Output()
 		}

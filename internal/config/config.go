@@ -40,8 +40,8 @@ const (
 	PasswordLength = 32
 )
 
-// SSM public parameter for resolving the latest Ubuntu 26.04 LTS amd64 AMI
-// in the current region.
+// UbuntuAMISSMParameter is the SSM public parameter path for the
+// latest Ubuntu 26.04 LTS amd64 AMI in the configured region.
 //
 // Verified via:
 //
@@ -54,8 +54,8 @@ const UbuntuAMISSMParameter = "/aws/service/canonical/ubuntu/server/26.04/stable
 // public IP when `nakama aws acl add` is invoked without an argument.
 const CheckIPURL = "https://checkip.amazonaws.com/"
 
-// CloudFrontVPCOriginsPrefixListID is the AWS-managed prefix list whose
-// addresses are used by CloudFront's service-managed ENIs to reach VPC
-// origins. The actual ID is region-specific and resolved at runtime via
-// ec2:DescribeManagedPrefixLists.
+// CloudFrontVPCOriginsPrefixListName is the AWS-managed prefix list
+// whose addresses are used by CloudFront's service-managed ENIs to
+// reach VPC origins. The actual ID is region-specific and resolved
+// at runtime via ec2:DescribeManagedPrefixLists.
 const CloudFrontVPCOriginsPrefixListName = "com.amazonaws.global.cloudfront.origin-facing"
