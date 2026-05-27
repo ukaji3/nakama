@@ -30,6 +30,7 @@ func TestRenderCodeServer_Substitutes(t *testing.T) {
 		`bind-addr: 0.0.0.0:`,
 		`auth: password`,
 		`code-server@`,
+		`export HOME="${HOME:-/root}"`,
 	}
 	for _, s := range wantSubstrings {
 		if !strings.Contains(got, s) {
