@@ -72,7 +72,9 @@ The whole flow takes ~15-20 minutes (CloudFront propagation dominates).`,
 
 // confirmDestroy reads a y/N answer from stdin (case-insensitive).
 func confirmDestroy(w interface{ Write([]byte) (int, error) }, name string) (bool, error) {
-	fmt.Fprintf(asWriter(w), "Delete nakama instance %q and all its AWS resources? [y/N]: ", name)
+	if _, err := fmt.Fprintf(asWriter(w), "Delete nakama instance %q and all its AWS resources? [y/N]: ", name); err != nil {
+		return false, err
+	}
 	r := bufio.NewReader(os.Stdin)
 	line, err := r.ReadString('\n')
 	if err != nil {

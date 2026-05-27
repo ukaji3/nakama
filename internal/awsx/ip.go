@@ -36,6 +36,8 @@ func NewHTTPIPDiscoverer() IPDiscoverer {
 	}
 }
 
+// PublicIPv4 returns the caller's public IPv4 address by issuing a
+// short-timeout HTTP GET against config.CheckIPURL.
 func (d *httpIPDiscoverer) PublicIPv4(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url, nil)
 	if err != nil {
