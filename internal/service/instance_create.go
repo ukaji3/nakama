@@ -130,16 +130,25 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		return nil, fmt.Errorf("wait instance running: %w", err)
 	}
 
+	privateDNS, err := s.privateDNSNameForInstance(ctx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve private DNS: %w", err)
+	}
+	slog.Info("create: private DNS resolved", "private_dns", privateDNS)
+
 	vpcOriginID, err := s.createInstanceVPCOrigin(ctx, in.Name, instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("create vpc origin: %w", err)
 	}
 
-	distID, distDomain, err := s.createInstanceDistribution(ctx, in.Name, vpcOriginID, base.WAFWebACLARN)
+	distID, distDomain, err := s.createInstanceDistribution(ctx, in.Name, vpcOriginID, privateDNS, base.WAFWebACLARN)
 	if err != nil {
 		return nil, fmt.Errorf("create distribution: %w", err)
 	}
 
+	// Persist instance metadata BEFORE waiting for the distribution
+	// to be Deployed. This way, if the Deployed wait times out,
+	// `nakama aws delete <name>` can still clean up everything.
 	if err := s.writeInstanceMeta(ctx, in.Name, map[string]string{
 		ssmInstanceIDPath(in.Name):         instanceID,
 		ssmENIIDPath(in.Name):              eniID,
@@ -149,6 +158,10 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		ssmDistributionDomainPath(in.Name): distDomain,
 	}); err != nil {
 		return nil, fmt.Errorf("write instance metadata: %w", err)
+	}
+
+	if err := s.waitDistributionDeployed(ctx, distID); err != nil {
+		return nil, fmt.Errorf("wait distribution: %w", err)
 	}
 
 	out := &CreateInstanceOutput{
