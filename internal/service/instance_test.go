@@ -18,11 +18,11 @@ func TestValidateInstanceName(t *testing.T) {
 		{"a-b-c", false},
 		{"abcdefghijklmnopqrstuvwxyz0123ab", false}, // 32 chars
 		{"abcdefghijklmnopqrstuvwxyz0123abc", true}, // 33 chars
-		{"a", true},                                 // too short
-		{"-abc", true},                              // leading hyphen
-		{"abc-", true},                              // trailing hyphen
-		{"Dev01", true},                             // uppercase
-		{"dev_01", true},                            // underscore
+		{"a", true},      // too short
+		{"-abc", true},   // leading hyphen
+		{"abc-", true},   // trailing hyphen
+		{"Dev01", true},  // uppercase
+		{"dev_01", true}, // underscore
 		{"", true},
 	}
 	for _, c := range cases {

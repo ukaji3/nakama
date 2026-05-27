@@ -8,21 +8,21 @@ import (
 func TestNamesHaveNakamaPrefix(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"VPC":              VPC(),
-		"IGW":              IGW(),
-		"NATGW":            NATGW(),
-		"NATGWEIP":         NATGWEIP(),
-		"PublicSubnet":     PublicSubnet("1a"),
-		"PrivateSubnet":    PrivateSubnet("1c"),
-		"PublicRouteTable": PublicRouteTable(),
+		"VPC":               VPC(),
+		"IGW":               IGW(),
+		"NATGW":             NATGW(),
+		"NATGWEIP":          NATGWEIP(),
+		"PublicSubnet":      PublicSubnet("1a"),
+		"PrivateSubnet":     PrivateSubnet("1c"),
+		"PublicRouteTable":  PublicRouteTable(),
 		"PrivateRouteTable": PrivateRouteTable(),
-		"WAFWebACL":        WAFWebACL(),
-		"WAFIPSet":         WAFIPSet(),
-		"EC2":              EC2("dev01"),
-		"SecurityGroup":    SecurityGroup("dev01"),
-		"ENI":              ENI("dev01"),
-		"InstanceProfile":  InstanceProfile(),
-		"InstanceRole":     InstanceRole(),
+		"WAFWebACL":         WAFWebACL(),
+		"WAFIPSet":          WAFIPSet(),
+		"EC2":               EC2("dev01"),
+		"SecurityGroup":     SecurityGroup("dev01"),
+		"ENI":               ENI("dev01"),
+		"InstanceProfile":   InstanceProfile(),
+		"InstanceRole":      InstanceRole(),
 	}
 	for k, v := range cases {
 		if !strings.HasPrefix(v, "nakama") {
