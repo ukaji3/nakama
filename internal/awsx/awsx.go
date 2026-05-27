@@ -15,9 +15,12 @@ package awsx
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	nakamaConfig "github.com/ukaji3/nakama/internal/config"
 )
@@ -42,21 +45,96 @@ type Clients struct {
 
 // NewClients loads the default AWS configuration and constructs the
 // concrete client wrappers. The region is forced to nakamaConfig.Region.
+//
+// Credential resolution flow:
+//
+//  1. config.LoadDefaultConfig is called and STS GetCallerIdentity
+//     is used as a connectivity probe.
+//  2. If the probe succeeds, that configuration is used as-is.
+//  3. If the probe fails, nakama assumes the gap is the missing
+//     `aws login` (login_session) provider in SDK Go v2 (see
+//     internal/awsx/awscli_credentials.go) and retries with
+//     credentials sourced from `aws configure export-credentials`.
+//
+// AWS_PROFILE is honoured in both phases.
 func NewClients(ctx context.Context) (*Clients, error) {
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(nakamaConfig.Region))
-	if err != nil {
-		return nil, err
-	}
-	c := newClientsFromConfig(cfg)
+	profile := profileFromEnv()
 
-	idOut, err := c.STS.GetCallerIdentity(ctx, nil)
+	cfg, err := loadConfig(ctx, profile, nil /* default chain */)
 	if err != nil {
 		return nil, err
 	}
-	if idOut != nil && idOut.Account != nil {
-		c.AccountID = *idOut.Account
+
+	if accountID, err := probeIdentity(ctx, cfg); err == nil {
+		return assembleClients(cfg, accountID), nil
+	} else {
+		slog.Debug("default credential chain failed; trying aws CLI fallback",
+			"error", err)
 	}
-	return c, nil
+
+	// Fallback: use `aws configure export-credentials` to obtain
+	// short-term credentials and feed them to the SDK.
+	cliProvider := aws.NewCredentialsCache(&AWSCLICredentialsProvider{Profile: profile})
+	cfg2, err := loadConfig(ctx, profile, cliProvider)
+	if err != nil {
+		return nil, err
+	}
+	accountID, err := probeIdentity(ctx, cfg2)
+	if err != nil {
+		return nil, errors.New("AWS credential resolution failed; both the default credential chain " +
+			"and the `aws configure export-credentials` fallback returned an error. " +
+			"Run `aws sts get-caller-identity` to confirm your CLI authentication, " +
+			"or set AWS_PROFILE explicitly. Original error: " + err.Error())
+	}
+	slog.Info("credentials resolved via aws CLI fallback (login_session compatibility shim)")
+	return assembleClients(cfg2, accountID), nil
+}
+
+func profileFromEnv() string {
+	for _, k := range []string{"AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
+		if v := lookupEnvNonEmpty(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// loadConfig wraps config.LoadDefaultConfig with the optional
+// profile/region overrides and (when non-nil) a custom credentials
+// provider.
+func loadConfig(ctx context.Context, profile string, provider aws.CredentialsProvider) (aws.Config, error) {
+	opts := []func(*config.LoadOptions) error{
+		config.WithRegion(nakamaConfig.Region),
+	}
+	if profile != "" {
+		opts = append(opts, config.WithSharedConfigProfile(profile))
+	}
+	if provider != nil {
+		opts = append(opts, config.WithCredentialsProvider(provider))
+	}
+	return config.LoadDefaultConfig(ctx, opts...)
+}
+
+// probeIdentity calls STS GetCallerIdentity with a short timeout to
+// verify that cfg can actually obtain credentials. Returns the
+// resolved AWS account ID on success.
+func probeIdentity(ctx context.Context, cfg aws.Config) (string, error) {
+	out, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	if out == nil || out.Account == nil {
+		return "", errors.New("STS GetCallerIdentity returned nil account")
+	}
+	return *out.Account, nil
+}
+
+// assembleClients builds the per-service wrappers around the given
+// configuration. Credentials are baked into cfg already.
+func assembleClients(cfg aws.Config, accountID string) *Clients {
+	c := newClientsFromConfig(cfg)
+	c.AccountID = accountID
+	return c
 }
 
 // awsConfig is exported only as a hook for tests that wish to
