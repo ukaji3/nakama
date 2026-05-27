@@ -2,8 +2,8 @@
 /bin/
 /dist/
 /build/
-nakama
-nakama-*
+/nakama
+/nakama-*
 
 # Go
 *.exe
