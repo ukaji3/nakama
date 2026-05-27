@@ -56,6 +56,49 @@ nakama aws edit dev01 --ebs 40
 nakama aws delete dev01
 ```
 
+## インストール
+
+### バイナリ (Linux / macOS)
+
+[Releases](https://github.com/ukaji3/nakama/releases) から OS / アーキテクチャに合うアーカイブを取得し、`PATH` の通った場所に置きます。
+
+| OS | Arch |
+|---|---|
+| Linux | `amd64`, `arm64` |
+| macOS | `amd64`, `arm64`, `universal` (Intel + Apple Silicon の単一バイナリ) |
+
+例 (Linux amd64、`vX.Y.Z` は対象タグ):
+
+```sh
+VERSION=X.Y.Z
+curl -fsSL "https://github.com/ukaji3/nakama/releases/download/v${VERSION}/nakama_${VERSION}_linux_amd64.tar.gz" -o /tmp/nakama.tar.gz
+mkdir -p /tmp/nakama && tar -xzf /tmp/nakama.tar.gz -C /tmp/nakama
+sudo install -m 0755 /tmp/nakama/nakama /usr/local/bin/nakama
+nakama version
+```
+
+`checksums.txt` で SHA-256 を検証してください:
+
+```sh
+curl -fsSLO "https://github.com/ukaji3/nakama/releases/download/v${VERSION}/checksums.txt"
+sha256sum -c checksums.txt --ignore-missing
+```
+
+### ソースから (`go install`)
+
+```sh
+go install github.com/ukaji3/nakama/cmd/nakama@latest
+```
+
+### リポジトリをクローンして自前ビルド
+
+```sh
+git clone https://github.com/ukaji3/nakama.git
+cd nakama
+make build
+./bin/nakama version
+```
+
 ## ステータス
 
 開発初期フェーズ。サブコマンドはスタブ実装の段階。
