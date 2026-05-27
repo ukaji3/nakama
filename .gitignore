@@ -1,0 +1,41 @@
+# Binaries
+/bin/
+/dist/
+/build/
+nakama
+nakama-*
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+go.work
+go.work.sum
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local env
+.env
+.env.local
+*.local
+
+# Project-local cache
+/.cache/
+/tmp/
