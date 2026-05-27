@@ -77,12 +77,6 @@ func (s *Service) privateDNSNameForInstance(ctx context.Context, instanceID stri
 }
 
 func (s *Service) createInstanceVPCOrigin(ctx context.Context, instanceName, instanceID string) (string, error) {
-	// CloudFront API expects the EC2 ARN with the current account & region.
-	// Resolve the ARN by re-using the SDK identity helpers via STS would be
-	// heavy; instead use a Describe to confirm, then build the ARN.
-	//
-	// For simplicity we use the EC2 ARN directly; CloudFront accepts the
-	// instance's full ARN as the OriginEndpointArn.
 	out, err := s.clients.CloudFront.CreateVpcOrigin(ctx, &cloudfront.CreateVpcOriginInput{
 		VpcOriginEndpointConfig: &cftypes.VpcOriginEndpointConfig{
 			Name:               aws.String(naming.EC2(instanceName) + "-origin"),
@@ -136,13 +130,26 @@ func (s *Service) waitVPCOriginDeployed(ctx context.Context, id string) error {
 	})
 }
 
-func (s *Service) createInstanceDistribution(ctx context.Context, instanceName, vpcOriginID, wafWebACLARN string) (string, string, error) {
+// createInstanceDistribution creates the CloudFront distribution
+// pointing at the prepared VPC origin. The Origin DomainName is set
+// to the EC2 instance's Private DNS hostname as required by
+// CloudFront VPC Origins:
+//
+//	"If your VPC origin is an EC2 instance, copy and paste the
+//	 Private IP DNS name of the instance into the Origin domain field."
+//	-- https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html
+//
+// This function does NOT wait for the distribution to reach the
+// Deployed state. The caller is expected to invoke
+// waitDistributionDeployed after persisting metadata, so that a
+// subsequent timeout cannot leave the Distribution unmanageable
+// from nakama.
+func (s *Service) createInstanceDistribution(ctx context.Context, instanceName, vpcOriginID, originDomain, wafWebACLARN string) (string, string, error) {
 	caller, err := callerReference()
 	if err != nil {
 		return "", "", err
 	}
 	originID := "vpc-origin-" + vpcOriginID
-	originDomain := "nakama-" + instanceName + ".internal"
 
 	cfg := &cftypes.DistributionConfig{
 		CallerReference: aws.String(caller),
@@ -217,9 +224,6 @@ func (s *Service) createInstanceDistribution(ctx context.Context, instanceName, 
 		slog.Warn("distribution: TagResource failed", "id", id, "error", err)
 	}
 
-	if err := s.waitDistributionDeployed(ctx, id); err != nil {
-		return "", "", fmt.Errorf("wait distribution: %w", err)
-	}
 	return id, domain, nil
 }
 
