@@ -4,11 +4,13 @@ import (
 	"errors"
 
 	"github.com/spf13/cobra"
+
+	"github.com/ukaji3/nakama/internal/awsx"
+	"github.com/ukaji3/nakama/internal/service"
 )
 
-// errNotImplemented is returned by every stub command in this scaffold.
-// As each command is implemented, the corresponding RunE will replace
-// this with a real implementation.
+// errNotImplemented is returned by the few commands that still have
+// stub bodies. It is replaced as each feature lands.
 var errNotImplemented = errors.New("not implemented yet (scaffold)")
 
 func newAWSInitCommand() *cobra.Command {
@@ -18,19 +20,62 @@ func newAWSInitCommand() *cobra.Command {
 		Long: `Creates or reuses (idempotent) the shared nakama base infrastructure:
 
   - VPC ` + "(10.20.0.0/16)" + `
-  - Internet Gateway
+  - Internet Gateway (attached to the VPC)
   - Public subnet ` + "(10.20.0.0/24)" + ` in ap-northeast-1a
   - Private subnets in ap-northeast-1a / ap-northeast-1c
-  - NAT Gateway in the public subnet
-  - Route tables
+  - NAT Gateway in the public subnet (single AZ in v1)
+  - Public / private route tables and subnet associations
   - WAFv2 IP set (` + "`nakama-allowed-ips`" + `, empty)
-  - WAFv2 web ACL (` + "`nakama-waf`" + `, default-block)
-  - IAM instance profile ` + "(`nakama-instance-profile`)" + `
+  - WAFv2 web ACL (` + "`nakama-waf`" + `, default-block + IP-set allow rule)
+  - IAM instance role + instance profile
+  - SSM markers under /nakama/_meta/*
 
-Existing nakama-managed resources (identified by tags) are reused.`,
+All resources are tagged with nakama:managed=true. Existing
+nakama-managed resources (identified by tags / name) are reused.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return errNotImplemented
+			ctx := withCancel(cmd)
+
+			clients, err := awsx.NewClients(ctx)
+			if err != nil {
+				return err
+			}
+			svc := service.NewService(clients)
+
+			res, err := svc.Init(ctx)
+			if err != nil {
+				return err
+			}
+
+			fallback := initSummary(res)
+			return renderOutput(cmd.OutOrStdout(), global.Output, res, fallback)
 		},
 	}
+}
+
+// initSummary renders a human-readable summary of an InitResult.
+func initSummary(r *service.InitResult) string {
+	return "nakama init complete\n" +
+		"  vpc                : " + r.VPCID + "\n" +
+		"  internet gateway   : " + r.InternetGatewayID + "\n" +
+		"  public subnet      : " + r.PublicSubnetID + "\n" +
+		"  private subnets    : " + joinMapValues(r.PrivateSubnetIDs) + "\n" +
+		"  nat gateway        : " + r.NATGatewayID + "\n" +
+		"  public route table : " + r.PublicRouteTableID + "\n" +
+		"  private route table: " + r.PrivateRouteTableID + "\n" +
+		"  waf web acl        : " + r.WAFWebACLARN + "\n" +
+		"  waf ip set         : " + r.WAFIPSetARN + "\n" +
+		"  iam role           : " + r.InstanceRoleARN + "\n" +
+		"  iam instance prof. : " + r.InstanceProfileARN
+}
+
+func joinMapValues(m map[string]string) string {
+	out := ""
+	for k, v := range m {
+		if out != "" {
+			out += ", "
+		}
+		out += k + "=" + v
+	}
+	return out
 }
