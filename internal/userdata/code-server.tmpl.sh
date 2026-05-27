@@ -10,6 +10,12 @@
 set -euxo pipefail
 exec > >(tee -a /var/log/nakama-userdata.log) 2>&1
 
+# cloud-init on Ubuntu 26.04 invokes user-data without exporting
+# HOME, but the code-server install.sh (and a few apt-driven
+# triggers below) read $HOME. Default to /root so the script runs
+# under the cloud-init context.
+export HOME="${HOME:-/root}"
+
 INSTANCE_NAME="{{.InstanceName}}"
 REGION="{{.Region}}"
 PORT="{{.Port}}"
