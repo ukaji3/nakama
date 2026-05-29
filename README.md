@@ -54,6 +54,15 @@ nakama aws stop dev01
 nakama aws start dev01
 nakama aws edit dev01 --ebs 40
 nakama aws delete dev01
+
+# バックアップ (ルート EBS スナップショット) / 復元
+nakama aws backup create dev01 --note "X を導入済み"  # ラベルは省略時に自動採番
+nakama aws backup create dev01 --label before-upgrade --keep 5
+nakama aws backup list dev01
+nakama aws backup note dev01 --label before-upgrade --note "アップグレード前の安定版"
+nakama aws restore dev01                       # 最新バックアップへインプレース復元
+nakama aws restore dev01 --label before-upgrade --yes
+nakama aws backup delete dev01 --label before-upgrade
 ```
 
 ## インストール
@@ -101,7 +110,7 @@ make build
 
 ## ステータス
 
-主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `start` / `stop` / `delete` / `edit`) は実装済み。
+主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `start` / `stop` / `delete` / `edit` / `backup` / `restore`) は実装済み。
 
 ## ドキュメント
 
