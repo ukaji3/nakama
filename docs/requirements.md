@@ -1,7 +1,7 @@
 # nakama 要件定義書 (v1)
 
-> Status: 初版 (実装フェーズ着手時点)
-> Last updated: 2026-05-28
+> Status: v1 実装済 (v0.2.0) / `connect` は要件策定段階
+> Last updated: 2026-05-30
 
 ## 1. 目的・スコープ
 
@@ -26,6 +26,8 @@
 - 利用 AZ: `ap-northeast-1a` / `ap-northeast-1c` (`apne1-az3` は CloudFront VPC Origins 非対応のため除外)
 - 認証: AWS SSO / Profile / 環境変数 のいずれかで `aws sts get-caller-identity` が通ること
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用), Resource Groups Tagging API
+- `connect` 利用時の追加 IAM 権限 (**呼び出し側プリンシパル**): `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession`。接続先 EC2 の instance role 側は既存 `AmazonSSMManagedInstanceCore` で充足
+- `connect` 利用時のクライアント前提: 追加バイナリ不要 (plugin を nakama 本体に取り込むため。詳細は design.md §12)
 - ビルド環境: Go 1.23+
 - 実行環境: Linux / macOS
 
@@ -51,6 +53,10 @@
 | バックアップ | `nakama aws backup note <n> --label <label> [--note <text>]` | 取得後にメモを設定・更新する。`--note` 省略時 (または空文字) はメモを消去 |
 | バックアップ | `nakama aws backup delete <n> --label <label>` | ラベルで指定したバックアップを削除 |
 | バックアップ | `nakama aws restore <n> [--label <label>] [--yes]` | インプレース復元。`--label` 省略時は最新バックアップへ復元。インスタンスを停止しスナップショットから作成したボリュームをルートに差し替え (旧ルートは削除) |
+| 接続 | `nakama aws connect <n>` | AWS Systems Manager Session Manager 経由で対話シェルにログイン (SSH 不要・受信ポート開放なし) |
+| 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY) |
+| 接続 | `nakama aws connect <n> -L <local>:<remote>` | ポートフォワード。`localhost:<local>` を接続先 instance の `<remote>` に転送 |
+| 接続 | `nakama aws connect <n> -L <local>:<host>:<remote>` | instance 経由で `<host>:<remote>` を `localhost:<local>` に転送 |
 
 ### 4.2 共通フラグ
 
@@ -69,6 +75,9 @@
 - `--keep <N>`: 1 以上の整数。省略時は自動削除なし (手動 `backup delete` のみ)
 - `--label <label>`: バックアップの人間可読な識別子。`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$`。当該 `<name>` 内で一意 (重複はエラー)。`restore` / `backup delete` での選択に使用。利用者は AWS の snapshot-id を意識しない
 - `--note <text>`: バックアップの自由記述メモ。最大 255 文字、Unicode 可 (日本語・空白可)。空文字でメモ消去。識別子ではないため一意性は不要
+- `-L <spec>` (connect 専用): `<localPort>:<remotePort>` または `<localPort>:<host>:<remotePort>`。各ポートは 1–65535。`<host>` 省略時は接続先 instance 自身。コマンド指定とは排他
+- `--tty` (connect 専用): コマンド実行を対話 (PTY) モードにする。省略時は非対話
+- connect の位置引数: `<name>` の後続をすべてリモートコマンドとして扱う (cobra `SetInterspersed(false)`)。`-L` 等の nakama フラグは `<name>` より前に置く
 
 ## 5. 非機能要件
 
@@ -80,6 +89,7 @@
 - EC2 SG inbound = CloudFront managed prefix list `com.amazonaws.global.cloudfront.origin-facing` のみ
 - WAFv2 IP set による送信元制御。default action は **block**
 - バックアップ (EBS スナップショット) の暗号化は元ルートボリュームの設定を継承 (専用 KMS 鍵は導入しない)
+- `connect` は AWS Systems Manager Session Manager を使用 (受信ポート開放・SSH 鍵不要)。通信は SSM への outbound のみで、data-plane は WSS + SigV4 署名
 - Microsoft Marketplace は使用不可。code-server は Open VSX を使用 (上流仕様)
 
 ### 5.2 可用性
@@ -118,6 +128,9 @@
 - 期間ベース (N 日経過で削除) の世代管理。v1 は件数ベース (`--keep N`) のみ
 - スナップショットのクロスリージョン / クロスアカウントコピー
 - 別名インスタンスとしての復元 (v1 はインプレース復元のみ)
+- `connect` でのファイル転送 (scp / sftp 相当)
+- `connect` セッションログの S3 / CloudWatch Logs への記録 (Session Manager logging 設定)
+- Windows クライアントでの `connect` 動作保証 (v1 は Linux / macOS のみ)
 
 ## 8. 受け入れ基準
 
@@ -129,6 +142,9 @@
 6. `nakama aws backup create <n>` 後、`nakama aws backup list <n>` に当該スナップショットが現れ、`completed` になる
 7. `nakama aws backup create <n> --keep 1` を 2 回実行後、保持されるスナップショットは直近 1 件のみ
 8. `nakama aws restore <n> --yes` 後、インスタンスを start すると最新バックアップ取得時点のファイルが復元されている (snapshot-id を一切指定していない)
+9. `nakama aws connect <n>` で対話シェルのプロンプトが表示され、コマンドが実行できる
+10. `nakama aws connect <n> ls` でリモートの実行結果が表示され、セッションが終了する
+11. `nakama aws connect <n> -L 8080:8080` 実行中、`localhost:8080` への接続が instance の 8080 (code-server 等) に到達する
 
 ## 9. リスク・オープン事項
 
@@ -141,3 +157,7 @@
 | R5 | NAT GW の月額コスト | README に明示。stop で EC2 課金は止まるが NAT GW は止まらない旨を明記 |
 | R6 | 稼働中スナップショットはクラッシュコンシステント | 重要時は `stop` 後に `backup create` する旨を明記。`restore` はインプレースで破壊的なため `--yes` を要求 |
 | R7 | `--keep` 未指定スナップショットのコスト累積 | `--keep N` の利用を推奨。CLI は常駐しないため prune は `backup create` 実行時のみ |
+| R8 | 取り込んだ `session-manager-plugin` の upstream 追随は手動 | 取り込み元 commit/tag を ADR 0005 に記録し、定期的に re-sync |
+| R9 | `connect` には呼び出し側プリンシパルに `ssm:StartSession` 等が必要 (instance role とは別) | 前提条件 §3 に明記。`init` では付与しない (利用者責務) |
+| R10 | plugin 取り込みによるバイナリサイズ増 | PoC で実測し許容範囲を確認 |
+| R11 | Session Manager の独自プロトコル変更・コマンド終了コード伝播の制約 | 取り込み版を pin。終了コードの非互換は制限事項として扱う |
