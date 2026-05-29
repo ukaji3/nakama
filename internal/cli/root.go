@@ -13,6 +13,8 @@
 //	  aws_lifecycle.go  // `nakama aws {start|stop}`
 //	  aws_delete.go     // `nakama aws delete`
 //	  aws_edit.go       // `nakama aws edit`
+//	  aws_backup.go     // `nakama aws backup {create|list|note|delete}`
+//	  aws_restore.go    // `nakama aws restore`
 //	  version.go        // `nakama version`
 package cli
 

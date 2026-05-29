@@ -75,6 +75,11 @@ func confirmDestroy(w interface{ Write([]byte) (int, error) }, name string) (boo
 	if _, err := fmt.Fprintf(asWriter(w), "Delete nakama instance %q and all its AWS resources? [y/N]: ", name); err != nil {
 		return false, err
 	}
+	return readYesNo()
+}
+
+// readYesNo reads a single y/N line from stdin (case-insensitive).
+func readYesNo() (bool, error) {
 	r := bufio.NewReader(os.Stdin)
 	line, err := r.ReadString('\n')
 	if err != nil {

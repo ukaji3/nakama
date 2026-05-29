@@ -76,6 +76,7 @@ github.com/ukaji3/nakama
 | WAF web ACL | `nakama-waf` |
 | WAF IP set | `nakama-allowed-ips` |
 | EC2 Name タグ | `nakama-<name>` |
+| EBS Snapshot Name タグ | `nakama-backup-<name>-<label>` |
 | Security Group | `nakama-sg-<name>` |
 | ENI | `nakama-eni-<name>` |
 | IAM Instance Profile | `nakama-instance-profile` |
@@ -88,7 +89,10 @@ github.com/ukaji3/nakama
 |---|---|
 | `nakama:managed=true` | 全 nakama 管理リソースに付与 |
 | `nakama:name=<name>` | per-instance リソース |
-| `nakama:component=<component>` | リソース種別の機械可読ラベル |
+| `nakama:component=<component>` | リソース種別の機械可読ラベル (スナップショットは `backup`) |
+| `nakama:backup-time=<RFC3339>` | スナップショットの取得時刻。`backup list` の並び順と件数ベース prune の判定に使用 |
+| `nakama:backup-label=<label>` | バックアップの人間可読ラベル。`restore` / `backup delete` の選択キー。AWS snapshot-id を UI から隠蔽するための間接層 |
+| `nakama:note=<text>` | バックアップの自由記述メモ。`CreateTags` の上書きで後から編集可能。`backup list` に表示 |
 | `Name` | 標準 AWS Name タグ。命名規約に従う |
 
 `component` の取りうる値は `internal/tagging.Component*` を参照。
@@ -100,7 +104,7 @@ github.com/ukaji3/nakama
 
 | interface | カバー範囲 |
 |---|---|
-| `EC2API` | VPC, Subnet, IGW, NAT GW, RTB, ENI, SG, Instance, Volume, ManagedPrefixList, Tags |
+| `EC2API` | VPC, Subnet, IGW, NAT GW, RTB, ENI, SG, Instance, Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
 | `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + Tagging) |
 | `WAFAPI` | IPSet, WebACL (CRUD)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
 | `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) |
@@ -115,6 +119,7 @@ github.com/ukaji3/nakama
 
 - ルート: `nakama` (PersistentPreRunE で slog ハンドラ初期化)
 - 親コマンド: `nakama aws`
+- `backup` は `acl` と同様のサブコマンド群: `backup {create|list|delete}`。`restore` は破壊的操作のため `start`/`stop` と並ぶ独立コマンド
 - グローバルフラグ: `--verbose`, `--dry-run`, `--output`
 - 各サブコマンドは `errNotImplemented` を返すスタブで開始 (本ドキュメント時点)
 - 実装は `internal/service/*` に委譲する設計
@@ -139,6 +144,33 @@ type CreateInstanceOutput struct {
 ```
 
 CLI はフラグから `*Input` を組み立て、Service を呼び出すだけにする。
+
+### 7.1 backup / restore のシグネチャ (確定)
+
+`internal/service/backup.go` / `restore.go` に実装する。スナップショットはタグ検索で発見し、`snapshot-id` は Service 層内部に閉じる (`Backup.SnapshotID` は `-o json` 用にのみ公開)。
+
+```go
+type CreateBackupInput struct { Name, Label, Note string; Keep int32 }
+
+type Backup struct {
+    Label      string `json:"label"`
+    Note       string `json:"note,omitempty"`
+    CreatedAt  string `json:"created_at"`     // nakama:backup-time
+    State      string `json:"state"`          // pending|completed|error
+    SizeGiB    int32  `json:"size_gib"`
+    SnapshotID string `json:"snapshot_id"`    // table 出力では非表示
+}
+
+func (s *Service) CreateBackup(ctx, CreateBackupInput) (*Backup, error)
+func (s *Service) ListBackups(ctx, name string) ([]Backup, error)
+func (s *Service) SetBackupNote(ctx, name, label, note string) (*Backup, error)
+func (s *Service) DeleteBackup(ctx, name, label string) error
+func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label}; Label 空=最新
+```
+
+- ラベル検証: `^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$` (`internal/service` のローカル regexp)。空ラベルは取得時刻スラッグ `2006-01-02-1504` を採番。
+- メモ検証: 255 文字以内 (`utf8.RuneCountInString`)。
+- 命名/タグは `internal/naming.Snapshot(name,label)` / `internal/tagging.ForBackup(name,label)` を新設。
 
 ## 8. ユースケース別シーケンス (要旨)
 
@@ -177,6 +209,35 @@ CLI はフラグから `*Input` を組み立て、Service を呼び出すだけ�
 5. ENI → delete (terminate 完了後)
 6. SG → delete
 7. SSM `/nakama/<name>/*` を全削除
+
+### 8.4 `nakama aws backup create`
+
+1. タグ検索で `<name>` の EC2 とそのルートボリューム ID を解決
+2. ラベルを確定 (`--label` 省略時は取得時刻から生成、例 `2026-05-29-1402`)。`<name>` 内で重複する場合はエラー
+3. `CreateSnapshot` (ルートボリューム)。`--note` 指定時はスナップショットの `Description` にも設定 (コンソール表示用)。タグ `nakama:managed/name/component=backup/backup-time=<RFC3339>/backup-label=<label>` と、メモがあれば `nakama:note=<text>` を付与
+4. `--keep N` 指定時: 当該 `<name>` のスナップショットを `backup-time` 降順で並べ、N 件超過分を `DeleteSnapshot` (prune)
+5. ラベル / 取得時刻 / 状態 / メモを出力 (snapshot-id は `-o json` のみ)
+
+### 8.6 `nakama aws backup note`
+
+1. `--label` で当該 `<name>` のスナップショットを解決
+2. `--note` 指定時: `CreateTags` で `nakama:note=<text>` を上書き。空文字/省略時: `DeleteTags` で `nakama:note` を除去
+3. 更新後のラベル / メモを出力
+
+> Description はスナップショット作成後に変更できないため、メモ編集の正は常に `nakama:note` タグ側とする。
+
+### 8.5 `nakama aws restore`
+
+1. 対象スナップショットを解決: `--label` 指定時はタグ `nakama:backup-label` で、省略時は `backup-time` 最新のものを選ぶ。利用者は snapshot-id を指定しない
+2. 確認 (`--yes` 必須)
+3. インスタンスを `stop` → `stopped` まで待機
+4. 現ルートのデバイス名 (例 `/dev/sda1`) と旧ルートボリューム ID を記録
+5. スナップショットから新ボリュームを `CreateVolume` (同 AZ / 同タイプ、暗号化は継承)
+6. 旧ルートを `DetachVolume` → 新ボリュームを同デバイス名で `AttachVolume`
+7. 旧ルートボリュームを `DeleteVolume`
+8. インスタンスは停止のまま終了 (利用者が `start`)
+
+> prune・restore とも実 mutation は `--dry-run` で抑制し予定アクションを列挙する。
 
 ## 9. テスト戦略
 

@@ -46,3 +46,21 @@ func TestBase(t *testing.T) {
 		t.Errorf("Base()[%q]=%q, want %q", KeyManaged, got[KeyManaged], ValueManagedTrue)
 	}
 }
+
+func TestForBackup(t *testing.T) {
+	t.Parallel()
+	got := ForBackup("dev01", "before-x", "nakama-backup-dev01-before-x", "2026-05-29T00:00:00Z", "note")
+	if got[KeyComponent] != ComponentBackup {
+		t.Errorf("KeyComponent=%q, want %q", got[KeyComponent], ComponentBackup)
+	}
+	if got[KeyBackupLabel] != "before-x" || got[KeyBackupTime] != "2026-05-29T00:00:00Z" {
+		t.Errorf("label/time tags wrong: %v", got)
+	}
+	if got[KeyNote] != "note" {
+		t.Errorf("KeyNote=%q, want note", got[KeyNote])
+	}
+	// Empty note must not set the note tag.
+	if _, ok := ForBackup("dev01", "l", "n", "t", "")[KeyNote]; ok {
+		t.Error("empty note should omit KeyNote")
+	}
+}

@@ -46,6 +46,11 @@
 | インスタンス | `nakama aws stop <n>` | EC2 停止 |
 | インスタンス | `nakama aws delete <n> [--yes] [--force]` | EC2 / CloudFront / 関連リソースを依存逆順で削除 |
 | インスタンス | `nakama aws edit <n> --ebs <size-gb>` | EBS の拡張 (縮小不可) |
+| バックアップ | `nakama aws backup create <n> [--label <label>] [--note <text>] [--keep N]` | ルート EBS のスナップショットを取得。`--label` 省略時は取得時刻から自動生成。`--note` で自由記述のメモを付加 (例 `"X を導入済み"`)。`--keep N` 指定時は直近 N 世代を残し古いものを削除 |
+| バックアップ | `nakama aws backup list <n>` | 当該インスタンスのバックアップを一覧 (ラベル / 取得時刻 / サイズ / 状態 / メモ。AWS の snapshot-id は既定では非表示、`-o json` でのみ表示) |
+| バックアップ | `nakama aws backup note <n> --label <label> [--note <text>]` | 取得後にメモを設定・更新する。`--note` 省略時 (または空文字) はメモを消去 |
+| バックアップ | `nakama aws backup delete <n> --label <label>` | ラベルで指定したバックアップを削除 |
+| バックアップ | `nakama aws restore <n> [--label <label>] [--yes]` | インプレース復元。`--label` 省略時は最新バックアップへ復元。インスタンスを停止しスナップショットから作成したボリュームをルートに差し替え (旧ルートは削除) |
 
 ### 4.2 共通フラグ
 
@@ -61,6 +66,9 @@
 - `<IP>`: IPv4 単独 (`/32` 自動付与) または IPv4 CIDR。**IPv6 は v1 非対応**
 - `<instance-type>`: AWS API レイヤで検証 (`InvalidInstanceType` を伝播)
 - `--ebs <size>`: 現在のサイズより大きい整数 (GiB)
+- `--keep <N>`: 1 以上の整数。省略時は自動削除なし (手動 `backup delete` のみ)
+- `--label <label>`: バックアップの人間可読な識別子。`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$`。当該 `<name>` 内で一意 (重複はエラー)。`restore` / `backup delete` での選択に使用。利用者は AWS の snapshot-id を意識しない
+- `--note <text>`: バックアップの自由記述メモ。最大 255 文字、Unicode 可 (日本語・空白可)。空文字でメモ消去。識別子ではないため一意性は不要
 
 ## 5. 非機能要件
 
@@ -71,6 +79,7 @@
 - CloudFront ⇄ EC2 間は VPC 内クローズ通信 (HTTP:8080)
 - EC2 SG inbound = CloudFront managed prefix list `com.amazonaws.global.cloudfront.origin-facing` のみ
 - WAFv2 IP set による送信元制御。default action は **block**
+- バックアップ (EBS スナップショット) の暗号化は元ルートボリュームの設定を継承 (専用 KMS 鍵は導入しない)
 - Microsoft Marketplace は使用不可。code-server は Open VSX を使用 (上流仕様)
 
 ### 5.2 可用性
@@ -104,7 +113,11 @@
 - マルチテナント (1 アカウント = 1 環境)
 - インスタンスタイプの edit 経由変更
 - code-server のアップグレード操作
-- バックアップ / スナップショット
+- 自動 / スケジュール バックアップ (DLM・EventBridge 等)。v1 は手動 `backup create` のみ
+- ルート EBS 以外 (追加データボリューム) のバックアップ
+- 期間ベース (N 日経過で削除) の世代管理。v1 は件数ベース (`--keep N`) のみ
+- スナップショットのクロスリージョン / クロスアカウントコピー
+- 別名インスタンスとしての復元 (v1 はインプレース復元のみ)
 
 ## 8. 受け入れ基準
 
@@ -113,6 +126,9 @@
 3. パスワードでログイン後、ターミナル / ファイルエクスプローラが操作可能で、Browser Devtools で `wss://...` の `101 Switching Protocols` が確認できる
 4. `nakama aws acl delete` 後、403 が返る
 5. `nakama aws delete` 後、当該インスタンス関連リソースが全て消失している (タグ検索でヒットしない)
+6. `nakama aws backup create <n>` 後、`nakama aws backup list <n>` に当該スナップショットが現れ、`completed` になる
+7. `nakama aws backup create <n> --keep 1` を 2 回実行後、保持されるスナップショットは直近 1 件のみ
+8. `nakama aws restore <n> --yes` 後、インスタンスを start すると最新バックアップ取得時点のファイルが復元されている (snapshot-id を一切指定していない)
 
 ## 9. リスク・オープン事項
 
@@ -123,3 +139,5 @@
 | R3 | code-server の Microsoft Marketplace 不可は仕様 | README / FAQ に明記 |
 | R4 | `apne1-az3` の AZ ID 解決はアカウント依存 | `ec2:DescribeAvailabilityZones` で AZ ID を取得し除外 |
 | R5 | NAT GW の月額コスト | README に明示。stop で EC2 課金は止まるが NAT GW は止まらない旨を明記 |
+| R6 | 稼働中スナップショットはクラッシュコンシステント | 重要時は `stop` 後に `backup create` する旨を明記。`restore` はインプレースで破壊的なため `--yes` を要求 |
+| R7 | `--keep` 未指定スナップショットのコスト累積 | `--keep N` の利用を推奨。CLI は常駐しないため prune は `backup create` 実行時のみ |

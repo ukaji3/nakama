@@ -17,6 +17,8 @@ func newAWSCommand() *cobra.Command {
 		newAWSStopCommand(),
 		newAWSDeleteCommand(),
 		newAWSEditCommand(),
+		newAWSBackupCommand(),
+		newAWSRestoreCommand(),
 	)
 	return cmd
 }

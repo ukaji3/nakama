@@ -31,6 +31,13 @@ func TestNamesHaveNakamaPrefix(t *testing.T) {
 	}
 }
 
+func TestSnapshot(t *testing.T) {
+	t.Parallel()
+	if got := Snapshot("dev01", "before-x"); got != "nakama-backup-dev01-before-x" {
+		t.Errorf("Snapshot(...)=%q", got)
+	}
+}
+
 func TestSSMPath(t *testing.T) {
 	t.Parallel()
 	got := SSMPath("dev01", "code-server", "password")

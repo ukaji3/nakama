@@ -50,6 +50,12 @@ func WAFIPSet() string { return Prefix + "-allowed-ips" }
 // EC2 returns the EC2 instance Name tag for the given nakama instance name.
 func EC2(name string) string { return Prefix + "-" + name }
 
+// Snapshot returns the EBS snapshot Name tag for a backup.
+// Example: Snapshot("dev01","before-x") -> "nakama-backup-dev01-before-x".
+func Snapshot(name, label string) string {
+	return Prefix + "-backup-" + name + "-" + label
+}
+
 // SecurityGroup returns the per-instance security-group name.
 func SecurityGroup(name string) string { return Prefix + "-sg-" + name }
 

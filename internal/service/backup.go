@@ -1,0 +1,243 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"regexp"
+	"sort"
+	"time"
+	"unicode/utf8"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
+	"github.com/ukaji3/nakama/internal/awshelper"
+	"github.com/ukaji3/nakama/internal/naming"
+	"github.com/ukaji3/nakama/internal/tagging"
+)
+
+// backupLabelPattern validates a user-supplied backup label.
+var backupLabelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$`)
+
+const maxNoteLen = 255
+
+// CreateBackupInput captures the options for `nakama aws backup create`.
+type CreateBackupInput struct {
+	Name  string
+	Label string // empty -> generated from timestamp
+	Note  string
+	Keep  int32 // <=0 -> no pruning
+}
+
+// Backup is one row of `nakama aws backup list`. SnapshotID is the
+// AWS-native ID, surfaced only in JSON/YAML output.
+type Backup struct {
+	Label      string `json:"label"`
+	Note       string `json:"note,omitempty"`
+	CreatedAt  string `json:"created_at"`
+	State      string `json:"state"`
+	SizeGiB    int32  `json:"size_gib"`
+	SnapshotID string `json:"snapshot_id"`
+}
+
+func validateNote(note string) error {
+	if utf8.RuneCountInString(note) > maxNoteLen {
+		return fmt.Errorf("--note must be at most %d characters", maxNoteLen)
+	}
+	return nil
+}
+
+// CreateBackup snapshots the root EBS volume of the named instance.
+func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Backup, error) {
+	if err := ValidateInstanceName(in.Name); err != nil {
+		return nil, err
+	}
+	if err := validateNote(in.Note); err != nil {
+		return nil, err
+	}
+	if in.Label == "" {
+		in.Label = time.Now().UTC().Format("2006-01-02-1504")
+	}
+	if !backupLabelPattern.MatchString(in.Label) {
+		return nil, fmt.Errorf("invalid --label %q: must match %s", in.Label, backupLabelPattern.String())
+	}
+
+	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	if instanceID == "" {
+		return nil, fmt.Errorf("nakama instance %q not found", in.Name)
+	}
+	volumeID, _, err := s.rootVolumeOf(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	existing, err := s.ListBackups(ctx, in.Name)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range existing {
+		if b.Label == in.Label {
+			return nil, fmt.Errorf("backup label %q already exists for instance %q", in.Label, in.Name)
+		}
+	}
+
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	tags := tagging.ForBackup(in.Name, in.Label, naming.Snapshot(in.Name, in.Label), createdAt, in.Note)
+	csIn := &ec2.CreateSnapshotInput{
+		VolumeId: aws.String(volumeID),
+		TagSpecifications: []ec2types.TagSpecification{
+			awshelper.EC2TagSpec(ec2types.ResourceTypeSnapshot, tags),
+		},
+	}
+	if in.Note != "" {
+		csIn.Description = aws.String(in.Note)
+	}
+	slog.Info("backup: creating snapshot", "instance", in.Name, "label", in.Label, "volume_id", volumeID)
+	out, err := s.clients.EC2.CreateSnapshot(ctx, csIn)
+	if err != nil {
+		return nil, fmt.Errorf("CreateSnapshot: %w", err)
+	}
+
+	b := &Backup{Label: in.Label, Note: in.Note, CreatedAt: createdAt, State: string(out.State)}
+	if out.SnapshotId != nil {
+		b.SnapshotID = *out.SnapshotId
+	}
+	if out.VolumeSize != nil {
+		b.SizeGiB = *out.VolumeSize
+	}
+
+	if in.Keep > 0 {
+		if err := s.pruneBackups(ctx, in.Name, in.Keep); err != nil {
+			return nil, fmt.Errorf("prune: %w", err)
+		}
+	}
+	slog.Info("backup: created", "instance", in.Name, "label", in.Label, "snapshot_id", b.SnapshotID)
+	return b, nil
+}
+
+// ListBackups returns the instance's snapshots, newest first.
+func (s *Service) ListBackups(ctx context.Context, name string) ([]Backup, error) {
+	if err := ValidateInstanceName(name); err != nil {
+		return nil, err
+	}
+	out, err := s.clients.EC2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters: []ec2types.Filter{
+			{Name: aws.String("tag:" + tagging.KeyManaged), Values: []string{tagging.ValueManagedTrue}},
+			{Name: aws.String("tag:" + tagging.KeyComponent), Values: []string{tagging.ComponentBackup}},
+			{Name: aws.String("tag:" + tagging.KeyName), Values: []string{name}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("DescribeSnapshots: %w", err)
+	}
+	backups := make([]Backup, 0, len(out.Snapshots))
+	for _, sn := range out.Snapshots {
+		t := awshelper.EC2MapTags(sn.Tags)
+		b := Backup{
+			Label:     t[tagging.KeyBackupLabel],
+			Note:      t[tagging.KeyNote],
+			CreatedAt: t[tagging.KeyBackupTime],
+			State:     string(sn.State),
+		}
+		if b.CreatedAt == "" && sn.StartTime != nil {
+			b.CreatedAt = sn.StartTime.UTC().Format(time.RFC3339)
+		}
+		if sn.SnapshotId != nil {
+			b.SnapshotID = *sn.SnapshotId
+		}
+		if sn.VolumeSize != nil {
+			b.SizeGiB = *sn.VolumeSize
+		}
+		backups = append(backups, b)
+	}
+	sort.Slice(backups, func(i, j int) bool { return backups[i].CreatedAt > backups[j].CreatedAt })
+	return backups, nil
+}
+
+// findBackup resolves a backup by label (empty label -> newest).
+func (s *Service) findBackup(ctx context.Context, name, label string) (*Backup, error) {
+	backups, err := s.ListBackups(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(backups) == 0 {
+		return nil, fmt.Errorf("no backups found for instance %q", name)
+	}
+	if label == "" {
+		return &backups[0], nil
+	}
+	for i := range backups {
+		if backups[i].Label == label {
+			return &backups[i], nil
+		}
+	}
+	return nil, fmt.Errorf("backup label %q not found for instance %q", label, name)
+}
+
+// SetBackupNote sets or clears (empty note) the memo on a backup.
+func (s *Service) SetBackupNote(ctx context.Context, name, label, note string) (*Backup, error) {
+	if label == "" {
+		return nil, errors.New("--label is required")
+	}
+	if err := validateNote(note); err != nil {
+		return nil, err
+	}
+	b, err := s.findBackup(ctx, name, label)
+	if err != nil {
+		return nil, err
+	}
+	if note != "" {
+		_, err = s.clients.EC2.CreateTags(ctx, &ec2.CreateTagsInput{
+			Resources: []string{b.SnapshotID},
+			Tags:      []ec2types.Tag{{Key: aws.String(tagging.KeyNote), Value: aws.String(note)}},
+		})
+	} else {
+		_, err = s.clients.EC2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+			Resources: []string{b.SnapshotID},
+			Tags:      []ec2types.Tag{{Key: aws.String(tagging.KeyNote)}},
+		})
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update note: %w", err)
+	}
+	b.Note = note
+	return b, nil
+}
+
+// DeleteBackup deletes the snapshot selected by label.
+func (s *Service) DeleteBackup(ctx context.Context, name, label string) error {
+	if label == "" {
+		return errors.New("--label is required")
+	}
+	b, err := s.findBackup(ctx, name, label)
+	if err != nil {
+		return err
+	}
+	if _, err := s.clients.EC2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{
+		SnapshotId: aws.String(b.SnapshotID),
+	}); err != nil {
+		return fmt.Errorf("DeleteSnapshot: %w", err)
+	}
+	return nil
+}
+
+// pruneBackups keeps the newest `keep` snapshots and deletes the rest.
+func (s *Service) pruneBackups(ctx context.Context, name string, keep int32) error {
+	backups, err := s.ListBackups(ctx, name)
+	if err != nil {
+		return err
+	}
+	for i := int(keep); i < len(backups); i++ {
+		slog.Info("backup: pruning old snapshot", "label", backups[i].Label, "snapshot_id", backups[i].SnapshotID)
+		if _, err := s.clients.EC2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{
+			SnapshotId: aws.String(backups[i].SnapshotID),
+		}); err != nil {
+			return fmt.Errorf("DeleteSnapshot(%s): %w", backups[i].SnapshotID, err)
+		}
+	}
+	return nil
+}
