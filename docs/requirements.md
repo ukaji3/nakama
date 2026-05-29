@@ -26,7 +26,7 @@
 - 利用 AZ: `ap-northeast-1a` / `ap-northeast-1c` (`apne1-az3` は CloudFront VPC Origins 非対応のため除外)
 - 認証: AWS SSO / Profile / 環境変数 のいずれかで `aws sts get-caller-identity` が通ること
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用), Resource Groups Tagging API
-- ビルド環境: Go 1.22+
+- ビルド環境: Go 1.23+
 - 実行環境: Linux / macOS
 
 ## 4. 機能要件

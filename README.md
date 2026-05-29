@@ -22,7 +22,7 @@
 - リージョン: `ap-northeast-1` (東京) 固定
 - AWS CLI 同等の認証 (SSO / Profile / 環境変数) が利用可能
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用)
-- ビルド環境: Go 1.22+
+- ビルド環境: Go 1.23+
 
 ## インストール
 
@@ -101,7 +101,7 @@ make build
 
 ## ステータス
 
-開発初期フェーズ。サブコマンドはスタブ実装の段階。
+主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `start` / `stop` / `delete` / `edit`) は実装済み。
 
 ## ドキュメント
 
