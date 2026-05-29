@@ -53,6 +53,8 @@ github.com/ukaji3/nakama
 │   ├── tagging/                 // タグスキーマ
 │   ├── config/                  // 固定値 (region, CIDR, AZ, SSM パスなど)
 │   └── version/                 // ビルド時に -ldflags で注入される version 情報
+├── third_party/
+│   └── session-manager-plugin/  // 案3: 公式 plugin を版固定で取り込み (Apache-2.0)
 └── docs/
     ├── requirements.md
     ├── design.md
@@ -107,7 +109,7 @@ github.com/ukaji3/nakama
 | `EC2API` | VPC, Subnet, IGW, NAT GW, RTB, ENI, SG, Instance, Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
 | `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + Tagging) |
 | `WAFAPI` | IPSet, WebACL (CRUD)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
-| `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) |
+| `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) + Session Manager (`StartSession` / `TerminateSession`) |
 | `TaggingAPI` | `ResourceGroupsTaggingAPI.GetResources` のみ |
 | `IAMAPI` | Role, InstanceProfile, AttachRolePolicy, PutRolePolicy |
 | `AMIResolver` | SSM 公式パラメータ経由で Ubuntu 26.04 AMI を解決 |
@@ -239,6 +241,24 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 
 > prune・restore とも実 mutation は `--dry-run` で抑制し予定アクションを列挙する。
 
+### 8.7 `nakama aws connect`
+
+共通フロー: instance-id を `/nakama/<name>/meta/instance-id` から解決 → モードに応じた `DocumentName`/`Parameters` で `ssm:StartSession` → 返却の `SessionId`/`StreamUrl`/`TokenValue` で取り込んだ plugin の `session.Session` を構築 → `Execute()` で data-channel (WSS) を確立。
+
+| モード | 起動形 | DocumentName | Parameters | session サブタイプ |
+|---|---|---|---|---|
+| 対話シェル | `connect <n>` | (既定 `SSM-SessionManagerRunShell`) | — | `Standard_Stream` |
+| コマンド | `connect <n> <cmd...>` | `AWS-StartNonInteractiveCommand` (既定) / `AWS-StartInteractiveCommand` (`--tty`) | `command` | `Standard_Stream` |
+| ポートフォワード | `connect <n> -L L:R` | `AWS-StartPortForwardingSession` | `portNumber`, `localPortNumber` | `Port` |
+| 〃 (リモートホスト) | `connect <n> -L L:host:R` | `AWS-StartPortForwardingSessionToRemoteHost` | `host`, `portNumber`, `localPortNumber` | `Port` |
+
+1. `<name>` → instance-id 解決 (未存在ならエラー)
+2. モード判定 (シェル / コマンド / ポートフォワードは排他)。`DocumentName` / `Parameters` を組立
+3. `ssm:StartSession`
+4. credential / region / SSM endpoint を解決 (既存 `awsx` の `aws login` fallback を流用) し `session.Session` を構築
+5. シェル・コマンドは端末 raw mode + リサイズ送信 + 制御シグナル転送、ポートフォワードはローカル listener を起動
+6. Ctrl-C / EOF / リモート切断で `TerminateSession`
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |
@@ -264,3 +284,23 @@ GitHub Actions で以下を main / PR で実行:
 
 - **VPC Origin** = CloudFront が VPC 内のリソース (ALB / NLB / EC2) をオリジンにできる新機能。2026 年 5 月時点で東京リージョン対応済 ([source](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html))
 - **WebSocket on VPC Origins** = 2026 年 5 月 GA ([source](https://aws.amazon.com/about-aws/whats-new/2026/05/amazon-cloudfront-websockets-vpc-origins/))
+
+## 12. `nakama aws connect` の取り込み方針 (案3)
+
+詳細根拠は [adr/0005-aws-connect-via-session-manager.md](adr/0005-aws-connect-via-session-manager.md)。
+
+- AWS 公式 `aws/session-manager-plugin` は Go module 未公開 (リポジトリ root に go.mod が無く `vendor/` 方式)。そのため **特定 commit/tag のソースを `third_party/session-manager-plugin/` にコピーして版固定**する (案3)。
+- コピーには go.mod を付与し依存 (aws-sdk-go-v2 / gorilla/websocket / twinj/uuid / golang.org/x/crypto / seelog 等) を pin。nakama の go.mod に下記を追加し、公式 import パスを保ったままローカル固定する:
+
+```
+require github.com/aws/session-manager-plugin v1.x.x   // 取り込み版に対応する placeholder
+replace github.com/aws/session-manager-plugin => ./third_party/session-manager-plugin
+```
+
+- 取り込むパッケージ: `src/sessionmanagerplugin/session` (+ `shellsession` / `portsession`) / `datachannel` / `communicator` / `message` / `encryption` / `log` / `config` / `sessionutil` / `retry` / `websocketutil` / `version`。`ssmcli` 系は取り込まない。
+- Apache-2.0 のため取り込みツリーに `LICENSE` / `NOTICE` を保持。取り込み元 commit は ADR 0005 に記録。
+- 追加実装:
+  - `internal/awsx`: `SSMAPI` に `StartSession` / `TerminateSession` を追加し、解決済 `aws.Credentials` + region + SSM endpoint を `session.Session` 構築用に取り出す口を設ける
+  - `internal/service/connect.go`: instance-id 解決、モード→`DocumentName`/`Parameters` 組立、`StartSession`、plugin セッション起動
+  - `internal/cli/aws_connect.go`: cobra コマンド (`-L` / `--tty` / 位置引数、`SetInterspersed(false)`)、`aws.go` の `AddCommand` に配線
+- テスト方針: argv/Parameters 組立と引数解析はピュア関数化してユニットテスト。実セッションは手動 E2E (CI 非搭載)。
