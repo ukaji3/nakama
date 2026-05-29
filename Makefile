@@ -54,7 +54,7 @@ fmt: ## gofmt -w
 
 .PHONY: fmt-check
 fmt-check: ## gofmt -s -d (CI: fail when not formatted)
-	@out=$$(gofmt -s -l .); \
+	@out=$$(gofmt -s -l . | grep -v '^third_party/' || true); \
 	if [ -n "$$out" ]; then \
 		echo "::error::the following files are not gofmt -s formatted:"; \
 		echo "$$out"; \

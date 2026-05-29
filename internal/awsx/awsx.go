@@ -41,6 +41,16 @@ type Clients struct {
 	// AccountID is the AWS account that holds the credentials used by
 	// this Clients. Resolved once at construction time via STS.
 	AccountID string
+
+	// Region is the AWS region these clients target (nakamaConfig.Region).
+	Region string
+
+	// Credentials is the resolved credentials provider (after the
+	// `aws login` fallback, if it was needed). `nakama aws connect`
+	// injects these into the Session Manager data channel so that the
+	// vendored plugin reuses nakama's credential resolution instead of
+	// running its own chain.
+	Credentials aws.CredentialsProvider
 }
 
 // NewClients loads the default AWS configuration and constructs the
@@ -150,5 +160,7 @@ func newClientsFromConfig(cfg aws.Config) *Clients {
 		STS:          newSTSClient(cfg),
 		AMIResolver:  newAMIResolver(cfg),
 		IPDiscoverer: NewHTTPIPDiscoverer(),
+		Region:       cfg.Region,
+		Credentials:  cfg.Credentials,
 	}
 }

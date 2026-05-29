@@ -38,7 +38,7 @@ jobs:
 
       - name: Verify gofmt -s
         run: |
-          out=$(gofmt -s -l .)
+          out=$(gofmt -s -l . | grep -v '^third_party/' || true)
           if [ -n "$out" ]; then
             echo "::error::the following files are not gofmt -s formatted:"
             echo "$out"
