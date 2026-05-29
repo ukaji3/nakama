@@ -15,6 +15,7 @@ import (
 	"github.com/aws/session-manager-plugin/src/datachannel"
 	smplog "github.com/aws/session-manager-plugin/src/log"
 	smpsession "github.com/aws/session-manager-plugin/src/sessionmanagerplugin/session"
+
 	// Blank imports register the Standard_Stream (shell) and Port
 	// session handlers into the plugin's SessionRegistry via their
 	// package init() functions.
