@@ -65,6 +65,9 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 	}
 	// Tell the vendored plugin to skip its own credential lookup in
 	// OpenDataChannel and use the Signer/Credentials we set below.
+	// Scope the variable to this call so it is not inherited by any
+	// later child process (CWE-526).
+	defer func() { _ = os.Unsetenv("SSM_PLUGIN_SKIP_CLIENT_CONFIGURE") }()
 	_ = os.Setenv("SSM_PLUGIN_SKIP_CLIENT_CONFIGURE", "true")
 
 	uuid.SwitchFormat(uuid.CleanHyphen)
