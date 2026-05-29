@@ -22,6 +22,7 @@
 - リージョン: `ap-northeast-1` (東京) 固定
 - AWS CLI 同等の認証 (SSO / Profile / 環境変数) が利用可能
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用)
+- `connect` 利用時は呼び出し側プリンシパルに `ssm:StartSession` 等が追加で必要
 - ビルド環境: Go 1.23+
 
 ## インストール
@@ -63,7 +64,16 @@ nakama aws backup note dev01 --label before-upgrade --note "アップグレー�
 nakama aws restore dev01                       # 最新バックアップへインプレース復元
 nakama aws restore dev01 --label before-upgrade --yes
 nakama aws backup delete dev01 --label before-upgrade
+
+# インスタンスへのログイン (SSM Session Manager 経由・SSH 不要・受信ポート開放なし)
+nakama aws connect dev01                       # 対話シェル
+nakama aws connect dev01 ls -la                # 単発コマンド実行 (ssh 風)
+nakama aws connect dev01 --tty top             # 対話 (PTY) でコマンド実行
+nakama aws connect dev01 -L 8080:8080          # ポートフォワード: localhost:8080 -> instance:8080
+nakama aws connect dev01 -L 5432:db.internal:5432  # instance 経由で別ホストへ転送
 ```
+
+> `connect` は AWS Systems Manager Session Manager を使用します。`session-manager-plugin` の取り込みにより**追加バイナリのインストールは不要**です。呼び出し側のプリンシパルには `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession` 権限が必要です (接続先 EC2 の instance role は `init` が付与する `AmazonSSMManagedInstanceCore` で充足)。
 
 ## インストール
 
@@ -110,7 +120,7 @@ make build
 
 ## ステータス
 
-主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `start` / `stop` / `delete` / `edit` / `backup` / `restore`) は実装済み。
+主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect`) は実装済み。
 
 ## ドキュメント
 
