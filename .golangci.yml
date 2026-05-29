@@ -32,6 +32,8 @@ linters:
           disabled: true
 
   exclusions:
+    paths:
+      - third_party
     rules:
       - path: _test\.go
         linters:
@@ -41,6 +43,10 @@ formatters:
   enable:
     - gofmt
     - goimports
+
+  exclusions:
+    paths:
+      - third_party
 
   settings:
     gofmt:
