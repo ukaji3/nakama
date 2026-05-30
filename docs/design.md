@@ -106,7 +106,7 @@ github.com/ukaji3/nakama
 
 | interface | カバー範囲 |
 |---|---|
-| `EC2API` | VPC, Subnet, IGW, NAT GW, RTB, ENI, SG, Instance (Run/Describe/Start/Stop/Terminate/ModifyAttribute), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
+| `EC2API` | VPC, Subnet, IGW, NAT GW, RTB, ENI, SG, Instance (Run/Describe/Start/Stop/Reboot/Terminate/ModifyAttribute), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
 | `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + Tagging) |
 | `WAFAPI` | IPSet, WebACL (CRUD)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
 | `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) + Session Manager (`StartSession` / `TerminateSession`) |
@@ -268,6 +268,25 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 5. `ModifyInstanceAttribute(InstanceType)`
 6. 元が running なら `StartInstances` → `running` まで待機して元状態へ復帰
 7. `--ebs` とは排他。型変更は停止を伴うため確認プロンプト (`--yes` で抑制)
+
+### 8.9 `nakama aws update`
+
+更新内容: code-server を **latest** へ + `apt-get update && apt-get dist-upgrade -y` (非対話)。更新前に自動バックアップを取得し、必要なら start/stop/reboot を nakama が管理する。
+
+1. instance-id を解決。現 state を取得し **running / stopped 以外は即エラー** (`wasStopped := state==stopped`)
+2. 確認プロンプト (`--yes` で抑制)
+3. **自動バックアップ**: `CreateBackup`(label `preupdate-<UTC yyyy-mm-dd-HHMM>`, note `"auto backup before nakama aws update"`, `--keep` 連動)。スナップショット完了は待たない (point-in-time は API 呼出時点で確保)。電源状態は変えずに取得
+4. `wasStopped` なら `StartInstances` → `running` 待ち → **SSM エージェント online 待ち** (`SendCommand` を `InvalidInstanceId` の間リトライ)
+5. SSM Run Command (`AWS-RunShellScript`, `executionTimeout` 延長) で 1 スクリプト実行:
+   - `apt-get update` → `apt-get dist-upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold` (`DEBIAN_FRONTEND=noninteractive`)
+   - code-server `install.sh`(latest) → `systemctl restart code-server@ubuntu`
+   - `code-server --version` を `/nakama/<name>/code-server/version` へ書き戻し (best-effort)
+   - 末尾に `/var/run/reboot-required` の有無を `NAKAMA_REBOOT_REQUIRED=0|1` として stdout 出力
+6. **reboot 判定**: 元 running かつ `NAKAMA_REBOOT_REQUIRED=1` のときのみ `RebootInstances`。元 stopped は reboot せず (手順 7 の stop と次回 start で新カーネルが反映される)
+7. `wasStopped` なら `StopInstances` → `stopped` 待ち。**手順 5 が失敗しても電源状態は元へ戻す** (バックアップ済のため復旧可能)
+8. 結果出力: 更新後 code-server version / backup label / reboot 実施有無 / (元 stopped 時) 次回起動で反映の注記
+
+> 設計判断の根拠は ADR 0006 を参照。
 
 ## 9. テスト戦略
 

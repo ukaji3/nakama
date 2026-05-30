@@ -55,6 +55,8 @@ nakama aws stop dev01
 nakama aws start dev01
 nakama aws edit dev01 --ebs 40
 nakama aws edit dev01 --instance-type m6a.2xlarge   # 停止→変更→元の状態へ復帰 (--yes で確認省略)
+nakama aws update dev01                         # 自動backup→apt dist-upgrade + code-server latest→元の電源状態へ復帰
+nakama aws update dev01 --keep 5 --yes          # 自動backupを直近5世代に制限・確認省略
 nakama aws delete dev01
 
 # バックアップ (ルート EBS スナップショット) / 復元
@@ -121,7 +123,7 @@ make build
 
 ## ステータス
 
-主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect`) は実装済み。
+主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `update`) は実装済み。
 
 ## ドキュメント
 
