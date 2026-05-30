@@ -54,6 +54,7 @@ nakama aws info dev01 --show-password
 nakama aws stop dev01
 nakama aws start dev01
 nakama aws edit dev01 --ebs 40
+nakama aws edit dev01 --instance-type m6a.2xlarge   # 停止→変更→元の状態へ復帰 (--yes で確認省略)
 nakama aws delete dev01
 
 # バックアップ (ルート EBS スナップショット) / 復元

@@ -48,6 +48,7 @@
 | インスタンス | `nakama aws stop <n>` | EC2 停止 |
 | インスタンス | `nakama aws delete <n> [--yes] [--force]` | EC2 / CloudFront / 関連リソースを依存逆順で削除 |
 | インスタンス | `nakama aws edit <n> --ebs <size-gb>` | EBS の拡張 (縮小不可) |
+| インスタンス | `nakama aws edit <n> --instance-type <t> [--yes]` | EC2 インスタンスタイプ変更。停止が必要なため running は stop→変更→start で元状態へ復帰。`--ebs` とは排他 |
 | バックアップ | `nakama aws backup create <n> [--label <label>] [--note <text>] [--keep N]` | ルート EBS のスナップショットを取得。`--label` 省略時は取得時刻から自動生成。`--note` で自由記述のメモを付加 (例 `"X を導入済み"`)。`--keep N` 指定時は直近 N 世代を残し古いものを削除 |
 | バックアップ | `nakama aws backup list <n>` | 当該インスタンスのバックアップを一覧 (ラベル / 取得時刻 / サイズ / 状態 / メモ。AWS の snapshot-id は既定では非表示、`-o json` でのみ表示) |
 | バックアップ | `nakama aws backup note <n> --label <label> [--note <text>]` | 取得後にメモを設定・更新する。`--note` 省略時 (または空文字) はメモを消去 |
@@ -72,6 +73,7 @@
 - `<IP>`: IPv4 単独 (`/32` 自動付与) または IPv4 CIDR。**IPv6 は v1 非対応**
 - `<instance-type>`: AWS API レイヤで検証 (`InvalidInstanceType` を伝播)
 - `--ebs <size>`: 現在のサイズより大きい整数 (GiB)
+- `--instance-type <t>` (edit): 変更先 EC2 インスタンスタイプ。実行前に `ec2:DescribeInstanceTypes` で**存在を検証し、無ければ即時エラー** (インスタンスを停止しない)。`--ebs` と排他 (1 回の `edit` でどちらか一方)
 - `--keep <N>`: 1 以上の整数。省略時は自動削除なし (手動 `backup delete` のみ)
 - `--label <label>`: バックアップの人間可読な識別子。`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$`。当該 `<name>` 内で一意 (重複はエラー)。`restore` / `backup delete` での選択に使用。利用者は AWS の snapshot-id を意識しない
 - `--note <text>`: バックアップの自由記述メモ。最大 255 文字、Unicode 可 (日本語・空白可)。空文字でメモ消去。識別子ではないため一意性は不要
@@ -121,7 +123,6 @@
 - 独自ドメイン / ACM 証明書
 - 部分失敗時の自動ロールバック (孤児リソースは利用者が手動で `delete`)
 - マルチテナント (1 アカウント = 1 環境)
-- インスタンスタイプの edit 経由変更
 - code-server のアップグレード操作
 - 自動 / スケジュール バックアップ (DLM・EventBridge 等)。v1 は手動 `backup create` のみ
 - ルート EBS 以外 (追加データボリューム) のバックアップ
@@ -145,6 +146,7 @@
 9. `nakama aws connect <n>` で対話シェルのプロンプトが表示され、コマンドが実行できる
 10. `nakama aws connect <n> ls` でリモートの実行結果が表示され、セッションが終了する
 11. `nakama aws connect <n> -L 8080:8080` 実行中、`localhost:8080` への接続が instance の 8080 (code-server 等) に到達する
+12. `nakama aws edit <n> --instance-type <t>` 後、`nakama aws info <n>` の instance_type が `<t>` になり、変更前に running だったインスタンスは再び running になる。存在しないタイプ指定時はインスタンスを停止せず即時エラー
 
 ## 9. リスク・オープン事項
 
