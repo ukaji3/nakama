@@ -146,7 +146,7 @@ set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 # Wait out any boot-time apt/dpkg lock (e.g. unattended-upgrades).
-for _ in $(seq 1 30); do
+for _ in $(seq 1 60); do
   if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then break; fi
   echo "waiting for dpkg lock..."; sleep 10
 done
