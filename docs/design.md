@@ -106,7 +106,7 @@ github.com/ukaji3/nakama
 
 | interface | カバー範囲 |
 |---|---|
-| `EC2API` | VPC, Subnet, IGW, NAT GW, RTB, ENI, SG, Instance, Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
+| `EC2API` | VPC, Subnet, IGW, NAT GW, RTB, ENI, SG, Instance (Run/Describe/Start/Stop/Terminate/ModifyAttribute), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
 | `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + Tagging) |
 | `WAFAPI` | IPSet, WebACL (CRUD)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
 | `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) + Session Manager (`StartSession` / `TerminateSession`) |
@@ -258,6 +258,16 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 4. credential / region / SSM endpoint を解決 (既存 `awsx` の `aws login` fallback を流用) し `session.Session` を構築
 5. シェル・コマンドは端末 raw mode + リサイズ送信 + 制御シグナル転送、ポートフォワードはローカル listener を起動
 6. Ctrl-C / EOF / リモート切断で `TerminateSession`
+
+### 8.8 `nakama aws edit --instance-type`
+
+1. instance-id を解決
+2. `ec2:DescribeInstanceTypes` で対象タイプの存在を検証。無ければ**インスタンスを停止せず即時エラー**
+3. 現 state / type を取得。同一タイプなら no-op
+4. running (= stopped 以外) なら `StopInstances` → `stopped` まで待機 (元が running かを記録)
+5. `ModifyInstanceAttribute(InstanceType)`
+6. 元が running なら `StartInstances` → `running` まで待機して元状態へ復帰
+7. `--ebs` とは排他。型変更は停止を伴うため確認プロンプト (`--yes` で抑制)
 
 ## 9. テスト戦略
 
