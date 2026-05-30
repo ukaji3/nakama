@@ -144,6 +144,10 @@ func buildUpdateScript(region, versionParam string) string {
 	return fmt.Sprintf(`#!/bin/bash
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
+# SSM Run Command runs as root in a non-login shell that does not export
+# HOME; the code-server install.sh reads $HOME. Default to /root (matches
+# the cloud-init userdata workaround).
+export HOME="${HOME:-/root}"
 
 # Wait out any boot-time apt/dpkg lock (e.g. unattended-upgrades).
 for _ in $(seq 1 60); do
