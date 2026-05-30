@@ -33,6 +33,7 @@ func TestBuildUpdateScript(t *testing.T) {
 		"--force-confdef",
 		"--force-confold",
 		"DEBIAN_FRONTEND=noninteractive",
+		`export HOME="${HOME:-/root}"`,
 		"https://code-server.dev/install.sh",
 		"systemctl restart code-server@ubuntu",
 		"/nakama/dev01/code-server/version",
