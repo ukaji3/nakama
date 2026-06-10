@@ -237,28 +237,44 @@ func (s *Service) waitInstanceRunning(ctx context.Context, instanceID string) er
 		Timeout:     5 * time.Minute,
 		Description: fmt.Sprintf("instance %s running", instanceID),
 	}, func(ctx context.Context) (bool, error) {
-		out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-			InstanceIds: []string{instanceID},
-		})
-		if err != nil {
-			return false, err
-		}
-		for _, r := range out.Reservations {
-			for _, i := range r.Instances {
-				if i.State == nil || i.State.Name == "" {
-					continue
-				}
-				switch i.State.Name {
-				case ec2types.InstanceStateNameRunning:
-					return true, nil
-				case ec2types.InstanceStateNameTerminated, ec2types.InstanceStateNameShuttingDown:
-					return false, fmt.Errorf("instance %s entered terminal state %s", instanceID, i.State.Name)
-				}
-				slog.Info("instance: still pending", "instance_id", instanceID, "state", i.State.Name)
-			}
-		}
-		return false, nil
+		return s.checkInstanceRunning(ctx, instanceID)
 	})
+}
+
+// checkInstanceRunning is the polling predicate behind waitInstanceRunning.
+// It is split out so it can be unit-tested without paying Poll's interval
+// delay.
+//
+// It tolerates InvalidInstanceID.NotFound: EC2 has eventual consistency,
+// and a freshly created instance ID may not be visible to DescribeInstances
+// for a brief window after RunInstances returns. Treat that as "still
+// pending" and let the caller retry.
+func (s *Service) checkInstanceRunning(ctx context.Context, instanceID string) (bool, error) {
+	out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	if err != nil {
+		if awshelper.IsAPIError(err, "InvalidInstanceID.NotFound") {
+			slog.Info("instance: not yet visible to DescribeInstances (eventual consistency), retrying", "instance_id", instanceID)
+			return false, nil
+		}
+		return false, err
+	}
+	for _, r := range out.Reservations {
+		for _, i := range r.Instances {
+			if i.State == nil || i.State.Name == "" {
+				continue
+			}
+			switch i.State.Name {
+			case ec2types.InstanceStateNameRunning:
+				return true, nil
+			case ec2types.InstanceStateNameTerminated, ec2types.InstanceStateNameShuttingDown:
+				return false, fmt.Errorf("instance %s entered terminal state %s", instanceID, i.State.Name)
+			}
+			slog.Info("instance: still pending", "instance_id", instanceID, "state", i.State.Name)
+		}
+	}
+	return false, nil
 }
 
 // baseInfra holds the IDs of base resources discovered via tag
