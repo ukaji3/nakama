@@ -19,9 +19,10 @@ import (
 )
 
 type natInstanceInfo struct {
-	InstanceID string
-	ENIID      string
-	State      ec2types.InstanceStateName
+	InstanceID   string
+	ENIID        string
+	State        ec2types.InstanceStateName
+	InstanceType ec2types.InstanceType
 }
 
 // initNATInstance creates or reuses the shared NAT instance. The instance
@@ -255,7 +256,10 @@ func (s *Service) findNATInstance(ctx context.Context, vpcID string) (natInstanc
 	}
 	for _, r := range out.Reservations {
 		for _, i := range r.Instances {
-			info := natInstanceInfo{ENIID: primaryNetworkInterfaceIDFromInstance(i)}
+			info := natInstanceInfo{
+				ENIID:        primaryNetworkInterfaceIDFromInstance(i),
+				InstanceType: i.InstanceType,
+			}
 			if i.InstanceId != nil {
 				info.InstanceID = *i.InstanceId
 			}

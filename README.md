@@ -65,7 +65,8 @@ nakama aws acl delete 203.0.113.10
 
 # code-server インスタンスのライフサイクル
 nakama aws create --name dev01 --instance-type t3.medium
-nakama aws list
+nakama aws list                  # TYPE 列で VSCODE 種別を表示
+nakama aws list --show-nat       # NAT インスタンスの稼働状況 (TYPE=NAT, running/stopped) も表示
 nakama aws info dev01 --show-password
 nakama aws stop dev01
 nakama aws start dev01

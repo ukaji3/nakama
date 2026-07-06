@@ -42,7 +42,7 @@
 | アクセス制御 | `nakama aws acl list` | IP set の内容を一覧 |
 | アクセス制御 | `nakama aws acl delete <IP\|CIDR>` | IP set からエントリ削除 |
 | インスタンス | `nakama aws create --name <n> --instance-type <t>` | EC2 (Ubuntu 26.04, EBS 20 GiB) を private subnet に作成、code-server を導入、CloudFront distribution を VPC Origin 経由で作成、パスワードを Parameter Store に保存 |
-| インスタンス | `nakama aws list` | 作成済み code-server インスタンスを一覧 |
+| インスタンス | `nakama aws list` | 作成済み code-server インスタンスを一覧 (TYPE 列で VSCODE/NAT 種別を表示)。`--show-nat` で NAT インスタンスの稼働状況も表示 |
 | インスタンス | `nakama aws info <n> [--show-password]` | 接続先 URL、ステータス、パスワード (`--show-password` 時のみ) を表示 |
 | インスタンス | `nakama aws start <n>` | EC2 起動 |
 | インスタンス | `nakama aws stop <n>` | EC2 停止 |

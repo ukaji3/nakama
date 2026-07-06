@@ -12,21 +12,33 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
 	"github.com/ukaji3/nakama/internal/awshelper"
+	"github.com/ukaji3/nakama/internal/naming"
 	"github.com/ukaji3/nakama/internal/tagging"
+)
+
+// Instance category values used in InstanceSummary.Type and the
+// `nakama aws list` TYPE column.
+const (
+	instanceKindVSCode = "vscode"
+	instanceKindNAT    = "nat"
 )
 
 // InstanceSummary is one row of `nakama aws list`.
 type InstanceSummary struct {
 	Name               string `json:"name"`
+	Type               string `json:"type"`
 	InstanceID         string `json:"instance_id"`
 	State              string `json:"state"`
 	InstanceType       string `json:"instance_type"`
 	DistributionDomain string `json:"distribution_domain,omitempty"`
 }
 
-// ListInstances returns every nakama-managed EC2 instance (any state
-// other than terminated/shutting-down).
-func (s *Service) ListInstances(ctx context.Context) ([]InstanceSummary, error) {
+// ListInstances returns every nakama-managed code-server EC2 instance
+// (any state other than terminated/shutting-down). When showNAT is true,
+// the shared NAT instance is appended as an additional row (Type "nat")
+// so its power state (running/stopped) can be inspected alongside the
+// code-server instances.
+func (s *Service) ListInstances(ctx context.Context, showNAT bool) ([]InstanceSummary, error) {
 	out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			{Name: aws.String("tag:" + tagging.KeyManaged), Values: []string{tagging.ValueManagedTrue}},
@@ -53,6 +65,7 @@ func (s *Service) ListInstances(ctx context.Context) ([]InstanceSummary, error) 
 			}
 			summary := InstanceSummary{
 				Name:         name,
+				Type:         instanceKindVSCode,
 				InstanceID:   id,
 				State:        state,
 				InstanceType: string(i.InstanceType),
@@ -66,6 +79,22 @@ func (s *Service) ListInstances(ctx context.Context) ([]InstanceSummary, error) 
 		}
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Name < summaries[j].Name })
+
+	if showNAT {
+		nat, err := s.findNATInstance(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		if nat.InstanceID != "" {
+			summaries = append(summaries, InstanceSummary{
+				Name:         naming.NATInstance(),
+				Type:         instanceKindNAT,
+				InstanceID:   nat.InstanceID,
+				State:        string(nat.State),
+				InstanceType: string(nat.InstanceType),
+			})
+		}
+	}
 	return summaries, nil
 }
 
