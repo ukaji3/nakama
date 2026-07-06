@@ -24,7 +24,8 @@
                                       outbound 0.0.0.0/0
                                        │
                                        ▼
-                       [Private Subnet] ──> [NAT GW (Public Subnet)] ──> [IGW] ──> Internet
+                       [Private Subnet] ──> [NAT インスタンス (Public Subnet, t4g.nano)] ──> [IGW] ──> Internet
+                                                     └── 電源は code-server のライフサイクルに連動 (全停止で自動停止)
 
 [SSM Parameter Store]
   /nakama/<name>/code-server/password   (SecureString, KMS aws/ssm)
@@ -69,8 +70,8 @@ github.com/ukaji3/nakama
 |---|---|
 | VPC | `nakama-vpc` |
 | IGW | `nakama-igw` |
-| NAT GW | `nakama-natgw` |
-| NAT GW EIP | `nakama-natgw-eip` |
+| NAT インスタンス | `nakama-nat` |
+| NAT インスタンス SG | `nakama-nat-sg` |
 | Public Subnet | `nakama-public-<az-suffix>` (例: `nakama-public-1a`) |
 | Private Subnet | `nakama-private-<az-suffix>` |
 | Public Route Table | `nakama-rtb-public` |
@@ -106,7 +107,7 @@ github.com/ukaji3/nakama
 
 | interface | カバー範囲 |
 |---|---|
-| `EC2API` | VPC, Subnet, IGW, NAT GW, RTB, ENI, SG, Instance (Run/Describe/Start/Stop/Reboot/Terminate/ModifyAttribute), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
+| `EC2API` | VPC, Subnet (Modify: MapPublicIpOnLaunch), IGW, NAT GW (Describe/Create/Delete), EIP (Allocate/Describe/Release), RTB (Describe/Create/AssociateRoute), Route (Create/Replace), ENI, SG, Instance (Run/Describe/Start/Stop/Reboot/Terminate/ModifyAttribute incl. SourceDestCheck), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
 | `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + Tagging) |
 | `WAFAPI` | IPSet, WebACL (CRUD)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
 | `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) + Session Manager (`StartSession` / `TerminateSession`) |
@@ -180,10 +181,13 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 
 1. `iam:GetServiceLinkedRole` チェック → CloudFront / WAF 用 SLR を必要なら作成
 2. タグ検索で `nakama-vpc` の有無を判定。なければ作成
-3. IGW / RTB / Subnet / NAT GW / EIP / Routes を冪等に作成
-4. WAF IP set / web ACL を冪等に作成
-5. IAM instance role / profile を冪等に作成
-6. SSM `/nakama/_meta/*` に状態を記録
+3. IGW / Subnet を冪等に作成 (public subnet は MapPublicIpOnLaunch=true)
+4. IAM instance role / profile を冪等に作成 (NAT インスタンスがこのプロファイルを使うため先に作成)
+5. NAT インスタンス (`t4g.nano`, AL2023 arm64) を public subnet に作成または再利用し、SourceDestCheck を無効化・起動まで待機
+6. RTB / Routes を冪等に作成。private default route は NAT インスタンスの ENI 宛て。既存の `0.0.0.0/0` が旧 NAT Gateway 宛てなら `ReplaceRoute` で張り替え
+7. 旧 NAT Gateway が存在すれば削除し、その EIP を解放 (ADR 0007 への移行。ルート張り替え後に実施するため egress は途切れない)
+8. WAF IP set / web ACL を冪等に作成
+9. SSM `/nakama/_meta/*` に状態を記録
 
 ### 8.2 `nakama aws create`
 

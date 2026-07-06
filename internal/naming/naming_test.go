@@ -23,6 +23,8 @@ func TestNamesHaveNakamaPrefix(t *testing.T) {
 		"ENI":               ENI("dev01"),
 		"InstanceProfile":   InstanceProfile(),
 		"InstanceRole":      InstanceRole(),
+		"NATInstance":       NATInstance(),
+		"NATInstanceSG":     NATInstanceSG(),
 	}
 	for k, v := range cases {
 		if !strings.HasPrefix(v, "nakama") {

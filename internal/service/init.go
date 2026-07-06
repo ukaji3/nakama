@@ -11,12 +11,23 @@ import (
 // InitResult is the aggregate of every resource created or
 // re-discovered during a single Init() call.
 type InitResult struct {
-	VPCID               string
-	InternetGatewayID   string
-	PublicSubnetID      string            // single public subnet (1a)
-	PrivateSubnetIDs    map[string]string // az name -> subnet id
-	NATGatewayID        string
-	NATGatewayEIPAlloc  string
+	VPCID             string
+	InternetGatewayID string
+	PublicSubnetID    string            // single public subnet (1a)
+	PrivateSubnetIDs  map[string]string // az name -> subnet id
+
+	// NAT instance (ADR 0007). The private subnets egress through a
+	// small NAT instance whose power state follows the code-server
+	// lifecycle, replacing the always-on NAT Gateway.
+	NATInstanceID    string
+	NATInstanceENIID string
+	NATInstanceSGID  string
+
+	// Legacy NAT Gateway migration bookkeeping. Populated only when a
+	// pre-ADR-0007 NAT Gateway / EIP was found and removed during init.
+	DeletedNATGatewayID     string
+	ReleasedNATGatewayEIPID string
+
 	PublicRouteTableID  string
 	PrivateRouteTableID string
 	WAFIPSetID          string
@@ -34,11 +45,14 @@ type InitResult struct {
 //  1. VPC + DNS attributes
 //  2. Internet Gateway (created and attached to the VPC)
 //  3. Public subnet (1a) + Private subnets (1a, 1c)
-//  4. EIP + NAT Gateway in the public subnet
-//  5. Public/private route tables and routes
-//  6. WAFv2 IP set + Web ACL (CLOUDFRONT scope, us-east-1)
-//  7. IAM instance role + instance profile
-//  8. SSM markers under /nakama/_meta/*
+//  4. IAM instance role + instance profile (needed by the NAT instance)
+//  5. NAT instance in the public subnet (created or reused, running)
+//  6. Public/private route tables and routes
+//     (private default route -> NAT instance ENI)
+//  7. Legacy NAT Gateway migration: delete the old NAT Gateway and
+//     release its EIP if a pre-ADR-0007 one is still present
+//  8. WAFv2 IP set + Web ACL (CLOUDFRONT scope, us-east-1)
+//  9. SSM markers under /nakama/_meta/*
 //
 // All steps are idempotent: existing nakama-managed resources
 // (identified by tags) are reused. The function logs progress
@@ -62,17 +76,24 @@ func (s *Service) Init(ctx context.Context) (*InitResult, error) {
 	if err := s.initSubnets(ctx, res); err != nil {
 		return nil, fmt.Errorf("subnets: %w", err)
 	}
-	if err := s.initNATGateway(ctx, res); err != nil {
-		return nil, fmt.Errorf("nat gateway: %w", err)
+	// IAM must precede the NAT instance: RunInstances attaches the
+	// nakama instance profile created here.
+	if err := s.initIAM(ctx, res); err != nil {
+		return nil, fmt.Errorf("iam: %w", err)
+	}
+	if err := s.initNATInstance(ctx, res); err != nil {
+		return nil, fmt.Errorf("nat instance: %w", err)
 	}
 	if err := s.initRouteTables(ctx, res); err != nil {
 		return nil, fmt.Errorf("route tables: %w", err)
 	}
+	// Repoint egress to the NAT instance first (initRouteTables above),
+	// then remove the legacy NAT Gateway so egress is never interrupted.
+	if err := s.migrateLegacyNATGateway(ctx, res); err != nil {
+		return nil, fmt.Errorf("legacy nat gateway migration: %w", err)
+	}
 	if err := s.initWAF(ctx, res); err != nil {
 		return nil, fmt.Errorf("waf: %w", err)
-	}
-	if err := s.initIAM(ctx, res); err != nil {
-		return nil, fmt.Errorf("iam: %w", err)
 	}
 	if err := s.initSSMMarkers(ctx); err != nil {
 		return nil, fmt.Errorf("ssm markers: %w", err)
@@ -81,7 +102,9 @@ func (s *Service) Init(ctx context.Context) (*InitResult, error) {
 	slog.Info("nakama init: completed",
 		"vpc", res.VPCID,
 		"public_subnet", res.PublicSubnetID,
-		"nat_gateway", res.NATGatewayID,
+		"nat_instance", res.NATInstanceID,
+		"nat_instance_eni", res.NATInstanceENIID,
+		"deleted_legacy_nat_gateway", res.DeletedNATGatewayID,
 		"waf_web_acl", res.WAFWebACLID,
 		"instance_profile", res.InstanceProfileARN,
 	)

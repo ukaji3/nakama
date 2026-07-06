@@ -82,3 +82,9 @@ func SSMMetaInitialized() string { return "/" + Prefix + "/_meta/initialized" }
 // SSMMetaVersion returns the path that records the nakama version
 // that performed the last init().
 func SSMMetaVersion() string { return "/" + Prefix + "/_meta/version" }
+
+// NATInstance returns the canonical NAT instance name (ADR 0007).
+func NATInstance() string { return Prefix + "-nat" }
+
+// NATInstanceSG returns the security group name for the NAT instance.
+func NATInstanceSG() string { return Prefix + "-nat-sg" }

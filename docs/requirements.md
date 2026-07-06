@@ -37,7 +37,7 @@
 
 | カテゴリ | サブコマンド | 機能 |
 |---|---|---|
-| 基盤 | `nakama aws init` | nakama 環境基盤 (VPC / Subnet / NAT GW / WAF / IP set / IAM) を作成または再利用 |
+| 基盤 | `nakama aws init` | nakama 環境基盤 (VPC / Subnet / NAT インスタンス / WAF / IP set / IAM) を作成または再利用。既存の NAT Gateway があれば削除し EIP を解放して NAT インスタンスへ移行 |
 | アクセス制御 | `nakama aws acl add [IP\|CIDR]` | アクセス元 IP を WAFv2 IP set に追加 (省略時は `https://checkip.amazonaws.com/` で自動取得) |
 | アクセス制御 | `nakama aws acl list` | IP set の内容を一覧 |
 | アクセス制御 | `nakama aws acl delete <IP\|CIDR>` | IP set からエントリ削除 |
@@ -97,7 +97,8 @@
 
 ### 5.2 可用性
 
-- v1 は単一 AZ NAT GW (コスト優先)
+- v1 は単一 AZ NAT インスタンス (`t4g.nano`, コスト優先。ADR 0007)
+- NAT インスタンスの電源は code-server のライフサイクルに連動 (全停止時は自動停止)
 - 単点障害が発生しても再 `init` で復旧可能 (タグベースの冪等性)
 
 ### 5.3 観測性
@@ -107,7 +108,7 @@
 
 ### 5.4 性能
 
-- `init` 所要時間: 約 3〜5 分 (NAT GW がボトルネック)
+- `init` 所要時間: 約 2〜4 分 (NAT インスタンスの起動待機が主。NAT Gateway より短い)
 - `create` 所要時間: 約 15〜20 分 (CloudFront propagation がボトルネック)
 - `delete` 所要時間: 約 15〜20 分 (CloudFront disable + delete)
 
@@ -158,7 +159,7 @@
 | R2 | VPC Origin の deploy 待機が最大 15 分 | UI で進捗を slog 出力。タイムアウトは 20 分 |
 | R3 | code-server の Microsoft Marketplace 不可は仕様 | README / FAQ に明記 |
 | R4 | `apne1-az3` の AZ ID 解決はアカウント依存 | `ec2:DescribeAvailabilityZones` で AZ ID を取得し除外 |
-| R5 | NAT GW の月額コスト | README に明示。stop で EC2 課金は止まるが NAT GW は止まらない旨を明記 |
+| R5 | NAT のegressコスト | NAT Gateway を廃し NAT インスタンス (`t4g.nano`) を採用 (ADR 0007)。電源を code-server のライフサイクルに連動させ、全停止時は NAT インスタンスも停止して固定費をゼロに近づける。EIP は付与せず停止中の public IPv4 課金も回避 |
 | R6 | 稼働中スナップショットはクラッシュコンシステント | 重要時は `stop` 後に `backup create` する旨を明記。`restore` はインプレースで破壊的なため `--yes` を要求 |
 | R7 | `--keep` 未指定スナップショットのコスト累積 | `--keep N` の利用を推奨。CLI は常駐しないため prune は `backup create` 実行時のみ |
 | R8 | 取り込んだ `session-manager-plugin` の upstream 追随は手動 | 取り込み元 commit/tag を ADR 0005 に記録し、定期的に re-sync |

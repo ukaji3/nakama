@@ -78,6 +78,13 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 	}
 	res.BackupLabel = b.Label
 
+	// The update installs packages and the latest code-server from the
+	// internet, so the shared NAT instance must provide egress. Ensure it
+	// is running before the code-server instance comes up.
+	if err := s.ensureNATInstanceRunning(ctx); err != nil {
+		return res, fmt.Errorf("start NAT instance: %w", err)
+	}
+
 	// 2. Start the instance if it was stopped.
 	if wasStopped {
 		slog.Info("update: starting stopped instance", "instance_id", instanceID)
@@ -121,6 +128,14 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 		} else {
 			res.RestoredToStopped = true
 		}
+	}
+
+	// Reconcile the NAT instance against the restored power state, whether
+	// or not the update command succeeded: if the instance was stopped
+	// again and nothing else is active, stop the NAT instance too.
+	// Best-effort so it does not mask the update result.
+	if err := s.reconcileNATInstancePowerState(ctx); err != nil {
+		slog.Warn("update: NAT instance reconcile failed", "error", err)
 	}
 
 	if runErr != nil {

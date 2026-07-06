@@ -89,6 +89,11 @@ func (s *Service) Restore(ctx context.Context, in RestoreInput) error {
 	if _, err := s.clients.EC2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(oldVolumeID)}); err != nil {
 		return fmt.Errorf("DeleteVolume(%s): %w", oldVolumeID, err)
 	}
+	// The instance is left stopped; reconcile the shared NAT instance so
+	// it is stopped too when no code-server instance is active.
+	if err := s.reconcileNATInstancePowerState(ctx); err != nil {
+		slog.Warn("restore: NAT instance reconcile failed", "error", err)
+	}
 	slog.Info("restore: completed (instance left stopped)", "instance", in.Name)
 	return nil
 }
@@ -143,6 +148,10 @@ func (s *Service) waitInstanceStopped(ctx context.Context, instanceID string) er
 	}, func(ctx context.Context) (bool, error) {
 		out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 		if err != nil {
+			if awshelper.IsAPIError(err, "InvalidInstanceID.NotFound") {
+				slog.Info("instance: not yet visible, waiting", "instance_id", instanceID)
+				return false, nil
+			}
 			return false, err
 		}
 		for _, r := range out.Reservations {

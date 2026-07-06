@@ -93,6 +93,12 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 		}
 		slog.Warn("delete: ssm cleanup failed (continuing due to --force)", "error", err)
 	}
+	// The instance is gone; if no other code-server instance remains
+	// pending/running, stop the shared NAT instance. Best-effort: the
+	// delete itself already succeeded, so a reconcile error only warns.
+	if err := s.reconcileNATInstancePowerStateExcluding(ctx, instanceID); err != nil {
+		slog.Warn("delete: NAT instance reconcile failed", "error", err)
+	}
 	slog.Info("delete: completed", "name", in.Name)
 	return nil
 }

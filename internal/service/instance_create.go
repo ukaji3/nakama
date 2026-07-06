@@ -114,6 +114,13 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		return nil, fmt.Errorf("render user data: %w", err)
 	}
 
+	// The code-server instance installs itself from the internet during
+	// cloud-init, so the shared NAT instance must be running (and thus
+	// providing egress) before we launch it.
+	if err := s.ensureNATInstanceRunning(ctx); err != nil {
+		return nil, fmt.Errorf("start NAT instance: %w", err)
+	}
+
 	instanceID, err := s.runInstance(ctx, runInstanceArgs{
 		Name:           in.Name,
 		AMIID:          amiID,

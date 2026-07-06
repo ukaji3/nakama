@@ -255,6 +255,9 @@ func (s *Service) upsertSubnet(ctx context.Context, spec subnetSpec) (string, er
 	if len(out.Subnets) > 0 && out.Subnets[0].SubnetId != nil {
 		id := *out.Subnets[0].SubnetId
 		slog.Info("subnet: reusing existing", "name", spec.Name, "subnet_id", id)
+		if err := s.ensureSubnetPublicIPv4(ctx, id, spec.MapPublic); err != nil {
+			return "", err
+		}
 		return id, nil
 	}
 
@@ -274,8 +277,27 @@ func (s *Service) upsertSubnet(ctx context.Context, spec subnetSpec) (string, er
 		return "", fmt.Errorf("CreateSubnet(%s) returned nil", spec.Name)
 	}
 	id := *c.Subnet.SubnetId
+	if err := s.ensureSubnetPublicIPv4(ctx, id, spec.MapPublic); err != nil {
+		return "", err
+	}
 	slog.Info("subnet: created", "name", spec.Name, "subnet_id", id, "az", spec.AZ, "cidr", spec.CIDR)
 	return id, nil
+}
+
+func (s *Service) ensureSubnetPublicIPv4(ctx context.Context, subnetID string, enabled bool) error {
+	if !enabled {
+		return nil
+	}
+	if _, err := s.clients.EC2.ModifySubnetAttribute(ctx, &ec2.ModifySubnetAttributeInput{
+		SubnetId: aws.String(subnetID),
+		MapPublicIpOnLaunch: &ec2types.AttributeBooleanValue{
+			Value: aws.Bool(true),
+		},
+	}); err != nil {
+		return fmt.Errorf("ModifySubnetAttribute(%s, MapPublicIpOnLaunch=true): %w", subnetID, err)
+	}
+	slog.Info("subnet: public IPv4 auto-assign enabled", "subnet_id", subnetID)
+	return nil
 }
 
 // nakamaTagFilters builds an EC2 filter set that selects resources

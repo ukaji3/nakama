@@ -90,3 +90,8 @@ func ForBackup(instanceName, label, nameTag, createdAt, note string) map[string]
 	}
 	return m
 }
+
+// ComponentNATInstance identifies the NAT instance (ADR 0007),
+// kept distinct from ComponentNATGW so that reconcile can exclude the
+// NAT instance when counting code-server instances.
+const ComponentNATInstance = "nat-instance"

@@ -13,9 +13,24 @@
                                     │                          └── code-server
                                     └── WAFv2 IP set (ACL)
 
+[Private Subnet] ──0.0.0.0/0──> [NAT インスタンス (public subnet)] ──> [IGW] ──> Internet
+                                    └── code-server が 1 台でも起動中のときだけ稼働
+
 [Parameter Store] ── /nakama/<name>/code-server/password (SecureString)
                   └─ /nakama/<name>/meta/* (instance-id, eni-id, distribution-id 等)
 ```
+
+egress (private subnet からのアウトバウンド通信) は NAT Gateway ではなく
+小型の **NAT インスタンス** (`t4g.nano`, Amazon Linux 2023 arm64) を経由します。
+NAT インスタンスの電源は code-server インスタンスのライフサイクルに連動します。
+
+- code-server インスタンスを 1 台でも起動 (`create` / `start`) すると NAT インスタンスも起動。
+- すべての code-server インスタンスが停止・削除されると NAT インスタンスも自動停止。
+
+これにより、常時課金される NAT Gateway の固定費を避け、全停止時のコストをゼロに近づけます。
+NAT インスタンスは EIP を持たず public subnet の自動割当 public IPv4 を使うため、
+停止中は public IPv4 の時間課金も発生しません (起動のたびに IP は変わりますが、
+inbound は CloudFront 経由のみで固定 IP を必要としません)。
 
 ## 前提条件
 
@@ -38,7 +53,8 @@ make build
 ## 使い方
 
 ```bash
-# 基盤 (VPC / Subnet / NAT GW / WAF) の作成 (冪等)
+# 基盤 (VPC / Subnet / NAT インスタンス / WAF) の作成 (冪等)
+# 既存の NAT Gateway があれば削除し EIP を解放して NAT インスタンスへ移行する
 nakama aws init
 
 # アクセス元 IP の許可リスト操作

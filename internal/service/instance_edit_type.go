@@ -98,6 +98,13 @@ func (s *Service) EditInstanceType(ctx context.Context, in EditInstanceTypeInput
 		}
 		res.Restarted = true
 	}
+
+	// Reconcile the shared NAT instance against the final power state.
+	// The transient stop during the type change does not stop the NAT
+	// instance; only the end state matters.
+	if err := s.reconcileNATInstancePowerState(ctx); err != nil {
+		slog.Warn("instance-type: NAT instance reconcile failed", "error", err)
+	}
 	return res, nil
 }
 

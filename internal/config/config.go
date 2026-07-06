@@ -59,3 +59,17 @@ const CheckIPURL = "https://checkip.amazonaws.com/"
 // reach VPC origins. The actual ID is region-specific and resolved
 // at runtime via ec2:DescribeManagedPrefixLists.
 const CloudFrontVPCOriginsPrefixListName = "com.amazonaws.global.cloudfront.origin-facing"
+
+// NAT instance settings (ADR 0007). The NAT Gateway is replaced by a
+// small NAT instance whose power state is tied to the code-server
+// lifecycle to avoid the NAT Gateway's fixed hourly cost.
+const (
+	// NATInstanceType is the EC2 instance type for the NAT instance.
+	NATInstanceType = "t4g.nano"
+
+	// NATInstanceAMISSMParameter is the SSM public parameter path for the
+	// latest Amazon Linux 2023 arm64 AMI, used for the NAT instance.
+	// NOTE: verify the path exists at deploy time, e.g.:
+	//   aws ssm get-parameters-by-path --path /aws/service/ami-amazon-linux-latest
+	NATInstanceAMISSMParameter = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+)
