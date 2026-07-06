@@ -366,10 +366,6 @@ func (s *Service) ensureNATInstanceStopped(ctx context.Context) error {
 	return s.waitInstanceStopped(ctx, info.InstanceID)
 }
 
-func (s *Service) hasActiveCodeServerInstances(ctx context.Context) (bool, error) {
-	return s.hasActiveCodeServerInstancesExcluding(ctx, "")
-}
-
 // hasActiveCodeServerInstancesExcluding reports whether any nakama
 // code-server instance is pending/running, ignoring excludeInstanceID.
 //
