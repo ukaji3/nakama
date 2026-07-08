@@ -11,9 +11,12 @@ import (
 
 // AMIResolver resolves the latest Ubuntu 26.04 AMI ID for the
 // configured region by reading Canonical's published SSM public
-// parameter (see internal/config.UbuntuAMISSMParameter).
+// parameters (see internal/config.UbuntuAMISSMParameterFor).
 type AMIResolver interface {
-	LatestUbuntu2604AMD64(ctx context.Context) (string, error)
+	// LatestUbuntu2604 returns the latest Ubuntu 26.04 LTS AMI ID for
+	// the given CPU architecture. arch must be an EC2 architecture
+	// value: config.ArchX8664 ("x86_64") or config.ArchARM64 ("arm64").
+	LatestUbuntu2604(ctx context.Context, arch string) (string, error)
 }
 
 type ssmAMIResolver struct {
@@ -24,12 +27,16 @@ func newAMIResolver(cfg aws.Config) AMIResolver {
 	return &ssmAMIResolver{ssm: ssm.NewFromConfig(cfg)}
 }
 
-// LatestUbuntu2604AMD64 implements AMIResolver by reading the
-// canonical SSM public parameter for the latest Ubuntu 26.04 LTS
-// amd64 AMI in the configured region.
-func (r *ssmAMIResolver) LatestUbuntu2604AMD64(ctx context.Context) (string, error) {
+// LatestUbuntu2604 implements AMIResolver by reading the Canonical SSM
+// public parameter for the latest Ubuntu 26.04 LTS AMI of the given
+// architecture in the configured region.
+func (r *ssmAMIResolver) LatestUbuntu2604(ctx context.Context, arch string) (string, error) {
+	param, err := nakamaConfig.UbuntuAMISSMParameterFor(arch)
+	if err != nil {
+		return "", err
+	}
 	out, err := r.ssm.GetParameter(ctx, &ssm.GetParameterInput{
-		Name: aws.String(nakamaConfig.UbuntuAMISSMParameter),
+		Name: aws.String(param),
 	})
 	if err != nil {
 		return "", err

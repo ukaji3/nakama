@@ -6,6 +6,8 @@
 // may externalize a subset to a config file.
 package config
 
+import "fmt"
+
 // Region is the only AWS region nakama operates in (v1).
 const Region = "ap-northeast-1"
 
@@ -40,15 +42,43 @@ const (
 	PasswordLength = 32
 )
 
-// UbuntuAMISSMParameter is the SSM public parameter path for the
-// latest Ubuntu 26.04 LTS amd64 AMI in the configured region.
+// Ubuntu 26.04 LTS SSM public parameter paths (published by Canonical)
+// for the latest AMI in the configured region, keyed by CPU
+// architecture. Graviton (arm64) instance types resolve the arm64 AMI;
+// Intel/AMD (x86_64) types resolve the amd64 AMI.
 //
 // Verified via:
 //
-//	aws ssm get-parameters-by-path \
-//	  --path /aws/service/canonical/ubuntu/server/26.04 --recursive \
-//	  --region ap-northeast-1
-const UbuntuAMISSMParameter = "/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+//	aws ssm get-parameter --region ap-northeast-1 \
+//	  --name /aws/service/canonical/ubuntu/server/26.04/stable/current/<arch>/hvm/ebs-gp3/ami-id
+//
+// where <arch> is amd64 or arm64.
+const (
+	UbuntuAMISSMParameterAMD64 = "/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+	UbuntuAMISSMParameterARM64 = "/aws/service/canonical/ubuntu/server/26.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
+)
+
+// CPU architecture identifiers as reported by EC2 DescribeInstanceTypes
+// (ProcessorInfo.SupportedArchitectures) and accepted by
+// UbuntuAMISSMParameterFor.
+const (
+	ArchX8664 = "x86_64"
+	ArchARM64 = "arm64"
+)
+
+// UbuntuAMISSMParameterFor returns the Canonical SSM public parameter
+// path for the latest Ubuntu 26.04 AMI of the given CPU architecture.
+// arch must be an EC2 architecture value (ArchX8664 or ArchARM64).
+func UbuntuAMISSMParameterFor(arch string) (string, error) {
+	switch arch {
+	case ArchX8664:
+		return UbuntuAMISSMParameterAMD64, nil
+	case ArchARM64:
+		return UbuntuAMISSMParameterARM64, nil
+	default:
+		return "", fmt.Errorf("unsupported CPU architecture %q (want %s or %s)", arch, ArchX8664, ArchARM64)
+	}
+}
 
 // CheckIPURL is the endpoint nakama queries to discover the caller's
 // public IP when `nakama aws acl add` is invoked without an argument.

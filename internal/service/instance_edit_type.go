@@ -9,8 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-
-	"github.com/ukaji3/nakama/internal/awshelper"
 )
 
 // EditInstanceTypeInput specifies a change of the EC2 instance type.
@@ -46,8 +44,11 @@ func (s *Service) EditInstanceType(ctx context.Context, in EditInstanceTypeInput
 		return nil, fmt.Errorf("nakama instance %q not found", in.Name)
 	}
 
-	// Preflight: fail immediately if the requested type does not exist.
-	if err := s.assertInstanceTypeExists(ctx, in.NewType); err != nil {
+	// Preflight: validate the target type exists and resolve the CPU
+	// architecture it requires. This fails immediately, before the
+	// instance is stopped.
+	newArch, err := s.resolveInstanceArchitecture(ctx, in.NewType)
+	if err != nil {
 		return nil, err
 	}
 
@@ -63,6 +64,21 @@ func (s *Service) EditInstanceType(ctx context.Context, in EditInstanceTypeInput
 	if curType == in.NewType {
 		res.NoOp = true
 		return res, nil
+	}
+
+	// Guard: nakama does not support changing an instance's CPU
+	// architecture in place. The root volume holds architecture-specific
+	// OS and code-server binaries, and EC2 rejects a type whose
+	// architecture does not match the AMI the volume was built from.
+	curArch, err := s.resolveInstanceArchitecture(ctx, curType)
+	if err != nil {
+		return nil, fmt.Errorf("resolve current architecture (%s): %w", curType, err)
+	}
+	if newArch != curArch {
+		return nil, fmt.Errorf(
+			"cannot change instance %q architecture in place: current type %s is %s, requested %s is %s; "+
+				"delete and recreate the instance to switch architecture",
+			in.Name, curType, curArch, in.NewType, newArch)
 	}
 
 	wasRunning := state == string(ec2types.InstanceStateNameRunning)
@@ -106,22 +122,4 @@ func (s *Service) EditInstanceType(ctx context.Context, in EditInstanceTypeInput
 		slog.Warn("instance-type: NAT instance reconcile failed", "error", err)
 	}
 	return res, nil
-}
-
-// assertInstanceTypeExists returns an error if the given instance type
-// is not a real AWS instance type (resolved via DescribeInstanceTypes).
-func (s *Service) assertInstanceTypeExists(ctx context.Context, t string) error {
-	out, err := s.clients.EC2.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{
-		InstanceTypes: []ec2types.InstanceType{ec2types.InstanceType(t)},
-	})
-	if err != nil {
-		if awshelper.IsAPIError(err, "InvalidInstanceType") {
-			return fmt.Errorf("instance type %q does not exist", t)
-		}
-		return fmt.Errorf("DescribeInstanceTypes: %w", err)
-	}
-	if len(out.InstanceTypes) == 0 {
-		return fmt.Errorf("instance type %q does not exist", t)
-	}
-	return nil
 }

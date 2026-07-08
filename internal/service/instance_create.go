@@ -68,11 +68,19 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 
 	slog.Info("create: starting", "name", in.Name, "instance_type", in.InstanceType, "ebs_gib", in.EBSGiB)
 
-	amiID, err := s.clients.AMIResolver.LatestUbuntu2604AMD64(ctx)
+	// Resolve (and validate) the CPU architecture required by the
+	// requested instance type. This fails fast for a non-existent type
+	// and selects the matching Ubuntu AMI (amd64 vs arm64/Graviton).
+	arch, err := s.resolveInstanceArchitecture(ctx, in.InstanceType)
 	if err != nil {
-		return nil, fmt.Errorf("resolve ubuntu 26.04 ami: %w", err)
+		return nil, err
 	}
-	slog.Info("create: ami resolved", "ami_id", amiID)
+
+	amiID, err := s.clients.AMIResolver.LatestUbuntu2604(ctx, arch)
+	if err != nil {
+		return nil, fmt.Errorf("resolve ubuntu 26.04 %s ami: %w", arch, err)
+	}
+	slog.Info("create: ami resolved", "architecture", arch, "ami_id", amiID)
 
 	password, err := generatePassword()
 	if err != nil {
