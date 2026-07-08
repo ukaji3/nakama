@@ -1,7 +1,7 @@
 # nakama 要件定義書 (v1)
 
-> Status: v1 実装済 (v0.2.0) / `connect` は要件策定段階
-> Last updated: 2026-05-30
+> Status: v1 実装済 (`connect` / `update` / NAT インスタンス電源連動 (ADR 0007) を含む)
+> Last updated: 2026-07-08
 
 ## 1. 目的・スコープ
 
@@ -65,14 +65,13 @@
 | フラグ | 意味 |
 |---|---|
 | `-v`, `--verbose` | slog の Debug レベル出力 |
-| `--dry-run` | 全 mutation API を抑制し、予定アクションを列挙のみ |
 | `-o`, `--output {table\|json\|yaml}` | 出力フォーマット |
 
 ### 4.3 入力バリデーション
 
 - `<name>`: `^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$` (DNS 安全)
 - `<IP>`: IPv4 単独 (`/32` 自動付与) または IPv4 CIDR。**IPv6 は v1 非対応**
-- `<instance-type>`: AWS API レイヤで検証 (`InvalidInstanceType` を伝播)
+- `<instance-type>`: `ec2:DescribeInstanceTypes` で存在を事前検証。存在しないタイプはインスタンスを停止せず即時エラー (`instance type %q does not exist`)
 - `--ebs <size>`: 現在のサイズより大きい整数 (GiB)
 - `update <n>` (受理状態): 対象は **running または stopped のみ** (`pending`/`stopping`/`terminated` 等は即エラー)。stopped は内部で start→更新→stop と遷移し、元状態へ戻す。code-server は常に latest、apt は `dist-upgrade -y` (非対話: `DEBIAN_FRONTEND=noninteractive` + `--force-confdef/--force-confold`)。reboot は「元 running かつ `/var/run/reboot-required` 存在時のみ」実施 (元 stopped は最終 stop で反映されるため reboot しない)
 - `--keep <N>`: 1 以上の整数。省略時は自動削除なし (手動 `backup delete` のみ)。`update` でも自動バックアップの世代数制御に使用

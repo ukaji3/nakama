@@ -1,7 +1,7 @@
 # nakama 設計書 (v1)
 
 > Status: 初版
-> Last updated: 2026-05-28
+> Last updated: 2026-07-08
 
 要件定義書: [requirements.md](requirements.md)
 
@@ -32,6 +32,7 @@
   /nakama/<name>/code-server/version    (String)
   /nakama/<name>/meta/instance-id       (String)
   /nakama/<name>/meta/eni-id            (String)
+  /nakama/<name>/meta/security-group-id (String)
   /nakama/<name>/meta/distribution-id   (String)
   /nakama/<name>/meta/distribution-domain (String)
   /nakama/<name>/meta/vpc-origin-id     (String)
@@ -107,11 +108,12 @@ github.com/ukaji3/nakama
 
 | interface | カバー範囲 |
 |---|---|
-| `EC2API` | VPC, Subnet (Modify: MapPublicIpOnLaunch), IGW, NAT GW (Describe/Create/Delete), EIP (Allocate/Describe/Release), RTB (Describe/Create/AssociateRoute), Route (Create/Replace), ENI, SG, Instance (Run/Describe/Start/Stop/Reboot/Terminate/ModifyAttribute incl. SourceDestCheck), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
+| `EC2API` | VPC, AvailabilityZones (Describe), Subnet (Modify: MapPublicIpOnLaunch), IGW, NAT GW (Describe/Delete, 旧 NAT GW 移行専用。ADR 0007 で新規作成はしない), EIP (Allocate/Describe/Release), RTB (Describe/Create/AssociateRoute), Route (Create/Replace), ENI, SG, Instance (Run/Describe/Start/Stop/Reboot/Terminate/ModifyAttribute incl. SourceDestCheck), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
 | `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + Tagging) |
-| `WAFAPI` | IPSet, WebACL (CRUD)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
+| `WAFAPI` | IPSet (CRUD), WebACL (Create/Get/List/Update; Delete は共有・恒久リソースのため非対応)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
 | `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) + Session Manager (`StartSession` / `TerminateSession`) |
 | `TaggingAPI` | `ResourceGroupsTaggingAPI.GetResources` のみ |
+| `STSAPI` | `GetCallerIdentity` (AWS アカウント ID 解決) |
 | `IAMAPI` | Role, InstanceProfile, AttachRolePolicy, PutRolePolicy |
 | `AMIResolver` | SSM 公式パラメータ経由で Ubuntu 26.04 AMI を解決 |
 | `IPDiscoverer` | `https://checkip.amazonaws.com/` に GET し、Public IPv4 を返す |
@@ -122,8 +124,8 @@ github.com/ukaji3/nakama
 
 - ルート: `nakama` (PersistentPreRunE で slog ハンドラ初期化)
 - 親コマンド: `nakama aws`
-- `backup` は `acl` と同様のサブコマンド群: `backup {create|list|delete}`。`restore` は破壊的操作のため `start`/`stop` と並ぶ独立コマンド
-- グローバルフラグ: `--verbose`, `--dry-run`, `--output`
+- `backup` は `acl` と同様のサブコマンド群: `backup {create|list|note|delete}`。`restore` は破壊的操作のため `start`/`stop` と並ぶ独立コマンド
+- グローバルフラグ: `--verbose`, `--output`
 - 各サブコマンドは `errNotImplemented` を返すスタブで開始 (本ドキュメント時点)
 - 実装は `internal/service/*` に委譲する設計
 
@@ -173,17 +175,17 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 
 - ラベル検証: `^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$` (`internal/service` のローカル regexp)。空ラベルは取得時刻スラッグ `2006-01-02-1504` を採番。
 - メモ検証: 255 文字以内 (`utf8.RuneCountInString`)。
-- 命名/タグは `internal/naming.Snapshot(name,label)` / `internal/tagging.ForBackup(name,label)` を新設。
+- 命名/タグは `internal/naming.Snapshot(name,label)` / `internal/tagging.ForBackup(instanceName,label,nameTag,createdAt,note)` を新設。
 
 ## 8. ユースケース別シーケンス (要旨)
 
 ### 8.1 `nakama aws init`
 
-1. `iam:GetServiceLinkedRole` チェック → CloudFront / WAF 用 SLR を必要なら作成
+1. AZ サニティチェック: `ec2:DescribeAvailabilityZones` で AZ ID を解決し、`apne1-az3` (CloudFront VPC Origins 非対応) を除外
 2. タグ検索で `nakama-vpc` の有無を判定。なければ作成
 3. IGW / Subnet を冪等に作成 (public subnet は MapPublicIpOnLaunch=true)
 4. IAM instance role / profile を冪等に作成 (NAT インスタンスがこのプロファイルを使うため先に作成)
-5. NAT インスタンス (`t4g.nano`, AL2023 arm64) を public subnet に作成または再利用し、SourceDestCheck を無効化・起動まで待機
+5. NAT インスタンス (`t4g.nano`, AL2023 arm64) を public subnet に作成または再利用し、SourceDestCheck を無効化 (新規作成時は `running` まで待機)
 6. RTB / Routes を冪等に作成。private default route は NAT インスタンスの ENI 宛て。既存の `0.0.0.0/0` が旧 NAT Gateway 宛てなら `ReplaceRoute` で張り替え
 7. 旧 NAT Gateway が存在すれば削除し、その EIP を解放 (ADR 0007 への移行。ルート張り替え後に実施するため egress は途切れない)
 8. WAF IP set / web ACL を冪等に作成
@@ -197,14 +199,15 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 4. `internal/awsx.EC2API.DescribeManagedPrefixLists` で CloudFront prefix list ID 取得
 5. SG 作成 → 8080 inbound (prefix list)
 6. ENI 作成 (Private subnet 1a)
-7. `RunInstances` (User Data に code-server インストールスクリプト埋め込み)
-8. EC2 が `running` まで待機
-9. CloudFront `CreateVpcOrigin` (HTTP:8080)
-10. VpcOrigin が `Deployed` まで待機
-11. CloudFront `CreateDistribution` (Cache=Disabled, OriginRequestPolicy=AllViewer, WAF=ARN)
-12. Distribution が `Deployed` まで待機
-13. SSM に meta 情報を書き込み
-14. URL + パスワードを stdout に出力
+7. NAT インスタンスを起動 (`ensureNATInstanceRunning`。停止中なら start して `running` まで待機。ADR 0007 の電源連動)
+8. `RunInstances` (User Data に code-server インストールスクリプト埋め込み)
+9. EC2 が `running` まで待機
+10. CloudFront `CreateVpcOrigin` (HTTP:8080)
+11. VpcOrigin が `Deployed` まで待機
+12. CloudFront `CreateDistribution` (Cache=Disabled, OriginRequestPolicy=AllViewer, WAF=ARN)
+13. SSM に meta 情報を書き込み (Distribution `Deployed` 待機の**前**に永続化。待機が timeout しても `delete` で掃除できるようにするため)
+14. Distribution が `Deployed` まで待機
+15. URL + パスワードを stdout に出力
 
 ### 8.3 `nakama aws delete`
 
@@ -215,10 +218,11 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 5. ENI → delete (terminate 完了後)
 6. SG → delete
 7. SSM `/nakama/<name>/*` を全削除
+8. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerStateExcluding`。削除対象を除外し、他に稼働中の code-server が無ければ NAT インスタンスも停止。ADR 0007)
 
 ### 8.4 `nakama aws backup create`
 
-1. タグ検索で `<name>` の EC2 とそのルートボリューム ID を解決
+1. SSM Parameter Store (`/nakama/<name>/meta/instance-id`) で instance-id を解決し、その EC2 のルートボリューム ID を取得
 2. ラベルを確定 (`--label` 省略時は取得時刻から生成、例 `2026-05-29-1402`)。`<name>` 内で重複する場合はエラー
 3. `CreateSnapshot` (ルートボリューム)。`--note` 指定時はスナップショットの `Description` にも設定 (コンソール表示用)。タグ `nakama:managed/name/component=backup/backup-time=<RFC3339>/backup-label=<label>` と、メモがあれば `nakama:note=<text>` を付与
 4. `--keep N` 指定時: 当該 `<name>` のスナップショットを `backup-time` 降順で並べ、N 件超過分を `DeleteSnapshot` (prune)
@@ -236,14 +240,13 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 
 1. 対象スナップショットを解決: `--label` 指定時はタグ `nakama:backup-label` で、省略時は `backup-time` 最新のものを選ぶ。利用者は snapshot-id を指定しない
 2. 確認 (`--yes` 必須)
-3. インスタンスを `stop` → `stopped` まで待機
-4. 現ルートのデバイス名 (例 `/dev/sda1`) と旧ルートボリューム ID を記録
+3. instance-id を SSM で解決し、現ルートのデバイス名 (例 `/dev/sda1`) と旧ルートボリューム ID / AZ / ボリュームタイプを記録 (stop より前に取得)
+4. インスタンスを `stop` → `stopped` まで待機
 5. スナップショットから新ボリュームを `CreateVolume` (同 AZ / 同タイプ、暗号化は継承)
 6. 旧ルートを `DetachVolume` → 新ボリュームを同デバイス名で `AttachVolume`
 7. 旧ルートボリュームを `DeleteVolume`
-8. インスタンスは停止のまま終了 (利用者が `start`)
-
-> prune・restore とも実 mutation は `--dry-run` で抑制し予定アクションを列挙する。
+8. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。インスタンスは停止のまま残るため、他に稼働中が無ければ NAT インスタンスも停止。ADR 0007)
+9. インスタンスは停止のまま終了 (利用者が `start`)
 
 ### 8.7 `nakama aws connect`
 
@@ -280,14 +283,14 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 1. instance-id を解決。現 state を取得し **running / stopped 以外は即エラー** (`wasStopped := state==stopped`)
 2. 確認プロンプト (`--yes` で抑制)
 3. **自動バックアップ**: `CreateBackup`(label `preupdate-<UTC yyyy-mm-dd-HHMM>`, note `"auto backup before nakama aws update"`, `--keep` 連動)。スナップショット完了は待たない (point-in-time は API 呼出時点で確保)。電源状態は変えずに取得
-4. `wasStopped` なら `StartInstances` → `running` 待ち → **SSM エージェント online 待ち** (`SendCommand` を `InvalidInstanceId` の間リトライ)
+4. **NAT インスタンス起動** (`ensureNATInstanceRunning`): 更新はインターネットから apt / code-server を取得するため egress が必要。start の前に無条件で NAT を起動 (ADR 0007)。続いて `wasStopped` なら `StartInstances` → `running` 待ち → **SSM エージェント online 待ち** (`SendCommand` を `InvalidInstanceId` の間リトライ)
 5. SSM Run Command (`AWS-RunShellScript`, `executionTimeout` 延長) で 1 スクリプト実行:
    - `apt-get update` → `apt-get dist-upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold` (`DEBIAN_FRONTEND=noninteractive`)
    - code-server `install.sh`(latest) → `systemctl restart code-server@ubuntu`
    - `code-server --version` を `/nakama/<name>/code-server/version` へ書き戻し (best-effort)
    - 末尾に `/var/run/reboot-required` の有無を `NAKAMA_REBOOT_REQUIRED=0|1` として stdout 出力
 6. **reboot 判定**: 元 running かつ `NAKAMA_REBOOT_REQUIRED=1` のときのみ `RebootInstances`。元 stopped は reboot せず (手順 7 の stop と次回 start で新カーネルが反映される)
-7. `wasStopped` なら `StopInstances` → `stopped` 待ち。**手順 5 が失敗しても電源状態は元へ戻す** (バックアップ済のため復旧可能)
+7. `wasStopped` なら `StopInstances` → `stopped` 待ち。**手順 5 が失敗しても電源状態は元へ戻す** (バックアップ済のため復旧可能)。その後 NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。復元後の電源状態に対し、他に稼働中が無ければ NAT も停止。best-effort。ADR 0007)
 8. 結果出力: 更新後 code-server version / backup label / reboot 実施有無 / (元 stopped 時) 次回起動で反映の注記
 
 > 設計判断の根拠は ADR 0006 を参照。
