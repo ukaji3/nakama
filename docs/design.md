@@ -115,7 +115,7 @@ github.com/ukaji3/nakama
 | `TaggingAPI` | `ResourceGroupsTaggingAPI.GetResources` のみ |
 | `STSAPI` | `GetCallerIdentity` (AWS アカウント ID 解決) |
 | `IAMAPI` | Role, InstanceProfile, AttachRolePolicy, PutRolePolicy |
-| `AMIResolver` | SSM 公式パラメータ経由で Ubuntu 26.04 AMI を解決 |
+| `AMIResolver` | SSM 公式パラメータ経由で Ubuntu 26.04 AMI をアーキ別 (amd64 / arm64) に解決 (`LatestUbuntu2604(arch)`) |
 | `IPDiscoverer` | `https://checkip.amazonaws.com/` に GET し、Public IPv4 を返す |
 
 `Clients` 構造体が上記をすべて束ね、`NewClients(ctx)` がエントリポイント。
@@ -194,7 +194,7 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 ### 8.2 `nakama aws create`
 
 1. 環境チェック (`/nakama/_meta/initialized` 存在)
-2. SSM AMI 解決 → AMI ID 取得
+2. インスタンスタイプの CPU アーキを解決 (`DescribeInstanceTypes` の `SupportedArchitectures`。存在検証も兼ね、不正な型はここで即時エラー) → 対応する Ubuntu 26.04 AMI (amd64 / arm64) を SSM で解決
 3. SSM PutParameter で 32 文字パスワードを SecureString として保存
 4. `internal/awsx.EC2API.DescribeManagedPrefixLists` で CloudFront prefix list ID 取得
 5. SG 作成 → 8080 inbound (prefix list)
@@ -269,12 +269,13 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 ### 8.8 `nakama aws edit --instance-type`
 
 1. instance-id を解決
-2. `ec2:DescribeInstanceTypes` で対象タイプの存在を検証。無ければ**インスタンスを停止せず即時エラー**
+2. `ec2:DescribeInstanceTypes` で対象タイプの存在検証と CPU アーキ解決 (`SupportedArchitectures`)。無ければ**インスタンスを停止せず即時エラー**
 3. 現 state / type を取得。同一タイプなら no-op
-4. running (= stopped 以外) なら `StopInstances` → `stopped` まで待機 (元が running かを記録)
-5. `ModifyInstanceAttribute(InstanceType)`
-6. 元が running なら `StartInstances` → `running` まで待機して元状態へ復帰
-7. `--ebs` とは排他。型変更は停止を伴うため確認プロンプト (`--yes` で抑制)
+4. **アーキ整合チェック**: 現タイプと新タイプの CPU アーキが異なる場合、**インスタンスを停止せず即時エラー** (ルートボリュームはアーキ固有のため in-place 変更不可。別アーキへは `delete` → `create` で移行)
+5. running (= stopped 以外) なら `StopInstances` → `stopped` まで待機 (元が running かを記録)
+6. `ModifyInstanceAttribute(InstanceType)`
+7. 元が running なら `StartInstances` → `running` まで待機して元状態へ復帰
+8. `--ebs` とは排他。型変更は停止を伴うため確認プロンプト (`--yes` で抑制)
 
 ### 8.9 `nakama aws update`
 

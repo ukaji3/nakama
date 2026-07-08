@@ -65,13 +65,14 @@ nakama aws acl delete 203.0.113.10
 
 # code-server インスタンスのライフサイクル
 nakama aws create --name dev01 --instance-type t3.medium
+nakama aws create --name arm01 --instance-type t4g.large   # Graviton (ARM64) も指定可 (AMI は arm64 を自動選択)
 nakama aws list                  # TYPE 列で VSCODE 種別を表示
 nakama aws list --show-nat       # NAT インスタンスの稼働状況 (TYPE=NAT, running/stopped) も表示
 nakama aws info dev01 --show-password
 nakama aws stop dev01
 nakama aws start dev01
 nakama aws edit dev01 --ebs 40
-nakama aws edit dev01 --instance-type m6a.2xlarge   # 停止→変更→元の状態へ復帰 (--yes で確認省略)
+nakama aws edit dev01 --instance-type m6a.2xlarge   # 停止→変更→元の状態へ復帰 (--yes で確認省略, アーキ跨ぎ変更は不可)
 nakama aws update dev01                         # 自動backup→apt dist-upgrade + code-server latest→元の電源状態へ復帰
 nakama aws update dev01 --keep 5 --yes          # 自動backupを直近5世代に制限・確認省略
 nakama aws delete dev01
