@@ -30,8 +30,6 @@ import (
 type GlobalFlags struct {
 	// Verbose increases log verbosity (slog level Debug).
 	Verbose bool
-	// DryRun suppresses every mutating AWS API call.
-	DryRun bool
 	// Output is the human/machine output format.
 	Output string // table | json | yaml
 }
@@ -61,7 +59,6 @@ AWS WAFv2 IP set managed via the ` + "`nakama aws acl`" + ` subcommands.`,
 
 	pf := root.PersistentFlags()
 	pf.BoolVarP(&global.Verbose, "verbose", "v", false, "Enable debug-level logging")
-	pf.BoolVar(&global.DryRun, "dry-run", false, "Suppress all mutating AWS calls and print intended actions")
 	pf.StringVarP(&global.Output, "output", "o", "table", "Output format: table | json | yaml")
 
 	root.AddCommand(
