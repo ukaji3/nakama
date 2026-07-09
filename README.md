@@ -81,6 +81,7 @@ nakama aws delete dev01
 nakama aws backup create dev01 --note "X を導入済み"  # ラベルは省略時に自動採番
 nakama aws backup create dev01 --label before-upgrade --keep 5
 nakama aws backup list dev01
+nakama aws backup list                         # 名前省略時は全インスタンスのバックアップを一覧 (NAME 列付き)
 nakama aws backup note dev01 --label before-upgrade --note "アップグレード前の安定版"
 nakama aws restore dev01                       # 最新バックアップへインプレース復元
 nakama aws restore dev01 --label before-upgrade --yes

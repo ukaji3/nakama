@@ -158,6 +158,7 @@ CLI はフラグから `*Input` を組み立て、Service を呼び出すだけ�
 type CreateBackupInput struct { Name, Label, Note string; Keep int32 }
 
 type Backup struct {
+    Name       string `json:"name"`           // nakama:name (帰属インスタンス)
     Label      string `json:"label"`
     Note       string `json:"note,omitempty"`
     CreatedAt  string `json:"created_at"`     // nakama:backup-time
@@ -168,6 +169,7 @@ type Backup struct {
 
 func (s *Service) CreateBackup(ctx, CreateBackupInput) (*Backup, error)
 func (s *Service) ListBackups(ctx, name string) ([]Backup, error)
+func (s *Service) ListAllBackups(ctx) ([]Backup, error) // 全インスタンス横断 (backup list 名前省略時)
 func (s *Service) SetBackupNote(ctx, name, label, note string) (*Backup, error)
 func (s *Service) DeleteBackup(ctx, name, label string) error
 func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label}; Label 空=最新
