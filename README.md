@@ -87,14 +87,14 @@ nakama aws restore dev01 --label before-upgrade --yes
 nakama aws backup delete dev01 --label before-upgrade
 
 # インスタンスへのログイン (SSM Session Manager 経由・SSH 不要・受信ポート開放なし)
-nakama aws connect dev01                       # 対話シェル
-nakama aws connect dev01 ls -la                # 単発コマンド実行 (ssh 風)
+nakama aws connect dev01                       # 対話シェル (ubuntu ユーザー・exit で切断)
+nakama aws connect dev01 ls -la                # 単発コマンド実行 (ubuntu 実行・ssh 風)
 nakama aws connect dev01 --tty top             # 対話 (PTY) でコマンド実行
 nakama aws connect dev01 -L 8080:8080          # ポートフォワード: localhost:8080 -> instance:8080
 nakama aws connect dev01 -L 5432:db.internal:5432  # instance 経由で別ホストへ転送
 ```
 
-> `connect` は AWS Systems Manager Session Manager を使用します。`session-manager-plugin` の取り込みにより**追加バイナリのインストールは不要**です。呼び出し側のプリンシパルには `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession` 権限が必要です (接続先 EC2 の instance role は `init` が付与する `AmazonSSMManagedInstanceCore` で充足)。
+> `connect` は AWS Systems Manager Session Manager を使用します。`session-manager-plugin` の取り込みにより**追加バイナリのインストールは不要**です。呼び出し側のプリンシパルには `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession` 権限が必要です (接続先 EC2 の instance role は `init` が付与する `AmazonSSMManagedInstanceCore` で充足)。ログインユーザーは **ubuntu**(code-server の稼働ユーザー)です。Session Manager は `ssm-user` として接続しますが、既定の passwordless sudo を用いて ubuntu に切り替え、対話シェルは単一の `exit` で切断します (詳細は ADR 0009)。
 
 ## インストール
 

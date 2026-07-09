@@ -254,8 +254,8 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 
 | モード | 起動形 | DocumentName | Parameters | session サブタイプ |
 |---|---|---|---|---|
-| 対話シェル | `connect <n>` | (既定 `SSM-SessionManagerRunShell`) | — | `Standard_Stream` |
-| コマンド | `connect <n> <cmd...>` | `AWS-StartNonInteractiveCommand` (既定) / `AWS-StartInteractiveCommand` (`--tty`) | `command` | `Standard_Stream` |
+| 対話シェル | `connect <n>` | `AWS-StartInteractiveCommand` | `command=exec sudo su - ubuntu` | `Standard_Stream` |
+| コマンド | `connect <n> <cmd...>` | `AWS-StartNonInteractiveCommand` (既定) / `AWS-StartInteractiveCommand` (`--tty`) | `command=sudo su - ubuntu -c '<cmd>'` | `Standard_Stream` |
 | ポートフォワード | `connect <n> -L L:R` | `AWS-StartPortForwardingSession` | `portNumber`, `localPortNumber` | `Port` |
 | 〃 (リモートホスト) | `connect <n> -L L:host:R` | `AWS-StartPortForwardingSessionToRemoteHost` | `host`, `portNumber`, `localPortNumber` | `Port` |
 
@@ -265,6 +265,8 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 4. credential / region / SSM endpoint を解決 (既存 `awsx` の `aws login` fallback を流用) し `session.Session` を構築
 5. シェル・コマンドは端末 raw mode + リサイズ送信 + 制御シグナル転送、ポートフォワードはローカル listener を起動
 6. Ctrl-C / EOF / リモート切断で `TerminateSession`
+
+> ログインユーザーは **ubuntu**(code-server の稼働ユーザー)。Session Manager は `ssm-user` として接続するが、既定で付与される passwordless sudo (`/etc/sudoers.d/ssm-agent-users` の `ssm-user ALL=(ALL) NOPASSWD:ALL`) を用いて ubuntu に切り替える。対話シェルは `exec sudo su - ubuntu` で ssm-user シェルを置換するため、単一の `exit` でセッションが終了・切断する。コマンドは `sudo su - ubuntu -c '<cmd>'`(内側はシングルクォートで安全化)で ubuntu 実行。ポートフォワードはユーザーコンテキスト不要のため対象外。詳細は ADR 0009。
 
 ### 8.8 `nakama aws edit --instance-type`
 
