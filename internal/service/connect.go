@@ -87,8 +87,28 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 	return sess.Execute(logger)
 }
 
+// connectUser is the OS user that connect sessions land in. Session
+// Manager authenticates as ssm-user, which has passwordless sudo on
+// managed nodes by default (the SSM agent writes
+// "ssm-user ALL=(ALL) NOPASSWD:ALL" to /etc/sudoers.d/ssm-agent-users),
+// so nakama switches to the Ubuntu default user that code-server runs
+// as. See ADR 0009.
+const connectUser = "ubuntu"
+
 // connectDocument maps a ConnectInput to the SSM document name and
-// parameters. A nil document name selects the default shell.
+// parameters.
+//
+// Shell and command modes run as the ubuntu user rather than the
+// ssm-user that Session Manager logs in as:
+//   - The interactive shell uses AWS-StartInteractiveCommand running
+//     "exec sudo su - ubuntu". exec replaces the ssm-user shell, so a
+//     single "exit" ends the session (there is no parent shell to fall
+//     back to).
+//   - Commands run via "sudo su - ubuntu -c '<command>'"; the command
+//     is single-quoted so the outer shell does not re-split or expand
+//     it.
+//
+// Port-forwarding carries no user context and is unchanged.
 func connectDocument(in ConnectInput) (*string, map[string][]string) {
 	switch {
 	case in.LocalPort != "":
@@ -106,8 +126,17 @@ func connectDocument(in ConnectInput) (*string, map[string][]string) {
 		if in.TTY {
 			doc = "AWS-StartInteractiveCommand"
 		}
-		return aws.String(doc), map[string][]string{"command": {strings.Join(in.Command, " ")}}
+		command := fmt.Sprintf("sudo su - %s -c %s", connectUser, shellQuote(strings.Join(in.Command, " ")))
+		return aws.String(doc), map[string][]string{"command": {command}}
 	default:
-		return nil, nil
+		command := fmt.Sprintf("exec sudo su - %s", connectUser)
+		return aws.String("AWS-StartInteractiveCommand"), map[string][]string{"command": {command}}
 	}
+}
+
+// shellQuote returns s as a single POSIX shell word: wrapped in single
+// quotes with embedded single quotes escaped as '\”. This makes s safe
+// to splice into a command line without word-splitting or expansion.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

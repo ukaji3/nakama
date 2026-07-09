@@ -16,20 +16,26 @@ func TestConnectDocument(t *testing.T) {
 		{
 			name:      "interactive shell",
 			in:        ConnectInput{Name: "dev01"},
-			wantDoc:   nil,
-			wantParam: nil,
+			wantDoc:   aws.String("AWS-StartInteractiveCommand"),
+			wantParam: map[string][]string{"command": {"exec sudo su - ubuntu"}},
 		},
 		{
 			name:      "command non-interactive",
 			in:        ConnectInput{Name: "dev01", Command: []string{"ls", "-la"}},
 			wantDoc:   aws.String("AWS-StartNonInteractiveCommand"),
-			wantParam: map[string][]string{"command": {"ls -la"}},
+			wantParam: map[string][]string{"command": {"sudo su - ubuntu -c 'ls -la'"}},
 		},
 		{
 			name:      "command tty",
 			in:        ConnectInput{Name: "dev01", Command: []string{"top"}, TTY: true},
 			wantDoc:   aws.String("AWS-StartInteractiveCommand"),
-			wantParam: map[string][]string{"command": {"top"}},
+			wantParam: map[string][]string{"command": {"sudo su - ubuntu -c 'top'"}},
+		},
+		{
+			name:      "command with single quote is escaped",
+			in:        ConnectInput{Name: "dev01", Command: []string{"echo", "it's"}},
+			wantDoc:   aws.String("AWS-StartNonInteractiveCommand"),
+			wantParam: map[string][]string{"command": {`sudo su - ubuntu -c 'echo it'\''s'`}},
 		},
 		{
 			name:      "port forward to instance",

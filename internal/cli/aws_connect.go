@@ -18,9 +18,12 @@ func newAWSConnectCommand() *cobra.Command {
 		Use:   "connect <name> [command [args...]]",
 		Short: "Log in to a nakama instance over SSM Session Manager",
 		Long: `Open an interactive shell on a nakama instance via AWS Systems Manager
-Session Manager (no SSH, no inbound ports). Append a command to run it
-non-interactively (like "ssh host ls"); use --tty for a PTY. Use
--L/--port-forward to forward a local port instead of opening a shell.
+Session Manager (no SSH, no inbound ports). You are logged in as the
+"ubuntu" user (Session Manager authenticates as ssm-user, which nakama
+switches from via sudo); a single "exit" ends the session. Append a
+command to run it as ubuntu, non-interactively (like "ssh host ls"); use
+--tty for a PTY. Use -L/--port-forward to forward a local port instead of
+opening a shell.
 
 Examples:
   nakama aws connect dev01
