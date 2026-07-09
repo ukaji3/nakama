@@ -34,6 +34,13 @@ func snap(id, label, note, t string) ec2types.Snapshot {
 	return ec2types.Snapshot{SnapshotId: aws.String(id), State: ec2types.SnapshotStateCompleted, VolumeSize: aws.Int32(20), Tags: tags}
 }
 
+// snapNamed is snap() plus a nakama:name tag identifying the owning instance.
+func snapNamed(id, name, label, note, t string) ec2types.Snapshot {
+	sn := snap(id, label, note, t)
+	sn.Tags = append(sn.Tags, ec2types.Tag{Key: aws.String(tagging.KeyName), Value: aws.String(name)})
+	return sn
+}
+
 func TestListBackups_SortsNewestFirstAndMapsTags(t *testing.T) {
 	t.Parallel()
 	f := &fakeSnapEC2{snaps: []ec2types.Snapshot{
@@ -49,6 +56,27 @@ func TestListBackups_SortsNewestFirstAndMapsTags(t *testing.T) {
 	}
 	if got[0].Note != "memo" || got[0].SnapshotID != "snap-new" || got[0].SizeGiB != 20 {
 		t.Errorf("tag mapping wrong: %+v", got[0])
+	}
+}
+
+func TestListAllBackups_IncludesNameAcrossInstances(t *testing.T) {
+	t.Parallel()
+	f := &fakeSnapEC2{snaps: []ec2types.Snapshot{
+		snapNamed("snap-a", "dev01", "old", "", "2026-05-01T00:00:00Z"),
+		snapNamed("snap-b", "web02", "new", "memo", "2026-05-29T00:00:00Z"),
+	}}
+	got, err := newServiceWithEC2(f).ListAllBackups(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllBackups: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 backups, got %d", len(got))
+	}
+	if got[0].Name != "web02" || got[0].Label != "new" {
+		t.Errorf("expected newest-first web02/new, got %+v", got[0])
+	}
+	if got[1].Name != "dev01" || got[1].Label != "old" {
+		t.Errorf("expected dev01/old second, got %+v", got[1])
 	}
 }
 

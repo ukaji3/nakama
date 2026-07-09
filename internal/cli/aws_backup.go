@@ -55,16 +55,24 @@ func newAWSBackupCreateCommand() *cobra.Command {
 
 func newAWSBackupListCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list <name>",
-		Short: "List backups of a nakama instance",
-		Args:  cobra.ExactArgs(1),
+		Use:   "list [name]",
+		Short: "List backups of a nakama instance (all instances if name is omitted)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := withCancel(cmd)
 			clients, err := awsx.NewClients(ctx)
 			if err != nil {
 				return err
 			}
-			backups, err := service.NewService(clients).ListBackups(ctx, args[0])
+			svc := service.NewService(clients)
+			if len(args) == 0 {
+				backups, err := svc.ListAllBackups(ctx)
+				if err != nil {
+					return err
+				}
+				return renderOutput(cmd.OutOrStdout(), global.Output, backups, formatBackupTableAll(backups))
+			}
+			backups, err := svc.ListBackups(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -131,6 +139,20 @@ func formatBackupTable(backups []service.Backup) string {
 	fmt.Fprintf(&b, "%-20s  %-20s  %-10s  %-5s  %s\n", "LABEL", "CREATED_AT", "STATE", "GiB", "NOTE")
 	for _, bk := range backups {
 		fmt.Fprintf(&b, "%-20s  %-20s  %-10s  %-5d  %s\n", bk.Label, bk.CreatedAt, bk.State, bk.SizeGiB, bk.Note)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatBackupTableAll renders backups across all instances, adding a
+// leading NAME column so backups of deleted instances remain identifiable.
+func formatBackupTableAll(backups []service.Backup) string {
+	if len(backups) == 0 {
+		return "(no backups)"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-16s  %-20s  %-20s  %-10s  %-5s  %s\n", "NAME", "LABEL", "CREATED_AT", "STATE", "GiB", "NOTE")
+	for _, bk := range backups {
+		fmt.Fprintf(&b, "%-16s  %-20s  %-20s  %-10s  %-5d  %s\n", bk.Name, bk.Label, bk.CreatedAt, bk.State, bk.SizeGiB, bk.Note)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

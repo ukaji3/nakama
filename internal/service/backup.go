@@ -32,9 +32,11 @@ type CreateBackupInput struct {
 	Keep  int32 // <=0 -> no pruning
 }
 
-// Backup is one row of `nakama aws backup list`. SnapshotID is the
-// AWS-native ID, surfaced only in JSON/YAML output.
+// Backup is one row of `nakama aws backup list`. Name is the owning
+// nakama instance (surfaced when listing across all instances).
+// SnapshotID is the AWS-native ID, surfaced only in JSON/YAML output.
 type Backup struct {
+	Name       string `json:"name"`
 	Label      string `json:"label"`
 	Note       string `json:"note,omitempty"`
 	CreatedAt  string `json:"created_at"`
@@ -118,44 +120,77 @@ func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Back
 	return b, nil
 }
 
-// ListBackups returns the instance's snapshots, newest first.
+// ListBackups returns the named instance's snapshots, newest first.
 func (s *Service) ListBackups(ctx context.Context, name string) ([]Backup, error) {
 	if err := ValidateInstanceName(name); err != nil {
 		return nil, err
 	}
+	return s.listBackups(ctx, name)
+}
+
+// ListAllBackups returns every nakama-managed backup across all
+// instances, newest first. It exists so that `backup list` with no name
+// can recover backups whose owning instance was already deleted (the
+// instance name is otherwise hard to recall).
+func (s *Service) ListAllBackups(ctx context.Context) ([]Backup, error) {
+	return s.listBackups(ctx, "")
+}
+
+// listBackups queries backup snapshots. An empty name lists backups of
+// every instance (each Backup carries its owning instance Name); a
+// non-empty name is added as a tag:Name filter.
+func (s *Service) listBackups(ctx context.Context, name string) ([]Backup, error) {
+	filters := []ec2types.Filter{
+		{Name: aws.String("tag:" + tagging.KeyManaged), Values: []string{tagging.ValueManagedTrue}},
+		{Name: aws.String("tag:" + tagging.KeyComponent), Values: []string{tagging.ComponentBackup}},
+	}
+	if name != "" {
+		filters = append(filters, ec2types.Filter{
+			Name: aws.String("tag:" + tagging.KeyName), Values: []string{name},
+		})
+	}
 	out, err := s.clients.EC2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
-		Filters: []ec2types.Filter{
-			{Name: aws.String("tag:" + tagging.KeyManaged), Values: []string{tagging.ValueManagedTrue}},
-			{Name: aws.String("tag:" + tagging.KeyComponent), Values: []string{tagging.ComponentBackup}},
-			{Name: aws.String("tag:" + tagging.KeyName), Values: []string{name}},
-		},
+		Filters:  filters,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("DescribeSnapshots: %w", err)
 	}
 	backups := make([]Backup, 0, len(out.Snapshots))
 	for _, sn := range out.Snapshots {
-		t := awshelper.EC2MapTags(sn.Tags)
-		b := Backup{
-			Label:     t[tagging.KeyBackupLabel],
-			Note:      t[tagging.KeyNote],
-			CreatedAt: t[tagging.KeyBackupTime],
-			State:     string(sn.State),
-		}
-		if b.CreatedAt == "" && sn.StartTime != nil {
-			b.CreatedAt = sn.StartTime.UTC().Format(time.RFC3339)
-		}
-		if sn.SnapshotId != nil {
-			b.SnapshotID = *sn.SnapshotId
-		}
-		if sn.VolumeSize != nil {
-			b.SizeGiB = *sn.VolumeSize
-		}
-		backups = append(backups, b)
+		backups = append(backups, snapshotToBackup(sn))
 	}
-	sort.Slice(backups, func(i, j int) bool { return backups[i].CreatedAt > backups[j].CreatedAt })
+	// Newest first; break ties by instance name for a stable order when
+	// listing across instances.
+	sort.Slice(backups, func(i, j int) bool {
+		if backups[i].CreatedAt != backups[j].CreatedAt {
+			return backups[i].CreatedAt > backups[j].CreatedAt
+		}
+		return backups[i].Name < backups[j].Name
+	})
 	return backups, nil
+}
+
+// snapshotToBackup maps an EC2 snapshot (with nakama tags) to a Backup.
+func snapshotToBackup(sn ec2types.Snapshot) Backup {
+	t := awshelper.EC2MapTags(sn.Tags)
+	b := Backup{
+		Name:      t[tagging.KeyName],
+		Label:     t[tagging.KeyBackupLabel],
+		Note:      t[tagging.KeyNote],
+		CreatedAt: t[tagging.KeyBackupTime],
+		State:     string(sn.State),
+	}
+	if b.CreatedAt == "" && sn.StartTime != nil {
+		b.CreatedAt = sn.StartTime.UTC().Format(time.RFC3339)
+	}
+	if sn.SnapshotId != nil {
+		b.SnapshotID = *sn.SnapshotId
+	}
+	if sn.VolumeSize != nil {
+		b.SizeGiB = *sn.VolumeSize
+	}
+	return b
 }
 
 // findBackup resolves a backup by label (empty label -> newest).
