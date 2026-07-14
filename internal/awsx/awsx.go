@@ -42,6 +42,14 @@ type Clients struct {
 	// this Clients. Resolved once at construction time via STS.
 	AccountID string
 
+	// CallerARN is the ARN reported by STS GetCallerIdentity for the
+	// credentials used by this Clients. It may be an IAM user ARN, an
+	// STS assumed-role ARN, or the account root ARN. `nakama aws create
+	// --with-admin/--with-role` uses it as the SimulatePrincipalPolicy
+	// policy source (after assumed-role normalization, see
+	// internal/service).
+	CallerARN string
+
 	// Region is the AWS region these clients target (nakamaConfig.Region).
 	Region string
 
@@ -75,8 +83,8 @@ func NewClients(ctx context.Context) (*Clients, error) {
 		return nil, err
 	}
 
-	if accountID, err := probeIdentity(ctx, cfg); err == nil {
-		return assembleClients(cfg, accountID), nil
+	if accountID, callerARN, err := probeIdentity(ctx, cfg); err == nil {
+		return assembleClients(cfg, accountID, callerARN), nil
 	} else {
 		slog.Debug("default credential chain failed; trying aws CLI fallback",
 			"error", err)
@@ -89,7 +97,7 @@ func NewClients(ctx context.Context) (*Clients, error) {
 	if err != nil {
 		return nil, err
 	}
-	accountID, err := probeIdentity(ctx, cfg2)
+	accountID, callerARN, err := probeIdentity(ctx, cfg2)
 	if err != nil {
 		return nil, errors.New("AWS credential resolution failed; both the default credential chain " +
 			"and the `aws configure export-credentials` fallback returned an error. " +
@@ -97,7 +105,7 @@ func NewClients(ctx context.Context) (*Clients, error) {
 			"or set AWS_PROFILE explicitly. Original error: " + err.Error())
 	}
 	slog.Info("credentials resolved via aws CLI fallback (login_session compatibility shim)")
-	return assembleClients(cfg2, accountID), nil
+	return assembleClients(cfg2, accountID, callerARN), nil
 }
 
 func profileFromEnv() string {
@@ -127,23 +135,27 @@ func loadConfig(ctx context.Context, profile string, provider aws.CredentialsPro
 
 // probeIdentity calls STS GetCallerIdentity with a short timeout to
 // verify that cfg can actually obtain credentials. Returns the
-// resolved AWS account ID on success.
-func probeIdentity(ctx context.Context, cfg aws.Config) (string, error) {
+// resolved AWS account ID and the caller ARN on success.
+func probeIdentity(ctx context.Context, cfg aws.Config) (accountID, callerARN string, err error) {
 	out, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if out == nil || out.Account == nil {
-		return "", errors.New("STS GetCallerIdentity returned nil account")
+		return "", "", errors.New("STS GetCallerIdentity returned nil account")
 	}
-	return *out.Account, nil
+	if out.Arn != nil {
+		callerARN = *out.Arn
+	}
+	return *out.Account, callerARN, nil
 }
 
 // assembleClients builds the per-service wrappers around the given
 // configuration. Credentials are baked into cfg already.
-func assembleClients(cfg aws.Config, accountID string) *Clients {
+func assembleClients(cfg aws.Config, accountID, callerARN string) *Clients {
 	c := newClientsFromConfig(cfg)
 	c.AccountID = accountID
+	c.CallerARN = callerARN
 	return c
 }
 

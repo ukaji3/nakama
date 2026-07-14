@@ -158,14 +158,25 @@ type runInstanceArgs struct {
 	EBSGiB         int32
 	ENIID          string
 	UserDataBase64 string
+	// InstanceProfileName selects the IAM instance profile attached at
+	// launch. Empty means the shared base profile from `nakama aws init`
+	// (naming.InstanceProfile()); non-empty values come from
+	// --with-admin / --with-role (ADR 0010).
+	InstanceProfileName string
 }
 
 // runInstance launches the EC2 instance with the prepared ENI and
-// User Data. The IAM instance profile is set by name (created in
-// nakama aws init).
+// User Data. The IAM instance profile is set by name (the shared base
+// profile created in nakama aws init, unless overridden via
+// --with-admin / --with-role).
 func (s *Service) runInstance(ctx context.Context, in runInstanceArgs) (string, error) {
 	tags := tagging.ForInstance(in.Name, tagging.ComponentEC2, naming.EC2(in.Name))
 	volTags := tagging.ForInstance(in.Name, tagging.ComponentEBS, naming.EC2(in.Name)+"-root")
+
+	profileName := in.InstanceProfileName
+	if profileName == "" {
+		profileName = naming.InstanceProfile()
+	}
 
 	out, err := s.clients.EC2.RunInstances(ctx, &ec2.RunInstancesInput{
 		ImageId:      aws.String(in.AMIID),
@@ -185,7 +196,7 @@ func (s *Service) runInstance(ctx context.Context, in runInstanceArgs) (string, 
 			},
 		}},
 		IamInstanceProfile: &ec2types.IamInstanceProfileSpecification{
-			Name: aws.String(naming.InstanceProfile()),
+			Name: aws.String(profileName),
 		},
 		UserData: aws.String(in.UserDataBase64),
 		TagSpecifications: []ec2types.TagSpecification{

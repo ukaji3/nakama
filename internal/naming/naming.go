@@ -69,6 +69,20 @@ func InstanceProfile() string { return Prefix + "-instance-profile" }
 // InstanceRole returns the IAM role name attached to InstanceProfile.
 func InstanceRole() string { return Prefix + "-instance-role" }
 
+// AdminInstanceRole returns the IAM role name carrying
+// AdministratorAccess, shared by instances created with
+// `nakama aws create --with-admin` (ADR 0010).
+func AdminInstanceRole() string { return Prefix + "-instance-role-admin" }
+
+// AdminInstanceProfile returns the IAM instance-profile name that
+// wraps AdminInstanceRole (ADR 0010).
+func AdminInstanceProfile() string { return Prefix + "-instance-profile-admin" }
+
+// CustomInstanceProfile returns the IAM instance-profile name created
+// for a user-supplied role passed via `--with-role <role>` when the
+// role has no existing instance profile (ADR 0010).
+func CustomInstanceProfile(role string) string { return Prefix + "-instance-profile-" + role }
+
 // SSMPath returns a Parameter Store path under /nakama/<name>/<segments...>.
 // Segments are joined with "/"; leading slash is added.
 func SSMPath(instanceName string, segments ...string) string {

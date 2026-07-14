@@ -29,6 +29,14 @@ type CreateInstanceInput struct {
 	InstanceType      string
 	EBSGiB            int32  // defaults to config.EBSDefaultGiB when 0
 	CodeServerVersion string // empty -> latest
+
+	// WithAdmin attaches the shared nakama-managed admin instance role
+	// (AdministratorAccess) to the instance. Mutually exclusive with
+	// WithRole (ADR 0010).
+	WithAdmin bool
+	// WithRole attaches an existing, user-supplied IAM role (by name)
+	// to the instance. Mutually exclusive with WithAdmin (ADR 0010).
+	WithRole string
 }
 
 // CreateInstanceOutput is what the CLI ultimately renders to the
@@ -44,6 +52,8 @@ type CreateInstanceOutput struct {
 	DistributionDomain string `json:"distribution_domain"`
 	URL                string `json:"url"`
 	Password           string `json:"password"`
+	IAMRole            string `json:"iam_role,omitempty"`
+	InstanceProfile    string `json:"instance_profile,omitempty"`
 }
 
 // CreateInstance provisions everything needed to expose a new
@@ -56,6 +66,9 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	if strings.TrimSpace(in.InstanceType) == "" {
 		return nil, errors.New("instance-type is required")
 	}
+	if in.WithAdmin && in.WithRole != "" {
+		return nil, errors.New("--with-admin and --with-role are mutually exclusive")
+	}
 	if in.EBSGiB <= 0 {
 		in.EBSGiB = config.EBSDefaultGiB
 	}
@@ -64,6 +77,21 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	}
 	if err := s.assertNameAvailable(ctx, in.Name); err != nil {
 		return nil, err
+	}
+
+	// --with-admin / --with-role: resolve the dedicated instance role,
+	// preflight the caller's IAM permissions (fail-closed) and provision
+	// the role/profile BEFORE any other resource is created, so that a
+	// permission failure leaves nothing behind (ADR 0010). Without the
+	// flags this block is skipped entirely and the shared base profile
+	// from `nakama aws init` is used, preserving the previous behavior.
+	var roleSel *instanceProfileSelection
+	if in.WithAdmin || in.WithRole != "" {
+		var err error
+		roleSel, err = s.ensureInstanceProfileForCreate(ctx, in)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	slog.Info("create: starting", "name", in.Name, "instance_type", in.InstanceType, "ebs_gib", in.EBSGiB)
@@ -130,12 +158,13 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	}
 
 	instanceID, err := s.runInstance(ctx, runInstanceArgs{
-		Name:           in.Name,
-		AMIID:          amiID,
-		InstanceType:   in.InstanceType,
-		EBSGiB:         in.EBSGiB,
-		ENIID:          eniID,
-		UserDataBase64: base64.StdEncoding.EncodeToString([]byte(ud)),
+		Name:                in.Name,
+		AMIID:               amiID,
+		InstanceType:        in.InstanceType,
+		EBSGiB:              in.EBSGiB,
+		ENIID:               eniID,
+		UserDataBase64:      base64.StdEncoding.EncodeToString([]byte(ud)),
+		InstanceProfileName: selectedProfileName(roleSel),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run instance: %w", err)
@@ -164,14 +193,16 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	// Persist instance metadata BEFORE waiting for the distribution
 	// to be Deployed. This way, if the Deployed wait times out,
 	// `nakama aws delete <name>` can still clean up everything.
-	if err := s.writeInstanceMeta(ctx, in.Name, map[string]string{
-		ssmInstanceIDPath(in.Name):         instanceID,
-		ssmENIIDPath(in.Name):              eniID,
-		ssmSGIDPath(in.Name):               sgID,
-		ssmVPCOriginIDPath(in.Name):        vpcOriginID,
-		ssmDistributionIDPath(in.Name):     distID,
-		ssmDistributionDomainPath(in.Name): distDomain,
-	}); err != nil {
+	if err := s.writeInstanceMeta(ctx, in.Name, instanceMetaEntries(in.Name, instanceMetaValues{
+		InstanceID:         instanceID,
+		ENIID:              eniID,
+		SecurityGroupID:    sgID,
+		VPCOriginID:        vpcOriginID,
+		DistributionID:     distID,
+		DistributionDomain: distDomain,
+		IAMRole:            selectedRoleName(roleSel),
+		InstanceProfile:    selectedProfileName(roleSel),
+	})); err != nil {
 		return nil, fmt.Errorf("write instance metadata: %w", err)
 	}
 
@@ -189,6 +220,8 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		DistributionDomain: distDomain,
 		URL:                "https://" + distDomain,
 		Password:           password,
+		IAMRole:            selectedRoleName(roleSel),
+		InstanceProfile:    selectedProfileName(roleSel),
 	}
 	slog.Info("create: completed",
 		"name", in.Name,
@@ -197,6 +230,58 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		"url", out.URL,
 	)
 	return out, nil
+}
+
+// selectedRoleName returns the IAM role name of the selection, or ""
+// when the create runs without --with-admin/--with-role.
+func selectedRoleName(sel *instanceProfileSelection) string {
+	if sel == nil {
+		return ""
+	}
+	return sel.roleName
+}
+
+// selectedProfileName returns the instance-profile name of the
+// selection, or "" (=> the shared base profile) without the flags.
+func selectedProfileName(sel *instanceProfileSelection) string {
+	if sel == nil {
+		return ""
+	}
+	return sel.profileName
+}
+
+// instanceMetaValues carries the resource IDs persisted as SSM
+// parameters under /nakama/<name>/meta/*. IAMRole/InstanceProfile are
+// only written when non-empty (--with-admin / --with-role).
+type instanceMetaValues struct {
+	InstanceID         string
+	ENIID              string
+	SecurityGroupID    string
+	VPCOriginID        string
+	DistributionID     string
+	DistributionDomain string
+	IAMRole            string
+	InstanceProfile    string
+}
+
+// instanceMetaEntries maps the metadata values to their SSM parameter
+// paths. Split out of CreateInstance so the key set is unit-testable.
+func instanceMetaEntries(name string, v instanceMetaValues) map[string]string {
+	m := map[string]string{
+		ssmInstanceIDPath(name):         v.InstanceID,
+		ssmENIIDPath(name):              v.ENIID,
+		ssmSGIDPath(name):               v.SecurityGroupID,
+		ssmVPCOriginIDPath(name):        v.VPCOriginID,
+		ssmDistributionIDPath(name):     v.DistributionID,
+		ssmDistributionDomainPath(name): v.DistributionDomain,
+	}
+	if v.IAMRole != "" {
+		m[ssmIAMRolePath(name)] = v.IAMRole
+	}
+	if v.InstanceProfile != "" {
+		m[ssmInstanceProfilePath(name)] = v.InstanceProfile
+	}
+	return m
 }
 
 func (s *Service) putPasswordSecure(ctx context.Context, name, password string) error {

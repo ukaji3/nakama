@@ -58,6 +58,12 @@ func ssmVPCOriginIDPath(name string) string {
 func ssmSGIDPath(name string) string {
 	return naming.SSMPath(name, "meta", "security-group-id")
 }
+func ssmIAMRolePath(name string) string {
+	return naming.SSMPath(name, "meta", "iam-role")
+}
+func ssmInstanceProfilePath(name string) string {
+	return naming.SSMPath(name, "meta", "instance-profile")
+}
 
 // generatePassword returns a cryptographically secure 32-char
 // password drawn from [A-Za-z0-9].
