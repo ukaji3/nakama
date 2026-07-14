@@ -202,7 +202,7 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 5. SG 作成 → 8080 inbound (prefix list)
 6. ENI 作成 (Private subnet 1a)
 7. NAT インスタンスを起動 (`ensureNATInstanceRunning`。停止中なら start して `running` まで待機。ADR 0007 の電源連動)
-8. `RunInstances` (User Data に code-server インストールスクリプト埋め込み)
+8. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を snap (`snap install aws-cli --classic`) で導入する。Ubuntu の apt `awscli` は v1 と古いため purge し、`/snap/bin/aws` を絶対パス参照 + `/usr/local/bin/aws` へ symlink して非ログイン shell からも解決させる)
 9. EC2 が `running` まで待機
 10. CloudFront `CreateVpcOrigin` (HTTP:8080)
 11. VpcOrigin が `Deployed` まで待機
