@@ -31,11 +31,21 @@ func TestRenderCodeServer_Substitutes(t *testing.T) {
 		`auth: password`,
 		`code-server@`,
 		`export HOME="${HOME:-/root}"`,
+		// AWS CLI v2 is installed from snap (not the legacy apt awscli),
+		// and referenced via its absolute snap path from non-login shells.
+		`snap install aws-cli --classic`,
+		`/snap/bin/aws ssm get-parameter`,
+		`ln -sf /snap/bin/aws /usr/local/bin/aws`,
 	}
 	for _, s := range wantSubstrings {
 		if !strings.Contains(got, s) {
 			t.Errorf("rendered userdata is missing %q", s)
 		}
+	}
+
+	// The legacy apt awscli (v1) must not be installed.
+	if strings.Contains(got, "install -y curl ca-certificates jq awscli") {
+		t.Errorf("rendered userdata still installs the apt awscli package")
 	}
 }
 

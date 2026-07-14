@@ -25,13 +25,23 @@ PINNED_VERSION="{{.PinnedVersion}}"
 TARGET_USER="ubuntu"
 HOME_DIR="/home/${TARGET_USER}"
 
-# 1. Wait for cloud-init networking, apt and AWS CLI
+# 1. Base packages + AWS CLI v2. Ubuntu's apt "awscli" package is the
+#    legacy v1; AWS CLI v2 is installed from the snap store instead. Purge
+#    any apt awscli the base image may carry, wait for snapd seeding to
+#    complete (early cloud-init can race it), then install the classic snap.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl ca-certificates jq awscli
+apt-get install -y curl ca-certificates jq
+apt-get purge -y awscli || true
+snap wait system seed.loaded
+snap install aws-cli --classic
+# Expose the snap binary on the default PATH so non-login root shells
+# (this script and later SSM Run Command updates) resolve "aws" to v2.
+ln -sf /snap/bin/aws /usr/local/bin/aws
+/snap/bin/aws --version
 
 # 2. Pull the password from SSM Parameter Store (SecureString).
-PASSWORD="$(aws ssm get-parameter \
+PASSWORD="$(/snap/bin/aws ssm get-parameter \
   --region "${REGION}" \
   --name "${PASSWORD_PARAM}" \
   --with-decryption \
@@ -70,7 +80,7 @@ systemctl enable --now "code-server@${TARGET_USER}"
 if VERSION_LINE="$(sudo -u "${TARGET_USER}" code-server --version 2>/dev/null | head -n1)"; then
   RUNNING_VERSION="$(echo "${VERSION_LINE}" | awk '{print $1}')"
   if [ -n "${RUNNING_VERSION}" ]; then
-    aws ssm put-parameter \
+    /snap/bin/aws ssm put-parameter \
       --region "${REGION}" \
       --name "${VERSION_PARAM}" \
       --type String \
