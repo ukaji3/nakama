@@ -41,7 +41,7 @@
 | アクセス制御 | `nakama aws acl add [IP\|CIDR]` | アクセス元 IP を WAFv2 IP set に追加 (省略時は `https://checkip.amazonaws.com/` で自動取得) |
 | アクセス制御 | `nakama aws acl list` | IP set の内容を一覧 |
 | アクセス制御 | `nakama aws acl delete <IP\|CIDR>` | IP set からエントリ削除 |
-| インスタンス | `nakama aws create --name <n> --instance-type <t>` | EC2 (Ubuntu 26.04, EBS 20 GiB) を private subnet に作成、code-server を導入、CloudFront distribution を VPC Origin 経由で作成、パスワードを Parameter Store に保存。インスタンスタイプの CPU アーキ (x86_64 / arm64=Graviton) を自動判定し対応する Ubuntu AMI を選択 |
+| インスタンス | `nakama aws create --name <n> --instance-type <t> [--with-admin\|--with-role <role>]` | EC2 (Ubuntu 26.04, EBS 20 GiB) を private subnet に作成、code-server を導入、CloudFront distribution を VPC Origin 経由で作成、パスワードを Parameter Store に保存。インスタンスタイプの CPU アーキ (x86_64 / arm64=Graviton) を自動判定し対応する Ubuntu AMI を選択。`--with-admin` は AdministratorAccess を持つ共有ロール `nakama-instance-role-admin` を、`--with-role <role>` は既存の任意 IAM ロールをインスタンスに付与 (両者は排他)。いずれの場合も**リソース作成前**に `iam:SimulatePrincipalPolicy` で呼び出し元の権限をプリフライトし、権限不足なら何も作らずエラー (ADR 0010) |
 | インスタンス | `nakama aws list` | 作成済み code-server インスタンスを一覧 (TYPE 列で VSCODE/NAT 種別を表示)。`--show-nat` で NAT インスタンスの稼働状況も表示 |
 | インスタンス | `nakama aws info <n> [--show-password]` | 接続先 URL、ステータス、パスワード (`--show-password` 時のみ) を表示 |
 | インスタンス | `nakama aws start <n>` | EC2 起動 |
@@ -73,6 +73,7 @@
 - `<IP>`: IPv4 単独 (`/32` 自動付与) または IPv4 CIDR。**IPv6 は v1 非対応**
 - `<instance-type>`: `ec2:DescribeInstanceTypes` で存在を事前検証し CPU アーキ (x86_64 / arm64) を判定 (create / edit 双方)。存在しないタイプはインスタンスを停止せず即時エラー (`instance type %q does not exist`)。Graviton (arm64) タイプ指定時は arm64 版 Ubuntu AMI を自動選択する。`edit` での**アーキ跨ぎ変更は不可** (別アーキへは delete → create)
 - `--ebs <size>`: 現在のサイズより大きい整数 (GiB)
+- `--with-admin` / `--with-role <role>` (create 専用): 相互排他。`--with-role` のロール名は `^[\w+=,.@-]{1,64}$` (IAM ロール命名規則) で事前検証し、`iam:GetRole` で存在確認 (未存在は即エラー)。trust policy が `ec2.amazonaws.com` の `sts:AssumeRole` を許可していないロールも即エラー。指定ロールに AmazonSSMManagedInstanceCore / AdministratorAccess のいずれも付いていない場合は警告 (SSM 接続・パスワード取得が動かない可能性)。いずれのフラグでも、リソース作成前に `iam:SimulatePrincipalPolicy` で `iam:PassRole` (+ 未作成分の `iam:CreateRole` / `iam:AttachRolePolicy` / `iam:CreateInstanceProfile` / `iam:AddRoleToInstanceProfile`) を検査し、拒否があれば何も作らずエラー (fail-closed。呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要)
 - `update <n>` (受理状態): 対象は **running または stopped のみ** (`pending`/`stopping`/`terminated` 等は即エラー)。stopped は内部で start→更新→stop と遷移し、元状態へ戻す。code-server は常に latest、apt は `dist-upgrade -y` (非対話: `DEBIAN_FRONTEND=noninteractive` + `--force-confdef/--force-confold`)。reboot は「元 running かつ `/var/run/reboot-required` 存在時のみ」実施 (元 stopped は最終 stop で反映されるため reboot しない)
 - `--keep <N>`: 1 以上の整数。省略時は自動削除なし (手動 `backup delete` のみ)。`update` でも自動バックアップの世代数制御に使用
 - `--label <label>`: バックアップの人間可読な識別子。`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$`。当該 `<name>` 内で一意 (重複はエラー)。`restore` / `backup delete` での選択に使用。利用者は AWS の snapshot-id を意識しない
@@ -92,6 +93,7 @@
 - WAFv2 IP set による送信元制御。default action は **block**
 - バックアップ (EBS スナップショット) の暗号化は元ルートボリュームの設定を継承 (専用 KMS 鍵は導入しない)
 - `connect` は AWS Systems Manager Session Manager を使用 (受信ポート開放・SSH 鍵不要)。通信は SSM への outbound のみで、data-plane は WSS + SigV4 署名
+- `--with-admin` で作成したインスタンスは AdministratorAccess を持つため、code-server へ到達できる者 (CloudFront + WAF allowlist 通過者) が実質的にアカウント管理者権限を持つ。ACL の管理を厳格に行うこと (ADR 0010)
 - Microsoft Marketplace は使用不可。code-server は Open VSX を使用 (上流仕様)
 
 ### 5.2 可用性

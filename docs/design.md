@@ -36,6 +36,8 @@
   /nakama/<name>/meta/distribution-id   (String)
   /nakama/<name>/meta/distribution-domain (String)
   /nakama/<name>/meta/vpc-origin-id     (String)
+  /nakama/<name>/meta/iam-role          (String, --with-admin/--with-role 時のみ)
+  /nakama/<name>/meta/instance-profile  (String, --with-admin/--with-role 時のみ)
   /nakama/_meta/initialized             (String, "true")
   /nakama/_meta/version                 (String, semver)
   /nakama/_meta/acl/<ip>                (String, RFC3339 timestamp)
@@ -85,6 +87,9 @@ github.com/ukaji3/nakama
 | ENI | `nakama-eni-<name>` |
 | IAM Instance Profile | `nakama-instance-profile` |
 | IAM Instance Role | `nakama-instance-role` |
+| IAM Instance Role (admin, `--with-admin`) | `nakama-instance-role-admin` |
+| IAM Instance Profile (admin, `--with-admin`) | `nakama-instance-profile-admin` |
+| IAM Instance Profile (`--with-role <role>` 用に新設する場合) | `nakama-instance-profile-<role>` |
 | SSM Parameter | `/nakama/<name>/...` または `/nakama/_meta/...` |
 
 ## 4. タグスキーマ
@@ -113,8 +118,8 @@ github.com/ukaji3/nakama
 | `WAFAPI` | IPSet (CRUD), WebACL (Create/Get/List/Update; Delete は共有・恒久リソースのため非対応)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
 | `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) + Session Manager (`StartSession` / `TerminateSession`) |
 | `TaggingAPI` | `ResourceGroupsTaggingAPI.GetResources` のみ |
-| `STSAPI` | `GetCallerIdentity` (AWS アカウント ID 解決) |
-| `IAMAPI` | Role, InstanceProfile, AttachRolePolicy, PutRolePolicy |
+| `STSAPI` | `GetCallerIdentity` (AWS アカウント ID / 呼び出し元 ARN 解決。ARN は `--with-admin`/`--with-role` プリフライトの PolicySourceArn に使用) |
+| `IAMAPI` | Role, InstanceProfile, AttachRolePolicy, PutRolePolicy, SimulatePrincipalPolicy, ListInstanceProfilesForRole, ListAttachedRolePolicies |
 | `AMIResolver` | SSM 公式パラメータ経由で Ubuntu 26.04 AMI をアーキ別 (amd64 / arm64) に解決 (`LatestUbuntu2604(arch)`) |
 | `IPDiscoverer` | `https://checkip.amazonaws.com/` に GET し、Public IPv4 を返す |
 
@@ -196,20 +201,24 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 ### 8.2 `nakama aws create`
 
 1. 環境チェック (`/nakama/_meta/initialized` 存在)
-2. インスタンスタイプの CPU アーキを解決 (`DescribeInstanceTypes` の `SupportedArchitectures`。存在検証も兼ね、不正な型はここで即時エラー) → 対応する Ubuntu 26.04 AMI (amd64 / arm64) を SSM で解決
-3. SSM PutParameter で 32 文字パスワードを SecureString として保存
-4. `internal/awsx.EC2API.DescribeManagedPrefixLists` で CloudFront prefix list ID 取得
-5. SG 作成 → 8080 inbound (prefix list)
-6. ENI 作成 (Private subnet 1a)
-7. NAT インスタンスを起動 (`ensureNATInstanceRunning`。停止中なら start して `running` まで待機。ADR 0007 の電源連動)
-8. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を snap (`snap install aws-cli --classic`) で導入する。Ubuntu の apt `awscli` は v1 と古いため purge し、`/snap/bin/aws` を絶対パス参照 + `/usr/local/bin/aws` へ symlink して非ログイン shell からも解決させる)
-9. EC2 が `running` まで待機
-10. CloudFront `CreateVpcOrigin` (HTTP:8080)
-11. VpcOrigin が `Deployed` まで待機
-12. CloudFront `CreateDistribution` (Cache=Disabled, OriginRequestPolicy=AllViewer, WAF=ARN)
-13. SSM に meta 情報を書き込み (Distribution `Deployed` 待機の**前**に永続化。待機が timeout しても `delete` で掃除できるようにするため)
-14. Distribution が `Deployed` まで待機
-15. URL + パスワードを stdout に出力
+2. (`--with-admin` / `--with-role` 指定時のみ) **IAM ロール解決 + プリフライト + upsert** (ADR 0010):
+   - 対象ロール / インスタンスプロファイルと現在の存在状態を解決 (`--with-admin` は `nakama-instance-role-admin` / `nakama-instance-profile-admin`。`--with-role` は `iam:GetRole` で存在確認・trust policy 検証・`iam:ListInstanceProfilesForRole` で既存プロファイル再利用判定)
+   - `iam:SimulatePrincipalPolicy` で `iam:PassRole` (+ 未作成分の Create/Attach/Add 系アクション) を検査。拒否が 1 つでもあれば**何もリソースを作らずエラー** (Simulate 自体の失敗も fail-closed)。PolicySourceArn は GetCallerIdentity の ARN (assumed-role は IAM role ARN へ正規化)
+   - ロール / プロファイルを冪等に upsert (`--with-role` の既存プロファイル再利用時は no-op。ユーザーロールへの書き込みは一切しない)
+3. インスタンスタイプの CPU アーキを解決 (`DescribeInstanceTypes` の `SupportedArchitectures`。存在検証も兼ね、不正な型はここで即時エラー) → 対応する Ubuntu 26.04 AMI (amd64 / arm64) を SSM で解決
+4. SSM PutParameter で 32 文字パスワードを SecureString として保存
+5. `internal/awsx.EC2API.DescribeManagedPrefixLists` で CloudFront prefix list ID 取得
+6. SG 作成 → 8080 inbound (prefix list)
+7. ENI 作成 (Private subnet 1a)
+8. NAT インスタンスを起動 (`ensureNATInstanceRunning`。停止中なら start して `running` まで待機。ADR 0007 の電源連動)
+9. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を snap (`snap install aws-cli --classic`) で導入する。Ubuntu の apt `awscli` は v1 と古いため purge し、`/snap/bin/aws` を絶対パス参照 + `/usr/local/bin/aws` へ symlink して非ログイン shell からも解決させる)。IAM instance profile は手順 2 で選択したもの (フラグ省略時は共有ベースプロファイル `nakama-instance-profile`)
+10. EC2 が `running` まで待機
+11. CloudFront `CreateVpcOrigin` (HTTP:8080)
+12. VpcOrigin が `Deployed` まで待機
+13. CloudFront `CreateDistribution` (Cache=Disabled, OriginRequestPolicy=AllViewer, WAF=ARN)
+14. SSM に meta 情報を書き込み (Distribution `Deployed` 待機の**前**に永続化。待機が timeout しても `delete` で掃除できるようにするため)。`--with-admin` / `--with-role` 時は `meta/iam-role` / `meta/instance-profile` も記録
+15. Distribution が `Deployed` まで待機
+16. URL + パスワード (+ 付与した IAM ロール / プロファイル) を stdout に出力
 
 ### 8.3 `nakama aws delete`
 

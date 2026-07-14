@@ -66,6 +66,8 @@ nakama aws acl delete 203.0.113.10
 # code-server インスタンスのライフサイクル
 nakama aws create --name dev01 --instance-type t3.medium
 nakama aws create --name arm01 --instance-type t4g.large   # Graviton (ARM64) も指定可 (AMI は arm64 を自動選択)
+nakama aws create --name ops01 --instance-type t3.medium --with-admin        # AdministratorAccess 付きロールを付与 (CDK/CloudFormation 用)
+nakama aws create --name app01 --instance-type t3.medium --with-role my-role # 任意の既存 IAM ロールを付与
 nakama aws list                  # TYPE 列で VSCODE 種別を表示
 nakama aws list --show-nat       # NAT インスタンスの稼働状況 (TYPE=NAT, running/stopped) も表示
 nakama aws info dev01 --show-password
@@ -96,6 +98,10 @@ nakama aws connect dev01 -L 5432:db.internal:5432  # instance 経由で別ホス
 ```
 
 > `connect` は AWS Systems Manager Session Manager を使用します。`session-manager-plugin` の取り込みにより**追加バイナリのインストールは不要**です。呼び出し側のプリンシパルには `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession` 権限が必要です (接続先 EC2 の instance role は `init` が付与する `AmazonSSMManagedInstanceCore` で充足)。ログインユーザーは **ubuntu**(code-server の稼働ユーザー)です。Session Manager は `ssm-user` として接続しますが、既定の passwordless sudo を用いて ubuntu に切り替え、対話シェルは単一の `exit` で切断します (詳細は ADR 0009)。
+
+> `create --with-admin` は AdministratorAccess を持つ共有 IAM ロール (`nakama-instance-role-admin`) を、`--with-role <role>` は既存の任意 IAM ロールをインスタンスに付与します (両者は排他)。いずれもリソース作成前に `iam:SimulatePrincipalPolicy` で呼び出し元の権限 (`iam:PassRole` 等) をチェックし、権限不足なら**何もリソースを作らずに**エラー終了します (呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要。詳細は ADR 0010)。
+>
+> **セキュリティ注意 (`--with-admin`)**: 付与されるのは AdministratorAccess です。CloudFront + WAF の IP allowlist を通過して code-server にログインできる者は、その開発環境を通じて**実質的に AWS アカウントの管理者権限を行使できます**。`acl` の許可 IP は最小限に保ち、パスワードの取り扱いに注意してください。`--with-role` で SSM 権限 (AmazonSSMManagedInstanceCore) のないロールを指定した場合、`connect` / `update` および初期セットアップのパスワード取得が動作しない可能性があるため、実行時に警告が表示されます。
 
 ## インストール
 
