@@ -13,6 +13,7 @@ func newAWSCommand() *cobra.Command {
 		newAWSCreateCommand(),
 		newAWSListCommand(),
 		newAWSInfoCommand(),
+		newAWSOpenCommand(),
 		newAWSStartCommand(),
 		newAWSStopCommand(),
 		newAWSDeleteCommand(),

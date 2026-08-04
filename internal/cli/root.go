@@ -10,6 +10,7 @@
 //	  aws_create.go     // `nakama aws create`
 //	  aws_list.go       // `nakama aws list`
 //	  aws_info.go       // `nakama aws info`
+//	  aws_open.go       // `nakama aws open`
 //	  aws_lifecycle.go  // `nakama aws {start|stop}`
 //	  aws_delete.go     // `nakama aws delete`
 //	  aws_edit.go       // `nakama aws edit`
