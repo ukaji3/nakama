@@ -59,6 +59,11 @@
 | 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY) |
 | 接続 | `nakama aws connect <n> -L <local>:<remote>` | ポートフォワード。`localhost:<local>` を接続先 instance の `<remote>` に転送 |
 | 接続 | `nakama aws connect <n> -L <local>:<host>:<remote>` | instance 経由で `<host>:<remote>` を `localhost:<local>` に転送 |
+| プロファイル | `nakama aws profile save [--name <alias>]` | 現在の `aws login` セッション (login_session 識別子 + STS identity) をアカウント ID キーで nakama のレジストリ (`~/.config/nakama`) に保存。active profile は無視して「今 login しているもの」を保存し、同一アカウントの再 save は上書き。alias 省略時はアカウント ID。login_session が無い資格情報 (SSO・アクセスキー等) はエラー (ADR 0011) |
+| プロファイル | `nakama aws profile list` | 保存済みプロファイルを一覧 (ACTIVE / ACCOUNT / ALIAS / IDENTITY / SAVED / STATUS)。STATUS は `aws configure export-credentials` の成否による best-effort 判定 (valid / expired / unknown) |
+| プロファイル | `nakama aws profile load <account\|alias>` | 指定プロファイルを active に設定。以後の全 nakama コマンドはこのアカウントの資格情報**のみ**で動作 (fail-closed、`AWS_PROFILE` より優先)。セッション失効時は警告の上で active は設定 (該当アカウントへの `aws login` 再実行で復活) |
+| プロファイル | `nakama aws profile delete <account\|alias>` | プロファイルを登録解除。active だった場合は active もクリアし、その旨を表示 |
+| プロファイル | `nakama aws profile unload` | active をクリアし、従来の default chain 解決へ戻す |
 
 ### 4.2 共通フラグ
 
@@ -81,6 +86,8 @@
 - `-L <spec>` (connect 専用): `<localPort>:<remotePort>` または `<localPort>:<host>:<remotePort>`。各ポートは 1–65535。`<host>` 省略時は接続先 instance 自身。コマンド指定とは排他
 - `--tty` (connect 専用): コマンド実行を対話 (PTY) モードにする。省略時は非対話
 - connect の位置引数: `<name>` の後続をすべてリモートコマンドとして扱う (cobra `SetInterspersed(false)`)。`-L` 等の nakama フラグは `<name>` より前に置く
+- `profile save --name <alias>`: alias が**別アカウント**の alias またはアカウント ID と衝突する場合はエラー (`profile load <alias>` の曖昧化防止)。自アカウントのエントリ上書きは可
+- `profile load/delete <account|alias>`: アカウント ID 完全一致を優先し、次に alias 一致。見つからない場合は保存済み候補一覧付きのエラー
 
 ## 5. 非機能要件
 
@@ -94,6 +101,8 @@
 - バックアップ (EBS スナップショット) の暗号化は元ルートボリュームの設定を継承 (専用 KMS 鍵は導入しない)
 - `connect` は AWS Systems Manager Session Manager を使用 (受信ポート開放・SSH 鍵不要)。通信は SSM への outbound のみで、data-plane は WSS + SigV4 署名
 - `--with-admin` で作成したインスタンスは AdministratorAccess を持つため、code-server へ到達できる者 (CloudFront + WAF allowlist 通過者) が実質的にアカウント管理者権限を持つ。ACL の管理を厳格に行うこと (ADR 0010)
+- `nakama aws profile` のレジストリ (`~/.config/nakama`, dir 0700 / file 0600) には**秘密情報を保存しない**。保存するのはアカウント ID・alias・login_session (ARN 形式の識別子)・identity ARN・保存時刻のみで、実トークンは AWS CLI 管理の `~/.aws/login/cache/` に残る。ユーザーの `~/.aws/config` / `~/.aws/credentials` へは書き込まない (ADR 0011)
+- active profile 使用時の資格情報解決は fail-closed: 解決失敗時に別チェーンへフォールバックせず、意図しないアカウントへのリソース作成を防ぐ (ADR 0011)
 - Microsoft Marketplace は使用不可。code-server は Open VSX を使用 (上流仕様)
 
 ### 5.2 可用性
@@ -118,6 +127,7 @@
 - ローカル DB を持たない。**AWS リソースのタグから動的取得**
 - 一覧取得: `ResourceGroupsTaggingAPI` で `nakama:managed=true` を絞り込み
 - per-instance: `nakama:name=<name>` を AND 条件として付加
+- 例外: `nakama aws profile` のレジストリのみローカル状態 (`$XDG_CONFIG_HOME/nakama`、未設定時 `~/.config/nakama`) を持つ。これは AWS リソースではなく「どのアカウントの `aws login` セッションを使うか」というクライアント側の選択であり、タグでは表現できないため (ADR 0011)
 
 ## 7. 制限事項 (v1 で対応しない)
 

@@ -55,6 +55,7 @@ github.com/ukaji3/nakama
 │   ├── userdata/                // cloud-init User Data テンプレ (//go:embed)
 │   ├── naming/                  // リソース命名規約
 │   ├── tagging/                 // タグスキーマ
+│   ├── profilestore/            // マルチアカウントプロファイルの永続化 (~/.config/nakama, ADR 0011)
 │   ├── config/                  // 固定値 (region, CIDR, AZ, SSM パスなど)
 │   └── version/                 // ビルド時に -ldflags で注入される version 情報
 ├── third_party/
@@ -354,3 +355,67 @@ replace github.com/aws/session-manager-plugin => ./third_party/session-manager-p
   - `internal/service/connect.go`: instance-id 解決、モード→`DocumentName`/`Parameters` 組立、`StartSession`、plugin セッション起動
   - `internal/cli/aws_connect.go`: cobra コマンド (`-L` / `--tty` / 位置引数、`SetInterspersed(false)`)、`aws.go` の `AddCommand` に配線
 - テスト方針: argv/Parameters 組立と引数解析はピュア関数化してユニットテスト。実セッションは手動 E2E (CI 非搭載)。
+
+## 13. 資格情報解決とマルチアカウントプロファイル (ADR 0011)
+
+### 13.1 解決優先順位
+
+`awsx.NewClients` の資格情報解決は次の優先順位で行う:
+
+1. **active nakama profile** (`nakama aws profile load` 済みの場合)。
+   `aws configure export-credentials --profile nakama-<accountID>` を
+   `AWS_CONFIG_FILE=~/.config/nakama/aws_config` 環境で実行する
+   `AWSCLICredentialsProvider` のみで解決し、STS GetCallerIdentity で
+   probe する。**fail-closed**: 失敗しても default chain へ
+   フォールバックしない。probe の account ID が active の account ID と
+   不一致の場合もエラー (セッション差し替え検知)。
+   エラーメッセージには alias / account と復旧手順 (`aws login` 再実行 or
+   `nakama aws profile unload`) を含める。
+2. **default chain** (`AWS_PROFILE` / `AWS_DEFAULT_PROFILE` 尊重) + probe。
+3. **`aws configure export-credentials` fallback** (login_session 互換 shim。
+   従来どおり)。
+
+active profile は `AWS_PROFILE` より優先する (1 が 2/3 に先行)。
+active 未設定時は 2→3 の従来フローと完全に同一。
+
+`nakama aws profile` サブコマンド群自身は `NewClients` を経由しない:
+`save` は active を無視した default chain 専用解決
+(`awsx.ResolveCallerIdentity`)、`list`/`load`/`delete`/`unload` は
+AWS SDK 不使用 (セッション検証は `AWSCLICredentialsProvider` の直接利用)。
+これにより active profile が壊れていても `unload` による復旧が常に可能。
+
+### 13.2 ストレージ設計 (`internal/profilestore`)
+
+- ディレクトリ: `$XDG_CONFIG_HOME/nakama` (未設定時 `~/.config/nakama`)。
+  パーミッション 0700。テスト用に `Store.BaseDir` で注入可能。
+- `profiles.json` (0600、temp+rename のアトミック書き込み):
+
+  ```json
+  {
+    "version": 1,
+    "active": "<accountID または空>",
+    "profiles": [
+      {
+        "account_id": "111111111111",
+        "alias": "dev",
+        "login_session": "<ARN 形式の識別子>",
+        "identity_arn": "arn:aws:sts::111111111111:assumed-role/...",
+        "saved_at": "2026-07-30T00:00:00+09:00"
+      }
+    ]
+  }
+  ```
+
+- `aws_config` (0600、同アトミック書き込み): 保存のたびに profiles.json
+  から**全体を再生成** (差分パッチしない)。エントリごとに:
+
+  ```ini
+  [profile nakama-<accountID>]
+  login_session = <ARN>
+  region = ap-northeast-1   ; internal/config.Region
+  ```
+
+- **秘密情報 (アクセスキー / トークン) は一切保存しない**。login_session は
+  AWS CLI のトークンキャッシュ (`~/.aws/login/cache/`) への参照識別子に
+  すぎない。ユーザーの `~/.aws/config` / `~/.aws/credentials` へは
+  書き込まない。

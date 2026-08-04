@@ -53,6 +53,16 @@ make build
 ## 使い方
 
 ```bash
+# 複数 AWS アカウントの切り替え (aws login セッションの保存・選択)
+aws login                        # アカウント A にログイン
+nakama aws profile save          # 現在のログインセッションを保存 (--name a-account で別名指定可)
+aws login                        # アカウント B にログイン (~/.aws/config の login_session は上書きされる)
+nakama aws profile save --name b-account
+nakama aws profile list          # 保存済みを一覧 (ACTIVE 列の * が現在 nakama が使うアカウント)
+nakama aws profile load a-account  # nakama が操作するアカウントを選択
+nakama aws profile unload        # 選択を解除し既定の認証チェーンに戻す
+nakama aws profile delete b-account
+
 # 基盤 (VPC / Subnet / NAT インスタンス / WAF) の作成 (冪等)
 # 既存の NAT Gateway があれば削除し EIP を解放して NAT インスタンスへ移行する
 nakama aws init
@@ -102,6 +112,13 @@ nakama aws connect dev01 -L 5432:db.internal:5432  # instance 経由で別ホス
 > `create --with-admin` は AdministratorAccess を持つ共有 IAM ロール (`nakama-instance-role-admin`) を、`--with-role <role>` は既存の任意 IAM ロールをインスタンスに付与します (両者は排他)。いずれもリソース作成前に `iam:SimulatePrincipalPolicy` で呼び出し元の権限 (`iam:PassRole` 等) をチェックし、権限不足なら**何もリソースを作らずに**エラー終了します (呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要。詳細は ADR 0010)。
 >
 > **セキュリティ注意 (`--with-admin`)**: 付与されるのは AdministratorAccess です。CloudFront + WAF の IP allowlist を通過して code-server にログインできる者は、その開発環境を通じて**実質的に AWS アカウントの管理者権限を行使できます**。`acl` の許可 IP は最小限に保ち、パスワードの取り扱いに注意してください。`--with-role` で SSM 権限 (AmazonSSMManagedInstanceCore) のないロールを指定した場合、`connect` / `update` および初期セットアップのパスワード取得が動作しない可能性があるため、実行時に警告が表示されます。
+
+> `profile` は `aws login` のセッション識別子 (`login_session`) を nakama 側にコピーして、複数アカウントのセッションを共存させる仕組みです (詳細は ADR 0011)。
+>
+> - **保存されるのは識別子のみ**: `login_session` は ARN 形状の非機密な識別子で、アクセスキーやトークンではありません。実際の短期資格情報とリフレッシュトークンは AWS CLI が `~/.aws/login/cache/` で管理し、nakama は読み書きしません。nakama が書くのは `~/.config/nakama/profiles.json` と `~/.config/nakama/aws_config` (いずれも 0600) だけで、**ユーザーの `~/.aws/config` は変更しません**。
+> - **有効期限**: リフレッシュトークンの寿命は最長 12 時間です。期限切れの場合は該当アカウントへ `aws login` し直せば復活します (`profile list` の STATUS 列で確認可)。
+> - **fail-closed**: `load` 済みの状態で当該セッションが解決できない場合、他のアカウントへ暗黙にフォールバックせずエラーになります (意図しないアカウントへリソースを作らないため)。`unload` で既定の認証チェーンに戻せます。
+> - active な profile は `AWS_PROFILE` 環境変数より優先されます。
 
 ## インストール
 
