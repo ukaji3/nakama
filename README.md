@@ -81,6 +81,9 @@ nakama aws create --name app01 --instance-type t3.medium --with-role my-role # �
 nakama aws list                  # TYPE 列で VSCODE 種別を表示
 nakama aws list --show-nat       # NAT インスタンスの稼働状況 (TYPE=NAT, running/stopped) も表示
 nakama aws info dev01 --show-password
+nakama aws open dev01                # ブラウザで開いてパスワードログインを自動通過
+nakama aws open dev01 --no-auth      # 自動ログインなしで URL を開くだけ
+nakama aws open dev01 --print-url    # ブラウザを起動せず URL を表示 (headless / SSH 向け)
 nakama aws stop dev01
 nakama aws start dev01
 nakama aws edit dev01 --ebs 40
@@ -108,6 +111,8 @@ nakama aws connect dev01 -L 5432:db.internal:5432  # instance 経由で別ホス
 ```
 
 > `connect` は AWS Systems Manager Session Manager を使用します。`session-manager-plugin` の取り込みにより**追加バイナリのインストールは不要**です。呼び出し側のプリンシパルには `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession` 権限が必要です (接続先 EC2 の instance role は `init` が付与する `AmazonSSMManagedInstanceCore` で充足)。ログインユーザーは **ubuntu**(code-server の稼働ユーザー)です。Session Manager は `ssm-user` として接続しますが、既定の passwordless sudo を用いて ubuntu に切り替え、対話シェルは単一の `exit` で切断します (詳細は ADR 0009)。
+
+> `open` は code-server の URL をブラウザで開き、パスワードログインを自動通過します (詳細は ADR 0012)。パスワードを SSM から取得し、127.0.0.1 上の 1 回限りのローカルページ (ランダムトークン付き URL) からログインフォームを自動送信する方式のため、**パスワードはディスクに書き込まれず**、メモリ内にのみ存在します。自動ログインができない環境 (ブラウザ起動不可など) では、理由を表示した上で URL を開く/表示するだけの動作に退避します。`--no-auth` で自動ログインなし、`--print-url` でブラウザを起動せず URL 表示 (headless / SSH 向け) を選べます。URL への到達には呼び出し元 IP が WAF allowlist (`nakama aws acl add`) に登録されている必要があります (未登録なら警告が表示されます)。
 
 > `create --with-admin` は AdministratorAccess を持つ共有 IAM ロール (`nakama-instance-role-admin`) を、`--with-role <role>` は既存の任意 IAM ロールをインスタンスに付与します (両者は排他)。いずれもリソース作成前に `iam:SimulatePrincipalPolicy` で呼び出し元の権限 (`iam:PassRole` 等) をチェックし、権限不足なら**何もリソースを作らずに**エラー終了します (呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要。詳細は ADR 0010)。
 >
@@ -165,7 +170,7 @@ make build
 
 ## ステータス
 
-主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `update`) は実装済み。
+主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `update`) は実装済み。
 
 ## ドキュメント
 

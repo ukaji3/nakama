@@ -59,6 +59,7 @@
 | 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY) |
 | 接続 | `nakama aws connect <n> -L <local>:<remote>` | ポートフォワード。`localhost:<local>` を接続先 instance の `<remote>` に転送 |
 | 接続 | `nakama aws connect <n> -L <local>:<host>:<remote>` | instance 経由で `<host>:<remote>` を `localhost:<local>` に転送 |
+| 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
 | プロファイル | `nakama aws profile save [--name <alias>]` | 現在の `aws login` セッション (login_session 識別子 + STS identity) をアカウント ID キーで nakama のレジストリ (`~/.config/nakama`) に保存。active profile は無視して「今 login しているもの」を保存し、同一アカウントの再 save は上書き。alias 省略時はアカウント ID。login_session が無い資格情報 (SSO・アクセスキー等) はエラー (ADR 0011) |
 | プロファイル | `nakama aws profile list` | 保存済みプロファイルを一覧 (ACTIVE / ACCOUNT / ALIAS / IDENTITY / SAVED / STATUS)。STATUS は `aws configure export-credentials` の成否による best-effort 判定 (valid / expired / unknown) |
 | プロファイル | `nakama aws profile load <account\|alias>` | 指定プロファイルを active に設定。以後の全 nakama コマンドはこのアカウントの資格情報**のみ**で動作 (fail-closed、`AWS_PROFILE` より優先)。セッション失効時は警告の上で active は設定 (該当アカウントへの `aws login` 再実行で復活) |
@@ -85,6 +86,7 @@
 - `--note <text>`: バックアップの自由記述メモ。最大 255 文字、Unicode 可 (日本語・空白可)。空文字でメモ消去。識別子ではないため一意性は不要
 - `-L <spec>` (connect 専用): `<localPort>:<remotePort>` または `<localPort>:<host>:<remotePort>`。各ポートは 1–65535。`<host>` 省略時は接続先 instance 自身。コマンド指定とは排他
 - `--tty` (connect 専用): コマンド実行を対話 (PTY) モードにする。省略時は非対話
+- `open` のフラグ: `--no-auth` はパスワード取得と one-shot サーバを完全にスキップ。`--print-url` はブラウザを起動せず URL を表示 (auth 有効時は one-shot ログイン URL も表示し、timeout までローカルサーバを維持。headless / SSH 向け)。`--browser <cmd>` はブラウザ起動コマンドの上書き (URL は末尾引数として付加。`$BROWSER` 環境変数も尊重、優先度は `--browser` > `$BROWSER` > OS 既定)。`--timeout <duration>` は one-shot ページの取得待ち上限 (既定 30s)
 - connect の位置引数: `<name>` の後続をすべてリモートコマンドとして扱う (cobra `SetInterspersed(false)`)。`-L` 等の nakama フラグは `<name>` より前に置く
 - `profile save --name <alias>`: alias が**別アカウント**の alias またはアカウント ID と衝突する場合はエラー (`profile load <alias>` の曖昧化防止)。自アカウントのエントリ上書きは可
 - `profile load/delete <account|alias>`: アカウント ID 完全一致を優先し、次に alias 一致。見つからない場合は保存済み候補一覧付きのエラー
@@ -103,6 +105,7 @@
 - `--with-admin` で作成したインスタンスは AdministratorAccess を持つため、code-server へ到達できる者 (CloudFront + WAF allowlist 通過者) が実質的にアカウント管理者権限を持つ。ACL の管理を厳格に行うこと (ADR 0010)
 - `nakama aws profile` のレジストリ (`~/.config/nakama`, dir 0700 / file 0600) には**秘密情報を保存しない**。保存するのはアカウント ID・alias・login_session (ARN 形式の識別子)・identity ARN・保存時刻のみで、実トークンは AWS CLI 管理の `~/.aws/login/cache/` に残る。ユーザーの `~/.aws/config` / `~/.aws/credentials` へは書き込まない (ADR 0011)
 - active profile 使用時の資格情報解決は fail-closed: 解決失敗時に別チェーンへフォールバックせず、意図しないアカウントへのリソース作成を防ぐ (ADR 0011)
+- `nakama aws open` の自動ログイン (ADR 0012) はパスワードを**メモリ内にのみ**保持する: 127.0.0.1 バインド・カーネル割当ポート・crypto/rand 128 bit の単回使用トークンパス・厳密 1 回配信 (再取得は 410)・`Cache-Control: no-store` / `Referrer-Policy: no-referrer`・html/template によるエスケープ・timeout 経過で自動シャットダウン。ディスク書き込み・ログ出力・`-o json|yaml` への出力は一切しない。code-server の `/login` に CSRF / Origin チェックが無いことに依存するため、将来の code-server 側変更で自動ログインが無効化される可能性がある (その場合も METHOD C fallback で URL オープン自体は動作)
 - Microsoft Marketplace は使用不可。code-server は Open VSX を使用 (上流仕様)
 
 ### 5.2 可用性

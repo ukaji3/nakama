@@ -53,6 +53,7 @@ github.com/ukaji3/nakama
 │   ├── awsx/                    // AWS SDK v2 ラッパー interface (mockable)
 │   ├── service/                 // ユースケース層 (init, instance, acl)
 │   ├── userdata/                // cloud-init User Data テンプレ (//go:embed)
+│   ├── browser/                 // ブラウザ起動 (detached, 注入可能な Launcher。ADR 0012)
 │   ├── naming/                  // リソース命名規約
 │   ├── tagging/                 // タグスキーマ
 │   ├── profilestore/            // マルチアカウントプロファイルの永続化 (~/.config/nakama, ADR 0011)
@@ -309,6 +310,58 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 8. 結果出力: 更新後 code-server version / backup label / reboot 実施有無 / (元 stopped 時) 次回起動で反映の注記
 
 > 設計判断の根拠は ADR 0006 を参照。
+
+### 8.10 `nakama aws open`
+
+code-server の URL をブラウザで開き、パスワードログインを自動通過する
+(根拠と代替案の比較は ADR 0012)。code-server の認証は cookie のみで
+URL トークン認証が存在せず、CLI はブラウザの cookie store に書き込めない
+ため、「ブラウザ自身に `/login` へ top-level form POST させる」方式を取る。
+
+1. **preflight**: `GetInstanceInfo(ctx, name, showPassword)` で情報取得
+   (`--no-auth` 時は showPassword=false)。パスワード読取のみが失敗した
+   場合は showPassword=false で再取得し、成功すれば自動ログインだけを
+   スキップして継続 (METHOD C fallback)。インスタンス未存在は即エラー
+2. **fatal チェック**: distribution domain 未設定 → エラー (provisioning
+   中の可能性を案内)。state が running 以外 → エラー
+   (`nakama aws start <name>` を案内)
+3. **WAF soft check**: `IPDiscoverer.PublicIPv4` + `ListACL` で呼び出し元
+   IP が allowlist に**CIDR containment** (net/netip) で含まれるか確認。
+   未収載なら stderr に警告 (`nakama aws acl add` を案内)。チェック自体の
+   失敗は debug ログのみで続行 (絶対に open を壊さない)
+4. **METHOD A (既定)**: crypto/rand 128 bit の URL-safe トークンを採番し、
+   `127.0.0.1:0` (カーネル割当ポート) に one-shot HTTP サーバを起動。
+   `/<token>` だけが自動 submit フォーム
+   (`POST https://<domain>/login?to=/`、hidden の `password` / `base=.` /
+   `href=https://<domain>/login` は code-server の対話ログインフォームと
+   同一構成) を **1 回だけ**返す (他パスは 404、再取得は 410 Gone)。
+   `Cache-Control: no-store` / `Referrer-Policy: no-referrer` 付与、
+   html/template でエスケープ、外部リソース無し。ブラウザを one-shot URL
+   で起動し、ページ配信を待つ (上限 `--timeout`, 既定 30s)。配信後は
+   猶予付き Shutdown。JS 無効環境向けに可視の submit ボタンも置く
+5. **METHOD C fallback**: パスワード取得失敗 / listener bind 失敗 /
+   ランチャー不在・起動失敗 (`errors.Is(err, exec.ErrNotFound)` で判別) /
+   timeout 内未取得のいずれでも、プレーン URL を開く (ランチャー不在時は
+   stdout に表示する) 動作へ退避。理由と
+   `nakama aws info <name> --show-password` の案内を stderr に出し、
+   URL を開けた/表示できた場合は終了コード 0
+6. **フラグ**: `--no-auth` (METHOD C を明示利用)、`--print-url`
+   (ブラウザ非起動。auth 有効時は plain URL と one-shot URL の両方を表示し
+   timeout までサーバ維持。headless / SSH 向け)、`--browser <cmd>`
+   (起動コマンド上書き。優先度 `--browser` > `$BROWSER` > OS 既定
+   (darwin=`open`, linux=`xdg-open`, windows=`rundll32` best effort))、
+   `--timeout <duration>`
+7. **出力**: `-o json|yaml` は name / url / method (`auto-login`|`plain`) /
+   opened / auto_login (`completed`|`skipped`|`timeout`) / note の
+   構造体。**パスワードはいかなる出力にも含めない**
+
+実装: `internal/cli/aws_open.go` (one-shot サーバ含む)、
+`internal/browser` (detached なブラウザ起動、`Launcher` interface で注入
+可能)。テストは fake backend / fake launcher / httptest 相当のローカル
+listener で AWS・実ブラウザ・外部ネットワークに触れない。
+
+> CloudFront 経由で form POST が実際に cookie を確立するかの E2E は
+> 実 AWS 未検証 (ADR 0012 の UNVERIFIED 項参照)。
 
 ## 9. テスト戦略
 
