@@ -263,7 +263,7 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 
 ### 8.7 `nakama aws connect`
 
-共通フロー: instance-id を `/nakama/<name>/meta/instance-id` から解決 → モードに応じた `DocumentName`/`Parameters` で `ssm:StartSession` → 返却の `SessionId`/`StreamUrl`/`TokenValue` で取り込んだ plugin の `session.Session` を構築 → `Execute()` で data-channel (WSS) を確立。
+共通フロー: instance-id を `/nakama/<name>/meta/instance-id` から解決 → モードに応じた `DocumentName`/`Parameters` で `ssm:StartSession` → 返却の `SessionId`/`StreamUrl`/`TokenValue` で取り込んだ plugin の `session.Session` を構築 → `Execute()` で data-channel (WSS) を確立。セッション本体の実行は hidden な子プロセス (`session-runner`) が担い、恒久切断時は親が自動再接続する (§8.11 / ADR 0014)。
 
 | モード | 起動形 | DocumentName | Parameters | session サブタイプ |
 |---|---|---|---|---|
@@ -362,6 +362,37 @@ listener で AWS・実ブラウザ・外部ネットワークに触れない。
 
 > CloudFront 経由で form POST が実際に cookie を確立するかの E2E は
 > 実 AWS 未検証 (ADR 0012 の UNVERIFIED 項参照)。
+
+### 8.11 `nakama aws connect` の自動再接続 (ADR 0014)
+
+vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` またはプロセス宙吊りで終える設計のため、切断検知は**親プロセス監督方式 (child re-exec)** で行う。
+
+```
+[nakama aws connect]                     [nakama aws session-runner (hidden, 子プロセス)]
+  ├ instance-id 解決
+  ├ loop:
+  │   ├ ssm:StartSession
+  │   ├ 子を spawn ──────────────────────► fd 3 から payload JSON (SessionId/StreamUrl/
+  │   │   ├ stdin/stdout/stderr 継承        TokenValue/region/endpoint/instance-id) を読取
+  │   │   ├ payload は fd 3 (pipe) 経由     awsx.NewClients → plugin Session を Execute
+  │   │   └ env: SSM_PLUGIN_DISCONNECT_     (SSM_PLUGIN_SKIP_CLIENT_CONFIGURE=true)
+  │   │        EXIT_CODE=74 (--retry>0 時)   ├ 正常終了 → exit 0
+  │   ├ 子の実行中 SIGINT/SIGTSTP/SIGQUIT     ├ 恒久切断 (timeout/リトライ枯渇/再送
+  │   │   を無視 (終了後に復元)               │  timeout) → exit 74 (env ゲートパッチ)
+  │   └ 子の exit code で分類:               └ その他エラー → exit 1
+  │       0  → 正常終了 (ループ終了)
+  │       74 → 恒久切断: 60s 以上生存していたら試行カウンタをリセット →
+  │            予算内なら通知 + 指数バックオフ (1s,2s,4s,8s,16s,30s cap) → StartSession から再実行
+  │       他 → ExitCodeError としてそのまま伝播 (cmd/nakama が同一コードで exit)
+  └ StartSession 失敗の分類 (smithy APIError コード):
+      認証系 (ExpiredToken 等) → 中断し `aws login` を案内 /
+      TargetNotConnected → 予算内でバックオフ再試行 / その他 → 即エラー
+```
+
+- TokenValue は秘匿値のため argv・環境変数・ディスクに置かず、fd 3 の pipe でのみ受け渡す
+- `--retry` 既定: シェル / ポートフォワード = 5、コマンドモード = 0 (明示指定はモード不問で尊重)。`--retry 0` では env ゲートを設定せず spawn するため子の挙動は従来の一発実行と同一
+- 監督ループは `runSession` / `sleep` / `now` / `notify` を関数フィールド注入可能にし、実プロセス・実 AWS なしでユニットテスト (`internal/service/connect_reconnect_test.go`)
+- vendored パッチの一覧は `third_party/session-manager-plugin/PINNED.md` の「Local patches」節を参照
 
 ## 9. テスト戦略
 
