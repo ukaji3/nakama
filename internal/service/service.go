@@ -17,6 +17,11 @@ import (
 // use-case method. Construct via NewService.
 type Service struct {
 	clients *awsx.Clients
+
+	// connect holds the process-supervision hooks used by Connect
+	// (`nakama aws connect` auto-reconnect, ADR 0014). nil selects the
+	// production defaults; tests inject fakes. See connect_session.go.
+	connect *connectHooks
 }
 
 // NewService returns a Service backed by the given AWS clients.

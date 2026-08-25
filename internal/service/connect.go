@@ -2,25 +2,14 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-
-	"github.com/twinj/uuid"
-
-	"github.com/aws/session-manager-plugin/src/datachannel"
-	smplog "github.com/aws/session-manager-plugin/src/log"
-	smpsession "github.com/aws/session-manager-plugin/src/sessionmanagerplugin/session"
-
-	// Blank imports register the Standard_Stream (shell) and Port
-	// session handlers into the plugin's SessionRegistry via their
-	// package init() functions.
-	_ "github.com/aws/session-manager-plugin/src/sessionmanagerplugin/session/portsession"
-	_ "github.com/aws/session-manager-plugin/src/sessionmanagerplugin/session/shellsession"
 )
 
 // ConnectInput selects the connect mode. The three modes are mutually
@@ -33,58 +22,149 @@ type ConnectInput struct {
 	LocalPort  string   // port-forward: local listener port
 	RemotePort string   // port-forward: target port
 	RemoteHost string   // optional: forward through the instance to this host
+
+	// MaxRetries is the maximum number of automatic reconnect attempts
+	// after a permanent disconnect (server-side session gone, e.g. after
+	// EC2 hibernate/stop, or websocket retries exhausted). 0 disables
+	// reconnection (single run). See ADR 0014.
+	MaxRetries int
 }
 
 // Connect opens an AWS Systems Manager Session Manager session to the
-// nakama instance and drives it with the vendored session-manager-plugin
-// (see third_party/session-manager-plugin). Credentials resolved by
-// nakama (including the `aws login` fallback) are injected into the
-// session so the plugin does not run its own credential chain.
+// nakama instance and supervises it (ADR 0014): the session itself is
+// executed by a child re-exec of the nakama binary (hidden
+// `nakama aws session-runner` command) because the vendored
+// session-manager-plugin terminates the whole process with os.Exit on
+// both normal and abnormal session end. The child is spawned with
+// SSM_PLUGIN_DISCONNECT_EXIT_CODE so permanent disconnects surface as a
+// dedicated exit code, which this supervisor turns into a fresh
+// StartSession + child run with exponential backoff.
 func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 	if err := ValidateInstanceName(in.Name); err != nil {
 		return err
+	}
+	if in.MaxRetries < 0 {
+		return fmt.Errorf("invalid retry count %d: must be >= 0", in.MaxRetries)
 	}
 	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
 	if instanceID == "" {
 		return fmt.Errorf("nakama instance %q not found", in.Name)
 	}
 
+	hooks := s.connectHooksOrDefault()
 	docName, params := connectDocument(in)
-	out, err := s.clients.SSM.StartSession(ctx, &ssm.StartSessionInput{
-		Target:       aws.String(instanceID),
-		DocumentName: docName,
-		Parameters:   params,
-	})
-	if err != nil {
-		return fmt.Errorf("StartSession: %w", err)
+	shellMode := len(in.Command) == 0 && in.LocalPort == ""
+
+	// With reconnection disabled the child runs without the disconnect
+	// exit-code gate, so its behavior (including exit 0 on a server-side
+	// session timeout) is identical to the pre-ADR-0014 single run.
+	disconnectCode := 0
+	if in.MaxRetries > 0 {
+		disconnectCode = DisconnectExitCode
 	}
 
-	creds, err := s.clients.Credentials.Retrieve(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve credentials: %w", err)
-	}
-	// Tell the vendored plugin to skip its own credential lookup in
-	// OpenDataChannel and use the Signer/Credentials we set below.
-	// Scope the variable to this call so it is not inherited by any
-	// later child process (CWE-526).
-	defer func() { _ = os.Unsetenv("SSM_PLUGIN_SKIP_CLIENT_CONFIGURE") }()
-	_ = os.Setenv("SSM_PLUGIN_SKIP_CLIENT_CONFIGURE", "true")
+	// attempt counts reconnects used from the budget of in.MaxRetries.
+	// It is reset after a session that stayed alive for at least
+	// hooks.stableAfter, so long-lived tunnels never exhaust the budget
+	// across days (autossh-style).
+	attempt := 0
+	for {
+		out, err := s.clients.SSM.StartSession(ctx, &ssm.StartSessionInput{
+			Target:       aws.String(instanceID),
+			DocumentName: docName,
+			Parameters:   params,
+		})
+		if err != nil {
+			switch classifyStartSessionError(err) {
+			case startSessionErrAuth:
+				return fmt.Errorf("StartSession failed with an authentication error: %w\n"+
+					"Your AWS credentials have likely expired; run `aws login` (or refresh "+
+					"your credentials) and reconnect", err)
+			case startSessionErrRetryable:
+				if attempt >= in.MaxRetries {
+					return fmt.Errorf("StartSession: %w", err)
+				}
+				attempt++
+				_, _ = fmt.Fprintf(hooks.notify, "target not connected; retrying (attempt %d/%d)...\n",
+					attempt, in.MaxRetries)
+				if err := hooks.sleep(ctx, backoffDelay(attempt)); err != nil {
+					return err
+				}
+				continue
+			default:
+				return fmt.Errorf("StartSession: %w", err)
+			}
+		}
 
-	uuid.SwitchFormat(uuid.CleanHyphen)
-	logger := smplog.Logger(false, "nakama-connect")
-	sess := &smpsession.Session{
-		SessionId:   aws.ToString(out.SessionId),
-		StreamUrl:   aws.ToString(out.StreamUrl),
-		TokenValue:  aws.ToString(out.TokenValue),
-		Endpoint:    fmt.Sprintf("https://ssm.%s.amazonaws.com", s.clients.Region),
-		ClientId:    uuid.NewV4().String(),
-		TargetId:    instanceID,
-		Region:      s.clients.Region,
-		DataChannel: &datachannel.DataChannel{},
-		Signer:      v4.NewSigner(),
-		Credentials: creds,
+		payload, err := json.Marshal(sessionRunnerPayload{
+			SessionID:  aws.ToString(out.SessionId),
+			StreamURL:  aws.ToString(out.StreamUrl),
+			TokenValue: aws.ToString(out.TokenValue),
+			Endpoint:   fmt.Sprintf("https://ssm.%s.amazonaws.com", s.clients.Region),
+			Region:     s.clients.Region,
+			TargetID:   instanceID,
+		})
+		if err != nil {
+			return fmt.Errorf("encode session payload: %w", err)
+		}
+
+		startedAt := hooks.now()
+		code, err := hooks.runSession(ctx, payload, disconnectCode)
+		if err != nil {
+			return err
+		}
+		alive := hooks.now().Sub(startedAt)
+
+		switch {
+		case code == 0:
+			return nil
+		case code == DisconnectExitCode && disconnectCode != 0:
+			if alive >= hooks.stableAfter {
+				attempt = 0
+			}
+			if attempt >= in.MaxRetries {
+				return fmt.Errorf("connection lost and %d reconnect attempt(s) exhausted", in.MaxRetries)
+			}
+			attempt++
+			_, _ = fmt.Fprintf(hooks.notify, "connection lost; reconnecting (attempt %d/%d)...\n",
+				attempt, in.MaxRetries)
+			if shellMode {
+				_, _ = fmt.Fprintln(hooks.notify, "note: reconnecting opens a new session; previous shell state is lost")
+			}
+			if err := hooks.sleep(ctx, backoffDelay(attempt)); err != nil {
+				return err
+			}
+			continue
+		case code < 0:
+			return errors.New("session runner terminated abnormally (killed by a signal)")
+		default:
+			// Propagate the child's exit code unchanged (see ExitCodeError
+			// handling in cmd/nakama).
+			return &ExitCodeError{Code: code}
+		}
 	}
-	return sess.Execute(logger)
+}
+
+// connectHooksOrDefault returns the injected supervision hooks or the
+// production defaults (child re-exec, real clock, real sleep, stderr).
+func (s *Service) connectHooksOrDefault() *connectHooks {
+	if s.connect != nil {
+		return s.connect
+	}
+	return defaultConnectHooks()
+}
+
+// backoffDelay returns the exponential backoff before reconnect attempt
+// k (1-based): 1s, 2s, 4s, 8s, 16s, then capped at 30s. No jitter: a
+// single client per session makes thundering herds a non-issue.
+func backoffDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	if attempt > 5 { // 2^(6-1) = 32 > 30s cap
+		return 30 * time.Second
+	}
+	return time.Duration(1<<(attempt-1)) * time.Second
 }
 
 // connectUser is the OS user that connect sessions land in. Session

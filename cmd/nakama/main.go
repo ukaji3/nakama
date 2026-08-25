@@ -7,16 +7,24 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/ukaji3/nakama/internal/cli"
+	"github.com/ukaji3/nakama/internal/service"
 )
 
 func main() {
 	if err := cli.NewRootCommand().Execute(); err != nil {
 		// cobra already prints the error; we just translate to an exit code.
 		fmt.Fprintln(os.Stderr)
+		// `nakama aws connect` propagates the exit code of its session
+		// child unchanged (ADR 0014).
+		var ec *service.ExitCodeError
+		if errors.As(err, &ec) {
+			os.Exit(ec.Code)
+		}
 		os.Exit(1)
 	}
 }

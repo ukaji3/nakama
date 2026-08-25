@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -96,6 +97,11 @@ func (s *Session) OpenDataChannel(log log.T) (err error) {
 			s.retryParams.CallableFunc = func() (err error) { return s.ResumeSessionHandler(log) }
 			if err = s.retryParams.Call(); err != nil {
 				log.Error(err)
+				// NAKAMA PATCH: reconnect retries are exhausted; upstream only
+				// logs and leaves the session hanging. Report a permanent
+				// disconnect when SSM_PLUGIN_DISCONNECT_EXIT_CODE is set
+				// (no-op otherwise).
+				nakamaExitOnPermanentDisconnect()
 			}
 		})
 
@@ -121,6 +127,23 @@ func (s *Session) ProcessFirstMessage(log log.T, outputMessage message.ClientMes
 		}
 	}
 	return true, nil
+}
+
+// NAKAMA PATCH: nakamaExitOnPermanentDisconnect terminates the process
+// with the exit code given in the SSM_PLUGIN_DISCONNECT_EXIT_CODE
+// environment variable. nakama's `aws connect` supervisor sets it on the
+// child session process so that permanent disconnects (session timed out
+// on the server, reconnect retries exhausted, stream resend timeout) are
+// distinguishable from a normal session end (exit 0). When the variable
+// is unset or not an integer this function is a no-op, preserving the
+// upstream behavior exactly (same gating style as
+// SSM_PLUGIN_SKIP_CLIENT_CONFIGURE in OpenDataChannel above).
+func nakamaExitOnPermanentDisconnect() {
+	if v := os.Getenv("SSM_PLUGIN_DISCONNECT_EXIT_CODE"); v != "" {
+		if code, err := strconv.Atoi(v); err == nil {
+			os.Exit(code)
+		}
+	}
 }
 
 // Stop will end the session
@@ -199,6 +222,11 @@ func (s *Session) ResumeSessionHandler(log log.T) (err error) {
 	} else if s.TokenValue == "" {
 		log.Debugf("Session: %s timed out", s.SessionId)
 		fmt.Fprintf(os.Stdout, "Session: %s timed out.\n", s.SessionId)
+		// NAKAMA PATCH: the server-side session is gone (typical after EC2
+		// hibernate/stop); report it as a permanent disconnect when
+		// SSM_PLUGIN_DISCONNECT_EXIT_CODE is set, else fall through to the
+		// upstream os.Exit(0).
+		nakamaExitOnPermanentDisconnect()
 		os.Exit(0)
 	}
 	s.DataChannel.GetWsChannel().SetChannelToken(s.TokenValue)
