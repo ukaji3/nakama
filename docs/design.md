@@ -444,33 +444,43 @@ replace github.com/aws/session-manager-plugin => ./third_party/session-manager-p
   - `internal/cli/aws_connect.go`: cobra コマンド (`-L` / `--tty` / 位置引数、`SetInterspersed(false)`)、`aws.go` の `AddCommand` に配線
 - テスト方針: argv/Parameters 組立と引数解析はピュア関数化してユニットテスト。実セッションは手動 E2E (CI 非搭載)。
 
-## 13. 資格情報解決とマルチアカウントプロファイル (ADR 0011)
+## 13. 資格情報解決とマルチアカウントプロファイル (ADR 0011, ADR 0016)
 
 ### 13.1 解決優先順位
 
-`awsx.NewClients` の資格情報解決は次の優先順位で行う:
+`awsx.NewClients` の資格情報解決は次の優先順位で行う。ADR 0016 以降、
+すべてネイティブ実装 (internal/signin) で、**aws CLI へのシェルアウトは
+存在しない**:
 
-1. **active nakama profile** (`nakama aws profile load` 済みの場合)。
-   `aws configure export-credentials --profile nakama-<accountID>` を
-   `AWS_CONFIG_FILE=~/.config/nakama/aws_config` 環境で実行する
-   `AWSCLICredentialsProvider` のみで解決し、STS GetCallerIdentity で
-   probe する。**fail-closed**: 失敗しても default chain へ
-   フォールバックしない。probe の account ID が active の account ID と
-   不一致の場合もエラー (セッション差し替え検知)。
-   エラーメッセージには alias / account と復旧手順 (`aws login` 再実行 or
-   `nakama aws profile unload`) を含める。
+1. **active nakama profile** (`nakama aws profile load` /
+   `nakama aws login` 済みの場合)。profilestore に保存された
+   login_session から `signin.RefreshingCredentialsProvider` (§13.3) で
+   解決し、STS GetCallerIdentity で probe する。**fail-closed**: 失敗
+   しても default chain へフォールバックしない。probe の account ID が
+   active の account ID と不一致の場合もエラー (セッション差し替え検知)。
+   エラーメッセージには alias / account と復旧手順 (`nakama aws login`
+   再実行 or `nakama aws profile unload`) を含める。
 2. **default chain** (`AWS_PROFILE` / `AWS_DEFAULT_PROFILE` 尊重) + probe。
-3. **`aws configure export-credentials` fallback** (login_session 互換 shim。
-   従来どおり)。
+3. **login_session fallback** (SDK Go v2 は login_session を解釈しない
+   ための互換レイヤ)。ユーザーの AWS config (`AWS_CONFIG_FILE` 尊重、
+   なければ `~/.aws/config`) の対象セクション (`AWS_PROFILE` 設定時は `[profile <name>]`、それ以外は `[default]`) を**読み取り専用の
+   自前 INI パース** (`awsx.ResolveDefaultLoginSession`) で参照し、
+   `login_session` があれば 1 と同じ provider で解決。config への
+   書き込みは一切行わない。
 
 active profile は `AWS_PROFILE` より優先する (1 が 2/3 に先行)。
-active 未設定時は 2→3 の従来フローと完全に同一。
+provider は `aws.NewCredentialsCache` (ExpiryWindow =
+`signin.RefreshThreshold` = 5 分) でラップされ、失効 5 分前を切ると
+provider の Retrieve が呼び直されてネイティブリフレッシュが走る。
 
-`nakama aws profile` サブコマンド群自身は `NewClients` を経由しない:
-`save` は active を無視した default chain 専用解決
-(`awsx.ResolveCallerIdentity`)、`list`/`load`/`delete`/`unload` は
-AWS SDK 不使用 (セッション検証は `AWSCLICredentialsProvider` の直接利用)。
-これにより active profile が壊れていても `unload` による復旧が常に可能。
+`nakama aws profile` / `nakama aws login` サブコマンド群自身は
+`NewClients` を経由しない: `save` は active を無視した default chain
+専用解決 (`awsx.ResolveCallerIdentity`)、`login` は sign-in フロー後に
+`awsx.ResolveLoginSessionIdentity` (login_session 直指定の STS probe)、
+`list`/`load` のセッション検証は `awsx.CheckLoginSession`
+(provider.Retrieve のみ、STS 不使用)、`delete`/`unload` は AWS SDK
+不使用。これにより active profile が壊れていても `unload` による復旧が
+常に可能。
 
 ### 13.2 ストレージ設計 (`internal/profilestore`)
 
@@ -495,7 +505,10 @@ AWS SDK 不使用 (セッション検証は `AWSCLICredentialsProvider` の直�
   ```
 
 - `aws_config` (0600、同アトミック書き込み): 保存のたびに profiles.json
-  から**全体を再生成** (差分パッチしない)。エントリごとに:
+  から**全体を再生成** (差分パッチしない)。ADR 0016 以降 nakama 自身は
+  このファイルを消費しない (資格情報解決はネイティブ)。互換/デバッグ用
+  に生成を継続する (`AWS_CONFIG_FILE` を指せば aws CLI からも保存済み
+  プロファイルを利用可能)。エントリごとに:
 
   ```ini
   [profile nakama-<accountID>]
@@ -507,6 +520,30 @@ AWS SDK 不使用 (セッション検証は `AWSCLICredentialsProvider` の直�
   AWS CLI のトークンキャッシュ (`~/.aws/login/cache/`) への参照識別子に
   すぎない。ユーザーの `~/.aws/config` / `~/.aws/credentials` へは
   書き込まない。
+
+### 13.3 ネイティブ sign-in クライアント (`internal/signin`, ADR 0016)
+
+`aws login` プロトコル (OAuth 2.0 authorization code + PKCE + DPoP) の
+ネイティブ Go 実装。構成:
+
+| 要素 | 役割 |
+|---|---|
+| `Login(ctx, LoginOptions)` | フロー全体のオーケストレーション。same-device (127.0.0.1 の一回限りコールバックサーバー、全体 10 分タイムアウト、state 検証) / cross-device (`--remote`、base64 貼り付けコードの parse + state 検証) の両フローを実装し、成功時にトークンをキャッシュへ保存して login_session と account ID を返す |
+| `Client` | `POST {base}/v1/token` の薄いクライアント。DPoP ヘッダー付与、SigV4 なし、非 2xx を `*APIError` (error コード + 対処のみ、サーバーメッセージは含めない) にマップ。BaseURL / HTTPClient / 時計はテスト注入可能で、既定の HTTPClient は `proxy.NewTransport()` + 30s タイムアウト |
+| `TokenCache` | AWS CLI バイト互換のトークンキャッシュ (`AWS_LOGIN_CACHE_DIRECTORY` または `~/.aws/login/cache`、ファイル名 = hex(sha256(login_session)) + ".json"、dir 0700 / file 0600、temp+rename のアトミック書き込み) |
+| `RefreshingCredentialsProvider` | `aws.CredentialsProvider` 実装。キャッシュ読取り → 残り 5 分超ならそのまま返却 (ネットワークなし) → 以下なら DPoP リフレッシュ + refresh token 回転をキャッシュへ保存。mutex で並行 Retrieve に安全。`aws.NewCredentialsCache` (ExpiryWindow=5 分) でラップして使用 |
+| DPoP/PKCE ヘルパ | ES256 JWT 生成 (P-256、r\|\|s 固定長署名)、SEC1 PEM の直列化/復元、64 文字 verifier 生成と S256 チャレンジ計算 |
+
+セキュリティ不変条件: アクセストークン・refresh token・秘密鍵・idToken
+を argv/環境変数/ログ/エラーメッセージに含めない。コールバックの
+認可コードもログに出さない。エラーには sign-in の error コードと対処のみ
+を載せる。
+
+`nakama aws login` (internal/cli/aws_login.go) はこの上に乗り、
+ブラウザ起動 (internal/browser、起動失敗時も URL 表示で待機継続) →
+`signin.Login` → `awsx.ResolveLoginSessionIdentity` による STS 識別確認 →
+profilestore への自動 save & load (alias 既定はアカウント ID、
+`--name` で上書き、collision 検査は profile save と共通) を行う。
 
 ## 14. アウトバウンド通信のプロキシ解決 (ADR 0015)
 
