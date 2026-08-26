@@ -9,6 +9,7 @@ func newAWSCommand() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newAWSInitCommand(),
+		newAWSLoginCommand(),
 		newAWSACLCommand(),
 		newAWSCreateCommand(),
 		newAWSListCommand(),

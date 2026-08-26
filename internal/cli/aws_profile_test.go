@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +27,7 @@ func newTestProfileDeps(t *testing.T) (profileDeps, *profilestore.Store) {
 		loginSession: func(context.Context) (string, error) {
 			return "arn:aws:signin:::user/example", nil
 		},
-		checkProfile: func(context.Context, string, string) error { return nil },
+		checkSession: func(context.Context, string) error { return nil },
 		now: func() time.Time {
 			return time.Date(2026, 7, 30, 0, 0, 0, 0, time.FixedZone("JST", 9*3600))
 		},
@@ -166,11 +165,11 @@ func TestProfileList_ActiveMarkAndColumns(t *testing.T) {
 		prof("111111111111", "dev"),
 		prof("222222222222", "prod"),
 	)
-	deps.checkProfile = func(_ context.Context, profileName, configFile string) error {
-		if configFile == "" {
-			t.Error("checkProfile must receive nakama's aws_config path")
+	deps.checkSession = func(_ context.Context, loginSession string) error {
+		if loginSession == "" {
+			t.Error("checkSession must receive the profile's login session")
 		}
-		if profileName == "nakama-111111111111" {
+		if loginSession == "arn:aws:signin:::user/dev" {
 			return errors.New("expired token") // -> expired
 		}
 		return nil // -> valid
@@ -235,7 +234,6 @@ func TestClassifyProfileStatus(t *testing.T) {
 	}{
 		{nil, "valid"},
 		{errors.New("expired token"), "expired"},
-		{exec.ErrNotFound, "unknown"},
 		{context.DeadlineExceeded, "unknown"},
 		{context.Canceled, "unknown"},
 	}
@@ -292,7 +290,7 @@ func TestProfileLoad_NotFoundListsCandidates(t *testing.T) {
 func TestProfileLoad_ExpiredSessionWarnsButLoads(t *testing.T) {
 	deps, store := newTestProfileDeps(t)
 	seedProfiles(t, store, "", prof("111111111111", "dev"))
-	deps.checkProfile = func(context.Context, string, string) error {
+	deps.checkSession = func(context.Context, string) error {
 		return errors.New("expired token")
 	}
 	_, errOut, err := runProfileCommand(t, deps, "load", "dev")

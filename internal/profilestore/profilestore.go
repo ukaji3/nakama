@@ -17,8 +17,12 @@
 //
 //	profiles.json  (0600)  the registry itself
 //	aws_config     (0600)  an AWS-CLI-format config regenerated from
-//	                       profiles.json on every save; handed to `aws`
-//	                       child processes via AWS_CONFIG_FILE
+//	                       profiles.json on every save; kept for
+//	                       compatibility/debugging (point AWS_CONFIG_FILE
+//	                       at it to use the profiles with the aws CLI).
+//	                       Since ADR 0016 nakama itself resolves
+//	                       credentials natively and no longer consumes
+//	                       this file.
 package profilestore
 
 import (
