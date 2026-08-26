@@ -38,7 +38,8 @@ inbound は CloudFront 経由のみで固定 IP を必要としません)。
 - AWS CLI 同等の認証 (SSO / Profile / 環境変数) が利用可能
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用)
 - `connect` 利用時は呼び出し側プリンシパルに `ssm:StartSession` 等が追加で必要
-- ビルド環境: Go 1.23+
+- ビルド環境: Go 1.23+ (クロスコンパイル可: linux / darwin / windows)
+- 実行環境 (クライアント OS): Linux / macOS / Windows
 
 ## インストール
 
@@ -129,14 +130,15 @@ nakama aws connect dev01 -L 5432:db.internal:5432  # instance 経由で別ホス
 
 ## インストール
 
-### バイナリ (Linux / macOS)
+### バイナリ (Linux / macOS / Windows)
 
 [Releases](https://github.com/ukaji3/nakama/releases) から OS / アーキテクチャに合うアーカイブを取得し、`PATH` の通った場所に置きます。
 
-| OS | Arch |
-|---|---|
-| Linux | `amd64`, `arm64` |
-| macOS | `amd64`, `arm64`, `universal` (Intel + Apple Silicon の単一バイナリ) |
+| OS | Arch | 形式 |
+|---|---|---|
+| Linux | `amd64`, `arm64` | `tar.gz` |
+| macOS | `amd64`, `arm64`, `universal` (Intel + Apple Silicon の単一バイナリ) | `tar.gz` |
+| Windows | `amd64`, `arm64` | `zip` |
 
 例 (Linux amd64、`vX.Y.Z` は対象タグ):
 
@@ -169,6 +171,20 @@ cd nakama
 make build
 ./bin/nakama version
 ```
+
+## 企業プロキシ環境での利用
+
+nakama の全アウトバウンド通信 (AWS API / `connect` の WebSocket / グローバル IP 取得) は、以下の優先順位でプロキシを自動解決します (詳細は ADR 0015)。
+
+1. **環境変数** — `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` (小文字も可) が設定されていればそれを使用
+2. **OS のプロキシ設定** — 環境変数が未設定の場合:
+   - **Windows**: 「インターネット オプション」/ WinHTTP の静的設定と **PAC スクリプト**を自動検出 (AD 等でプロキシ設定のみ配布される環境でも追加設定不要)
+   - **macOS**: OS 設定の自動検出は**非対応** (リリースバイナリは CGO_ENABLED=0 のため)。プロキシ利用時は環境変数を設定してください
+   - **Linux**: 従来どおり環境変数のみ
+
+TLS 検証は Go 標準の platform verifier により **OS の証明書ストア**を使用するため、AD 等で配布された企業 CA (TLS 傍受プロキシの CA を含む) は Windows / macOS では自動的に信頼されます。CA バンドルの追加設定は不要です。
+
+> **運用注意**: 監査型プロキシが WebSocket (CONNECT トンネル上のアップグレード) を遮断する環境では、`connect` (Session Manager の data-channel は WSS) は利用できません。この場合はプロキシ管理者に WebSocket の許可を依頼してください。
 
 ## ステータス
 
