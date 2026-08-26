@@ -18,6 +18,7 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -40,6 +41,10 @@ universal_binaries:
 archives:
   - id: default
     formats: [tar.gz]
+    # Windows users expect zip; everything else stays tar.gz.
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_
       {{- if eq .Arch "all" }}universal

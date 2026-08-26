@@ -60,6 +60,37 @@ jobs:
           /tmp/nakama --help
           /tmp/nakama version
 
+  test-windows:
+    name: Test (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          check-latest: true
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      # -race is intentionally omitted on Windows: the race runtime
+      # requires cgo (a working gcc toolchain) there, which the hosted
+      # runner does not guarantee. Race coverage is provided by the
+      # ubuntu job above.
+      - name: Test (no -race)
+        run: go test -count=1 ./...
+
+      - name: Build
+        run: go build -o nakama.exe ./cmd/nakama
+
+      - name: Smoke test (--help / version)
+        run: |
+          .\nakama.exe --help
+          .\nakama.exe version
+
   vuln:
     name: govulncheck
     runs-on: ubuntu-latest

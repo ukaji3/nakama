@@ -8,8 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
-	"syscall"
 	"time"
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
@@ -45,6 +43,14 @@ const DisconnectExitCode = 74
 // upstream behavior (os.Exit(0) on permanent disconnect).
 const disconnectExitCodeEnv = "SSM_PLUGIN_DISCONNECT_EXIT_CODE"
 
+// SessionPayloadHandleEnv is the environment variable through which
+// the Connect supervisor tells the Windows session-runner child which
+// inherited handle carries the session payload pipe (ExtraFiles is not
+// supported on Windows). Its value is the numeric handle only — never
+// the payload itself, which contains the secret TokenValue and stays
+// inside the pipe. Unused on unix, where the pipe is always fd 3.
+const SessionPayloadHandleEnv = "NAKAMA_SESSION_PAYLOAD_HANDLE"
+
 // sessionRunnerArgs is the argv (after the binary path) of the hidden
 // child command that executes a single Session Manager session. It must
 // match the command tree in internal/cli (aws_session_runner.go).
@@ -53,7 +59,8 @@ var sessionRunnerArgs = []string{"aws", "session-runner"}
 // sessionRunnerPayload carries the StartSession result from the Connect
 // supervisor (parent) to the session-runner child. It contains the
 // session TokenValue, a secret, and is therefore passed over an
-// inherited pipe on fd 3 — never via argv, the environment, or disk.
+// inherited pipe (fd 3 on unix, an inherited handle on Windows) —
+// never via argv, the environment, or disk.
 type sessionRunnerPayload struct {
 	SessionID  string `json:"sessionId"`
 	StreamURL  string `json:"streamUrl"`
@@ -97,8 +104,11 @@ func defaultConnectHooks() *connectHooks {
 // spawnSessionRunner re-executes the current nakama binary as the
 // hidden `nakama aws session-runner` command and waits for it. The
 // session payload (which contains the secret TokenValue) is handed over
-// on fd 3 via ExtraFiles; stdin/stdout/stderr are inherited so the
-// child owns the terminal for the session's lifetime.
+// on an inherited pipe (fd 3 via ExtraFiles on unix, an inherited
+// handle on Windows — see attachSessionPayload in
+// connect_session_unix.go / connect_session_windows.go);
+// stdin/stdout/stderr are inherited so the child owns the terminal for
+// the session's lifetime.
 func spawnSessionRunner(ctx context.Context, payload []byte, disconnectCode int) (int, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -124,20 +134,26 @@ func spawnSessionRunner(ctx context.Context, payload []byte, disconnectCode int)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.ExtraFiles = []*os.File{r} // becomes fd 3 in the child
 	env := os.Environ()
 	if disconnectCode > 0 {
 		env = append(env, fmt.Sprintf("%s=%d", disconnectExitCodeEnv, disconnectCode))
 	}
 	cmd.Env = env
+	// Hand the payload pipe's read end to the child. The mechanism is
+	// OS-specific (fd 3 via ExtraFiles on unix, an inherited handle on
+	// Windows); the payload content itself never leaves the pipe.
+	if err := attachSessionPayload(cmd, r); err != nil {
+		return -1, fmt.Errorf("attach session payload: %w", err)
+	}
 
 	// While the child runs, the parent must survive terminal-generated
 	// signals: in shell mode ^C (SIGINT) is forwarded to the remote by
 	// the plugin in the child, and the supervisor dying first would
 	// orphan the session. Dispositions are restored after the child
-	// exits.
-	signal.Ignore(os.Interrupt, syscall.SIGTSTP, syscall.SIGQUIT)
-	defer signal.Reset(os.Interrupt, syscall.SIGTSTP, syscall.SIGQUIT)
+	// exits. The exact signal set is OS-specific (ignoreTerminalSignals
+	// in connect_session_unix.go / connect_session_windows.go).
+	restoreSignals := ignoreTerminalSignals()
+	defer restoreSignals()
 
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("start session runner: %w", err)
@@ -146,7 +162,7 @@ func spawnSessionRunner(ctx context.Context, payload []byte, disconnectCode int)
 	go func() { done <- cmd.Wait() }()
 	select {
 	case <-ctx.Done():
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+		_ = terminateSessionRunner(cmd.Process)
 		<-done
 		return -1, ctx.Err()
 	case err := <-done:
@@ -175,8 +191,9 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 }
 
 // RunSessionRunner is the child-process half of Connect: it decodes the
-// session payload received from the supervisor (fd 3) and drives the
-// vendored session-manager-plugin. On a normal session end the plugin
+// session payload received from the supervisor (fd 3 on unix, an
+// inherited handle on Windows) and drives the vendored
+// session-manager-plugin. On a normal session end the plugin
 // terminates the process with os.Exit(0); with
 // SSM_PLUGIN_DISCONNECT_EXIT_CODE set (by the supervisor) a permanent
 // disconnect terminates it with that code instead. Credentials resolved
