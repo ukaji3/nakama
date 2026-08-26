@@ -327,7 +327,10 @@ func TestDefaultBaseDir_XDGAndHome(t *testing.T) {
 	}
 
 	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("HOME", tmp) // keep the fallback inside the temp dir
+	// Keep the fallback inside the temp dir. os.UserHomeDir reads $HOME
+	// on unix but %USERPROFILE% on Windows, so set both.
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	got, err = DefaultBaseDir()
 	if err != nil {
 		t.Fatalf("DefaultBaseDir (home fallback): %v", err)
