@@ -10,6 +10,7 @@ import (
 	"time"
 
 	nakamaConfig "github.com/ukaji3/nakama/internal/config"
+	"github.com/ukaji3/nakama/internal/proxy"
 )
 
 var errEmptyAMIParameter = errors.New("ssm parameter for ubuntu ami returned empty value")
@@ -28,10 +29,12 @@ type httpIPDiscoverer struct {
 }
 
 // NewHTTPIPDiscoverer returns the production IPDiscoverer that calls
-// the AWS-published checkip endpoint (config.CheckIPURL).
+// the AWS-published checkip endpoint (config.CheckIPURL). The client
+// resolves proxies via internal/proxy (env vars first, then OS
+// settings) instead of the default http.ProxyFromEnvironment.
 func NewHTTPIPDiscoverer() IPDiscoverer {
 	return &httpIPDiscoverer{
-		client: &http.Client{Timeout: 5 * time.Second},
+		client: &http.Client{Timeout: 5 * time.Second, Transport: proxy.NewTransport()},
 		url:    nakamaConfig.CheckIPURL,
 	}
 }

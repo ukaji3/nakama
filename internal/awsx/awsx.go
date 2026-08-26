@@ -18,13 +18,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	nakamaConfig "github.com/ukaji3/nakama/internal/config"
 	"github.com/ukaji3/nakama/internal/profilestore"
+	"github.com/ukaji3/nakama/internal/proxy"
 )
 
 // Clients aggregates every AWS client wrapper nakama uses.
@@ -261,9 +264,19 @@ func profileFromEnv() string {
 // loadConfig wraps config.LoadDefaultConfig with the optional
 // profile/region overrides and (when non-nil) a custom credentials
 // provider.
+//
+// The HTTP client is always replaced with one whose Proxy is
+// proxy.Func(): the SDK's default BuildableClient uses
+// http.ProxyFromEnvironment, which ignores OS-level proxy settings
+// (Windows WinHTTP/IE, PAC). Both credential-resolution paths — the
+// active nakama profile and the default chain — funnel through this
+// function, so every AWS API call gets the same proxy behavior.
 func loadConfig(ctx context.Context, profile string, provider aws.CredentialsProvider) (aws.Config, error) {
 	opts := []func(*config.LoadOptions) error{
 		config.WithRegion(nakamaConfig.Region),
+		config.WithHTTPClient(awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+			tr.Proxy = proxy.Func()
+		})),
 	}
 	if profile != "" {
 		opts = append(opts, config.WithSharedConfigProfile(profile))

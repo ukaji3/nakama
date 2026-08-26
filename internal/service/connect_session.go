@@ -13,6 +13,7 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/smithy-go"
 
+	"github.com/gorilla/websocket"
 	"github.com/twinj/uuid"
 
 	"github.com/aws/session-manager-plugin/src/datachannel"
@@ -26,6 +27,7 @@ import (
 	_ "github.com/aws/session-manager-plugin/src/sessionmanagerplugin/session/shellsession"
 
 	"github.com/ukaji3/nakama/internal/awsx"
+	"github.com/ukaji3/nakama/internal/proxy"
 )
 
 // DisconnectExitCode is the process exit code the session-runner child
@@ -208,6 +210,17 @@ func RunSessionRunner(ctx context.Context, clients *awsx.Clients, payloadJSON []
 	if err != nil {
 		return fmt.Errorf("resolve credentials: %w", err)
 	}
+	// The vendored plugin dials the session websocket through
+	// gorilla/websocket's package-level DefaultDialer (see
+	// third_party/session-manager-plugin .../communicator/
+	// websocketutil.go), whose Proxy defaults to
+	// http.ProxyFromEnvironment. Overriding it here adds OS-level proxy
+	// auto-detection (Windows WinHTTP/IE settings incl. PAC) without
+	// patching the vendored code. Mutating a package variable is safe
+	// here because the side effect is confined to this session-runner
+	// child process: the supervisor parent never dials websockets, and
+	// the process exits with the session.
+	websocket.DefaultDialer.Proxy = proxy.Func()
 	// Tell the vendored plugin to skip its own credential lookup in
 	// OpenDataChannel and use the Signer/Credentials we set below.
 	// Scope the variable to this call so it is not inherited by any
