@@ -112,13 +112,19 @@ nakama aws backup delete dev01 --label before-upgrade
 nakama aws connect dev01                       # 対話シェル (ubuntu ユーザー・exit で切断)
 nakama aws connect dev01 ls -la                # 単発コマンド実行 (ubuntu 実行・ssh 風)
 nakama aws connect dev01 --tty top             # 対話 (PTY) でコマンド実行
-nakama aws connect dev01 -L 8080:8080          # ポートフォワード: localhost:8080 -> instance:8080
-nakama aws connect dev01 -L 5432:db.internal:5432  # instance 経由で別ホストへ転送
+
+# バックグラウンド常駐のポート転送 (ターミナルを専有しない)
+nakama aws tunnel dev01 -L 8080:8080               # localhost:8080 -> instance:8080 (start は省略可)
+nakama aws tunnel start dev01 -L 8080:8080 -L 5432:db.internal:5432  # 複数ポート・別ホスト経由も可
+nakama aws tunnel status dev01                     # 転送ごとの状態を表示
+nakama aws tunnel stop dev01                       # 転送を停止しデーモンも終了
 ```
 
 > `connect` は AWS Systems Manager Session Manager を使用します。`session-manager-plugin` の取り込みにより**追加バイナリのインストールは不要**です。呼び出し側のプリンシパルには `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession` 権限が必要です (接続先 EC2 の instance role は `init` が付与する `AmazonSSMManagedInstanceCore` で充足)。ログインユーザーは **ubuntu**(code-server の稼働ユーザー)です。Session Manager は `ssm-user` として接続しますが、既定の passwordless sudo を用いて ubuntu に切り替え、対話シェルは単一の `exit` で切断します (詳細は ADR 0009)。
 >
-> **自動再接続**: セッションが恒久的に切断された場合 (インスタンスのハイバネートや長時間のネットワーク断など)、`connect` は新規セッションで自動的に再接続します (詳細は ADR 0014)。対話シェルとポートフォワードでは既定で有効 (最大 5 回、指数バックオフ)、コマンド実行モードでは非冪等コマンドの再実行を避けるため既定で無効です。`--retry <n>` で回数を明示でき (`--retry 0` で無効化)、明示した値はどのモードでも尊重されます。セッションが 60 秒以上安定してから切断された場合は試行回数がリセットされるため、長時間のトンネルが日をまたいで予算切れすることはありません。ハイバネートから復帰したインスタンスへはバックオフ付きで接続を再試行します。**再接続後のシェルは新しいセッション**であり、以前のシェル状態 (カレントディレクトリ・環境変数・実行中プロセス) は失われます。AWS 資格情報が失効している場合は再試行せず、`aws login` を促してエラー終了します。
+> **自動再接続**: セッションが恒久的に切断された場合 (インスタンスのハイバネートや長時間のネットワーク断など)、`connect` は新規セッションで自動的に再接続します (詳細は ADR 0014)。対話シェルでは既定で有効 (最大 5 回、指数バックオフ)、コマンド実行モードでは非冪等コマンドの再実行を避けるため既定で無効です。`--retry <n>` で回数を明示でき (`--retry 0` で無効化)、明示した値はどのモードでも尊重されます。セッションが 60 秒以上安定してから切断された場合は試行回数がリセットされます。ハイバネートから復帰したインスタンスへはバックオフ付きで接続を再試行します。**再接続後のシェルは新しいセッション**であり、以前のシェル状態 (カレントディレクトリ・環境変数・実行中プロセス) は失われます。AWS 資格情報が失効している場合は再試行せず、`aws login` を促してエラー終了します。
+
+> `tunnel` はバックグラウンドに常駐するデーモンがポート転送を維持します (詳細は ADR 0017)。`start` は省略可能で、複数の `-L` を同時に指定できます (転送ごとに SSM セッションを 1 本使用)。既に転送中の場合は転送一覧を表示して終了します。切断時は `connect` と同じポリシー (最大 5 回・指数バックオフ・60 秒以上安定していれば試行回数リセット) で自動再接続するため、長時間のトンネルが日をまたいで予算切れすることはありません。デーモンのログは OS 標準ログ (Linux/macOS: syslog、Windows: イベントログ) に出力され、ローテーションは OS に委譲されます。状態は `~/.config/nakama/tunnels/<name>.json` (0600) にのみ保存され、停止 (`tunnel stop`) で削除されます。AWS 資格情報が失効した場合、該当転送は `status` で dead と表示されます — `nakama aws login` (または `aws login`) の後に `tunnel start` し直してください。`start` / `stop` / `status` はサブコマンド名と曖昧になるため、インスタンス名としては予約され `create` で拒否されます。
 
 > `open` は code-server の URL をブラウザで開き、パスワードログインを自動通過します (詳細は ADR 0012)。パスワードを SSM から取得し、127.0.0.1 上の 1 回限りのローカルページ (ランダムトークン付き URL) からログインフォームを自動送信する方式のため、**パスワードはディスクに書き込まれず**、メモリ内にのみ存在します。自動ログインができない環境 (ブラウザ起動不可など) では、理由を表示した上で URL を開く/表示するだけの動作に退避します。`--no-auth` で自動ログインなし、`--print-url` でブラウザを起動せず URL 表示 (headless / SSH 向け) を選べます。URL への到達には呼び出し元 IP が WAF allowlist (`nakama aws acl add`) に登録されている必要があります (未登録なら警告が表示されます)。
 
@@ -197,7 +203,7 @@ TLS 検証は Go 標準の platform verifier により **OS の証明書スト�
 
 ## ステータス
 
-主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `update` / `profile`) は実装済み。
+主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `update` / `profile`) は実装済み。
 
 ## ドキュメント
 

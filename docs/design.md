@@ -269,14 +269,14 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 |---|---|---|---|---|
 | 対話シェル | `connect <n>` | `AWS-StartInteractiveCommand` | `command=exec sudo su - ubuntu` | `Standard_Stream` |
 | コマンド | `connect <n> <cmd...>` | `AWS-StartNonInteractiveCommand` (既定) / `AWS-StartInteractiveCommand` (`--tty`) | `command=sudo su - ubuntu -c '<cmd>'` | `Standard_Stream` |
-| ポートフォワード | `connect <n> -L L:R` | `AWS-StartPortForwardingSession` | `portNumber`, `localPortNumber` | `Port` |
-| 〃 (リモートホスト) | `connect <n> -L L:host:R` | `AWS-StartPortForwardingSessionToRemoteHost` | `host`, `portNumber`, `localPortNumber` | `Port` |
+
+ポートフォワードは `nakama aws tunnel` に一本化した (§8.12 / ADR 0017)。
 
 1. `<name>` → instance-id 解決 (未存在ならエラー)
-2. モード判定 (シェル / コマンド / ポートフォワードは排他)。`DocumentName` / `Parameters` を組立
+2. モード判定 (シェル / コマンドは排他)。`DocumentName` / `Parameters` を組立
 3. `ssm:StartSession`
 4. credential / region / SSM endpoint を解決 (既存 `awsx` の `aws login` fallback を流用) し `session.Session` を構築
-5. シェル・コマンドは端末 raw mode + リサイズ送信 + 制御シグナル転送、ポートフォワードはローカル listener を起動
+5. シェル・コマンドは端末 raw mode + リサイズ送信 + 制御シグナル転送
 6. Ctrl-C / EOF / リモート切断で `TerminateSession`
 
 > ログインユーザーは **ubuntu**(code-server の稼働ユーザー)。Session Manager は `ssm-user` として接続するが、既定で付与される passwordless sudo (`/etc/sudoers.d/ssm-agent-users` の `ssm-user ALL=(ALL) NOPASSWD:ALL`) を用いて ubuntu に切り替える。対話シェルは `exec sudo su - ubuntu` で ssm-user シェルを置換するため、単一の `exit` でセッションが終了・切断する。コマンドは `sudo su - ubuntu -c '<cmd>'`(内側はシングルクォートで安全化)で ubuntu 実行。ポートフォワードはユーザーコンテキスト不要のため対象外。詳細は ADR 0009。
@@ -393,9 +393,40 @@ vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` ま�
 - payload 受け渡しと親のシグナル処理は OS でメカニズムが異なる (ADR 0015。`connect_session_unix.go` / `connect_session_windows.go` に分割):
   - **unix**: pipe の読み口を `ExtraFiles` で fd 3 として継承 (上図)。親は子の実行中 SIGINT/SIGTSTP/SIGQUIT を無視し、ctx キャンセル時は SIGTERM で子を停止
   - **windows**: `ExtraFiles` 非対応のため、pipe の読み口ハンドルに `HANDLE_FLAG_INHERIT` を付与して `SysProcAttr.AdditionalInheritedHandles` で継承し、**ハンドル番号 (非秘匿の整数) のみ**を環境変数 `NAKAMA_SESSION_PAYLOAD_HANDLE` で子に通知 (payload 本体は pipe の中だけ)。親は SIGINT (^C) のみ無視 (SIGTSTP/SIGQUIT は存在しない)、ctx キャンセル時は `Kill()` で子を停止
-- `--retry` 既定: シェル / ポートフォワード = 5、コマンドモード = 0 (明示指定はモード不問で尊重)。`--retry 0` では env ゲートを設定せず spawn するため子の挙動は従来の一発実行と同一
+- `--retry` 既定: シェル = 5、コマンドモード = 0 (明示指定はモード不問で尊重)。`--retry 0` では env ゲートを設定せず spawn するため子の挙動は従来の一発実行と同一
 - 監督ループは `runSession` / `sleep` / `now` / `notify` を関数フィールド注入可能にし、実プロセス・実 AWS なしでユニットテスト (`internal/service/connect_reconnect_test.go`)
 - vendored パッチの一覧は `third_party/session-manager-plugin/PINNED.md` の「Local patches」節を参照
+
+### 8.12 `nakama aws tunnel` — バックグラウンド常駐ポート転送 (ADR 0017)
+
+`connect -L` を置き換える常駐型ポート転送。プロセスは 3 層: CLI (即終了) → デーモン (hidden `tunnel-daemon`, detached) → 転送ごとの session-runner 子 ×N。
+
+```
+[nakama aws tunnel [start] <n> -L...]   [nakama aws tunnel-daemon (hidden, detached)]
+  ├ preflight:                            ├ 状態ファイル O_CREATE|O_EXCL 作成 (~/.config/
+  │   ├ ValidateInstanceName              │   nakama/tunnels/<n>.json, 0600: PID/制御
+  │   ├ 既存デーモン liveness              │   ポート/token/転送一覧/開始時刻)
+  │   │   (状態ファイル + 制御 ping。      ├ 制御チャネル listen (127.0.0.1:0, HTTP)
+  │   │    生存なら一覧表示 + exit 1、     │   ├ GET /status (Bearer token, 定数時間比較)
+  │   │    stale なら削除して続行)         │   └ POST /stop (同上) → graceful shutdown
+  │   ├ instance-id 解決                  ├ -L ごとに監督 goroutine (§8.11 の一般化):
+  │   └ ローカルポートの空き検査           │   loop: ssm:StartSession (Port ドキュメント)
+  ├ tunnel-daemon を detach 起動           │        → session-runner spawn (payload pipe /
+  │   (unix: Setsid / windows:            │           exit 74 ゲート。§8.11 と同一機構)
+  │    DETACHED_PROCESS)                  │        → 恒久切断: バックオフ再接続 (予算 5,
+  ├ readiness ポーリング                   │           60s 安定でリセット) / 認証エラー:
+  │   (状態ファイル + 制御 ping,           │           当該転送を dead(auth) に遷移
+  │    タイムアウト付き)                   ├ ログ: unix=syslog / windows=Event Log (OS に
+  └ 転送一覧を表示して即終了               │   ローテーション委譲)。子の stdout/stderr も回収
+                                          └ stop: 全子終了 → TerminateSession (best-effort)
+                                             → 状態ファイル削除 → exit
+```
+
+- **SSM ドキュメント**: `-L L:R` → `AWS-StartPortForwardingSession` (`portNumber`, `localPortNumber`)、`-L L:host:R` → `AWS-StartPortForwardingSessionToRemoteHost` (+`host`)。1 セッション 1 ポートのため複数 `-L` はセッションを転送数ぶん並行に張る。ローカル listener は vendored plugin (session-runner 子) が bind する
+- **stop の経路**: 制御チャネル経由のグレースフル停止が正 (Windows の外部 Kill は子を道連れにしないため)。unix ではデーモンが SIGTERM でも同じ停止経路に合流する
+- **status**: CLI が状態ファイル → `GET /status` で転送ごとの {spec, state (active/reconnecting/dead), 直近エラー, 開始時刻, 再接続消費数} を取得して表示。デーモン不在 (ping 不達) なら stale 掃除の上「転送なし」を表示
+- **予約名**: `start` / `stop` / `status` は `tunnel <name>` 省略形と曖昧になるため create の新規名として拒否 (`service.ValidateNewInstanceName`。既存インスタンス操作の `ValidateInstanceName` は不変)
+- **転送量計測は非対応** (要件から除外。ADR 0017 Alternatives 6)
 
 ## 9. テスト戦略
 
@@ -441,7 +472,7 @@ replace github.com/aws/session-manager-plugin => ./third_party/session-manager-p
 - 追加実装:
   - `internal/awsx`: `SSMAPI` に `StartSession` / `TerminateSession` を追加し、解決済 `aws.Credentials` + region + SSM endpoint を `session.Session` 構築用に取り出す口を設ける
   - `internal/service/connect.go`: instance-id 解決、モード→`DocumentName`/`Parameters` 組立、`StartSession`、plugin セッション起動
-  - `internal/cli/aws_connect.go`: cobra コマンド (`-L` / `--tty` / 位置引数、`SetInterspersed(false)`)、`aws.go` の `AddCommand` に配線
+  - `internal/cli/aws_connect.go`: cobra コマンド (`--tty` / 位置引数、`SetInterspersed(false)`)、`aws.go` の `AddCommand` に配線 (ポートフォワードは `aws_tunnel.go` へ移管。§8.12)
 - テスト方針: argv/Parameters 組立と引数解析はピュア関数化してユニットテスト。実セッションは手動 E2E (CI 非搭載)。
 
 ## 13. 資格情報解決とマルチアカウントプロファイル (ADR 0011, ADR 0016)

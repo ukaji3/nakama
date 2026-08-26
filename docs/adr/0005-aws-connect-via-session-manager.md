@@ -43,6 +43,11 @@ dev インスタンスで動作した実績がある。
 (cobra `SetInterspersed(false)`)。`-L` 等の nakama フラグは
 `<name>` より前に置く。シェル / コマンド / ポートフォワードは排他。
 
+> **追補 (ADR 0017)**: ポートフォワード (`connect -L`) は
+> バックグラウンド常駐の `nakama aws tunnel` に移管され、
+> `connect -L` オプションは削除された。SSM ドキュメントの
+> 組立自体は tunnel が同じ方式を引き継ぐ。
+
 ### モードと SSM ドキュメントの対応
 
 | モード | DocumentName | Parameters |
