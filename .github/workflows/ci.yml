@@ -105,6 +105,21 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
+  third-party-notices:
+    name: THIRD-PARTY-NOTICES freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          cache: true
+      # Regenerates the notices from the module build graphs of all
+      # release targets and fails when the committed file is stale
+      # (dependency changed without `make notices`).
+      - name: Verify THIRD-PARTY-NOTICES is up to date
+        run: go run ./tools/gen-third-party-notices -check
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
