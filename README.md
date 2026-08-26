@@ -35,7 +35,7 @@ inbound は CloudFront 経由のみで固定 IP を必要としません)。
 ## 前提条件
 
 - リージョン: `ap-northeast-1` (東京) 固定
-- AWS CLI 同等の認証 (SSO / Profile / 環境変数) が利用可能
+- 認証: `nakama aws login` によるネイティブサインイン (**aws CLI 不要**、要 `SignInLocalDevelopmentAccess` 管理ポリシー。ADR 0016)、または SSO / Profile / 環境変数など任意の AWS 資格情報
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用)
 - `connect` 利用時は呼び出し側プリンシパルに `ssm:StartSession` 等が追加で必要
 - ビルド環境: Go 1.23+ (クロスコンパイル可: linux / darwin / windows)
@@ -54,8 +54,13 @@ make build
 ## 使い方
 
 ```bash
-# 複数 AWS アカウントの切り替え (aws login セッションの保存・選択)
-aws login                        # アカウント A にログイン
+# サインイン (aws CLI 不要のネイティブ login。ADR 0016)
+nakama aws login                 # ブラウザで AWS コンソールのセッションを使ってサインイン → profile 自動登録・アクティブ化
+nakama aws login --name dev      # 保存する profile の別名を指定
+nakama aws login --remote        # SSH/headless 環境: URL を表示し、ブラウザに出る検証コードを貼り付け
+
+# 複数 AWS アカウントの切り替え (従来の aws login セッションの保存・選択も引き続き可能)
+aws login                        # アカウント A にログイン (AWS CLI を使う場合)
 nakama aws profile save          # 現在のログインセッションを保存 (--name a-account で別名指定可)
 aws login                        # アカウント B にログイン (~/.aws/config の login_session は上書きされる)
 nakama aws profile save --name b-account
@@ -121,10 +126,12 @@ nakama aws connect dev01 -L 5432:db.internal:5432  # instance 経由で別ホス
 >
 > **セキュリティ注意 (`--with-admin`)**: 付与されるのは AdministratorAccess です。CloudFront + WAF の IP allowlist を通過して code-server にログインできる者は、その開発環境を通じて**実質的に AWS アカウントの管理者権限を行使できます**。`acl` の許可 IP は最小限に保ち、パスワードの取り扱いに注意してください。`--with-role` で SSM 権限 (AmazonSSMManagedInstanceCore) のないロールを指定した場合、`connect` / `update` および初期セットアップのパスワード取得が動作しない可能性があるため、実行時に警告が表示されます。
 
-> `profile` は `aws login` のセッション識別子 (`login_session`) を nakama 側にコピーして、複数アカウントのセッションを共存させる仕組みです (詳細は ADR 0011)。
+> `login` は AWS CLI の `aws login` と同じプロトコル (OAuth 2.0 authorization code + PKCE + DPoP) のネイティブ実装です (詳細は ADR 0016)。**aws CLI のインストールは不要**で、IAM ユーザー/ロールに AWS 管理ポリシー `SignInLocalDevelopmentAccess` が付与されていれば (root は不要)、ブラウザの AWS コンソールセッションからサインインできます。取得したトークンは AWS CLI 互換のキャッシュ (`~/.aws/login/cache/`) に保存されるため `aws login` とセッションを共有でき、完了時に nakama profile へ自動 save & load されて直後から全コマンドが使えます。**ユーザーの `~/.aws/config` は変更しません**。`--remote` は SSH/headless 環境向けで、表示された URL を別デバイスのブラウザで開き、表示される検証コードを貼り付けて完了します。従来の「`aws login` → `nakama aws profile save`」フローも引き続き利用でき、そのセッションのリフレッシュも nakama がネイティブに行います。
+
+> `profile` は `aws login` / `nakama aws login` のセッション識別子 (`login_session`) を nakama 側にコピーして、複数アカウントのセッションを共存させる仕組みです (詳細は ADR 0011)。
 >
-> - **保存されるのは識別子のみ**: `login_session` は ARN 形状の非機密な識別子で、アクセスキーやトークンではありません。実際の短期資格情報とリフレッシュトークンは AWS CLI が `~/.aws/login/cache/` で管理し、nakama は読み書きしません。nakama が書くのは `~/.config/nakama/profiles.json` と `~/.config/nakama/aws_config` (いずれも 0600) だけで、**ユーザーの `~/.aws/config` は変更しません**。
-> - **有効期限**: リフレッシュトークンの寿命は最長 12 時間です。期限切れの場合は該当アカウントへ `aws login` し直せば復活します (`profile list` の STATUS 列で確認可)。
+> - **保存されるのは識別子のみ**: `login_session` は ARN 形状の非機密な識別子で、アクセスキーやトークンではありません。実際の短期資格情報とリフレッシュトークンは AWS CLI 互換のトークンキャッシュ `~/.aws/login/cache/` (0600) にあり、nakama はこれをネイティブに読み書き・リフレッシュします (ADR 0016)。レジストリとして書くのは `~/.config/nakama/profiles.json` と `~/.config/nakama/aws_config` (いずれも 0600) だけで、**ユーザーの `~/.aws/config` は変更しません**。
+> - **有効期限**: リフレッシュトークンの寿命は最長 12 時間です。期限切れの場合は該当アカウントへ `nakama aws login` (または `aws login`) し直せば復活します (`profile list` の STATUS 列で確認可)。
 > - **fail-closed**: `load` 済みの状態で当該セッションが解決できない場合、他のアカウントへ暗黙にフォールバックせずエラーになります (意図しないアカウントへリソースを作らないため)。`unload` で既定の認証チェーンに戻せます。
 > - active な profile は `AWS_PROFILE` 環境変数より優先されます。
 
@@ -174,7 +181,7 @@ make build
 
 ## 企業プロキシ環境での利用
 
-nakama の全アウトバウンド通信 (AWS API / `connect` の WebSocket / グローバル IP 取得) は、以下の優先順位でプロキシを自動解決します (詳細は ADR 0015)。
+nakama の全アウトバウンド通信 (AWS API / `connect` の WebSocket / `login` のサインイン・トークンリフレッシュ / グローバル IP 取得) は、以下の優先順位でプロキシを自動解決します (詳細は ADR 0015)。
 
 1. **環境変数** — `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` (小文字も可) が設定されていればそれを使用
 2. **OS のプロキシ設定** — 環境変数が未設定の場合:
@@ -184,11 +191,13 @@ nakama の全アウトバウンド通信 (AWS API / `connect` の WebSocket / �
 
 TLS 検証は Go 標準の platform verifier により **OS の証明書ストア**を使用するため、AD 等で配布された企業 CA (TLS 傍受プロキシの CA を含む) は Windows / macOS では自動的に信頼されます。CA バンドルの追加設定は不要です。
 
+サインインと資格情報のリフレッシュ (`nakama aws login` および既存 `aws login` セッションの解決) も**すべて nakama がネイティブに行う**ため (aws CLI へのシェルアウトなし。ADR 0016)、Python 製 AWS CLI が certifi の CA バンドル起因で起こす CERT エラーは発生しません。監査プロキシ環境でも「ブラウザで AWS コンソールにログイン → `nakama aws login`」だけで利用を開始できます。
+
 > **運用注意**: 監査型プロキシが WebSocket (CONNECT トンネル上のアップグレード) を遮断する環境では、`connect` (Session Manager の data-channel は WSS) は利用できません。この場合はプロキシ管理者に WebSocket の許可を依頼してください。
 
 ## ステータス
 
-主要サブコマンド (`init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `update`) は実装済み。
+主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `update` / `profile`) は実装済み。
 
 ## ドキュメント
 

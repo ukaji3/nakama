@@ -1,7 +1,7 @@
 # nakama 要件定義書 (v1)
 
 > Status: v1 実装済 (`connect` / `update` / NAT インスタンス電源連動 (ADR 0007) を含む)
-> Last updated: 2026-07-08
+> Last updated: 2026-08-26
 
 ## 1. 目的・スコープ
 
@@ -24,7 +24,8 @@
 
 - AWS リージョン: `ap-northeast-1` (東京) **固定**
 - 利用 AZ: `ap-northeast-1a` / `ap-northeast-1c` (`apne1-az3` は CloudFront VPC Origins 非対応のため除外)
-- 認証: AWS SSO / Profile / 環境変数 のいずれかで `aws sts get-caller-identity` が通ること
+- 認証: `nakama aws login` (ネイティブ sign-in、aws CLI 不要。ADR 0016)、または AWS SSO / Profile / 環境変数など STS GetCallerIdentity が通る任意の資格情報。既存の `aws login` セッション (`~/.aws/config` の login_session + `~/.aws/login/cache/`) もネイティブに解決・リフレッシュされる
+- `nakama aws login` 利用時の追加 IAM 要件 (**呼び出し側プリンシパル**): IAM ユーザー/ロールには AWS 管理ポリシー `SignInLocalDevelopmentAccess` が必要 (アカウント root は不要)
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用), Resource Groups Tagging API
 - `connect` 利用時の追加 IAM 権限 (**呼び出し側プリンシパル**): `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession`。接続先 EC2 の instance role 側は既存 `AmazonSSMManagedInstanceCore` で充足
 - `connect` 利用時のクライアント前提: 追加バイナリ不要 (plugin を nakama 本体に取り込むため。詳細は design.md §12)
@@ -61,9 +62,10 @@
 | 接続 | `nakama aws connect <n> -L <local>:<remote>` | ポートフォワード。`localhost:<local>` を接続先 instance の `<remote>` に転送 |
 | 接続 | `nakama aws connect <n> -L <local>:<host>:<remote>` | instance 経由で `<host>:<remote>` を `localhost:<local>` に転送 |
 | 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
+| 認証 | `nakama aws login [--remote] [--name <alias>]` | AWS Management Console のセッションを使いネイティブにサインイン (OAuth 2.0 authorization code + PKCE + DPoP、aws CLI 不要。ADR 0016)。ブラウザ起動 (不可なら URL 表示で待機継続) → 127.0.0.1 のコールバックで認可コード受領 (10 分タイムアウト、state 検証) → AWS CLI 互換キャッシュ (`~/.aws/login/cache/`) へ保存 → STS で識別確認 → nakama profile へ**自動 save & load**。`--remote` は SSH/headless 向けにブラウザの検証コード貼り付けで完了。`~/.aws/config` は変更しない。要 `SignInLocalDevelopmentAccess` ポリシー |
 | プロファイル | `nakama aws profile save [--name <alias>]` | 現在の `aws login` セッション (login_session 識別子 + STS identity) をアカウント ID キーで nakama のレジストリ (`~/.config/nakama`) に保存。active profile は無視して「今 login しているもの」を保存し、同一アカウントの再 save は上書き。alias 省略時はアカウント ID。login_session が無い資格情報 (SSO・アクセスキー等) はエラー (ADR 0011) |
-| プロファイル | `nakama aws profile list` | 保存済みプロファイルを一覧 (ACTIVE / ACCOUNT / ALIAS / IDENTITY / SAVED / STATUS)。STATUS は `aws configure export-credentials` の成否による best-effort 判定 (valid / expired / unknown) |
-| プロファイル | `nakama aws profile load <account\|alias>` | 指定プロファイルを active に設定。以後の全 nakama コマンドはこのアカウントの資格情報**のみ**で動作 (fail-closed、`AWS_PROFILE` より優先)。セッション失効時は警告の上で active は設定 (該当アカウントへの `aws login` 再実行で復活) |
+| プロファイル | `nakama aws profile list` | 保存済みプロファイルを一覧 (ACTIVE / ACCOUNT / ALIAS / IDENTITY / SAVED / STATUS)。STATUS はネイティブのトークンキャッシュ読取り+リフレッシュ (internal/signin) の成否による best-effort 判定 (valid / expired / unknown) |
+| プロファイル | `nakama aws profile load <account\|alias>` | 指定プロファイルを active に設定。以後の全 nakama コマンドはこのアカウントの資格情報**のみ**で動作 (fail-closed、`AWS_PROFILE` より優先)。セッション失効時は警告の上で active は設定 (該当アカウントへの `nakama aws login` (または `aws login`) 再実行で復活) |
 | プロファイル | `nakama aws profile delete <account\|alias>` | プロファイルを登録解除。active だった場合は active もクリアし、その旨を表示 |
 | プロファイル | `nakama aws profile unload` | active をクリアし、従来の default chain 解決へ戻す |
 
