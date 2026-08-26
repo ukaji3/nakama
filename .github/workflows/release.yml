@@ -23,6 +23,11 @@ jobs:
           go-version: stable
           cache: true
 
+      # Refuse to publish archives whose THIRD-PARTY-NOTICES is stale
+      # relative to the dependency graph being released.
+      - name: Verify THIRD-PARTY-NOTICES is up to date
+        run: go run ./tools/gen-third-party-notices -check
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
