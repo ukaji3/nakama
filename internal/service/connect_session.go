@@ -112,6 +112,32 @@ func defaultConnectHooks() *connectHooks {
 // stdin/stdout/stderr are inherited so the child owns the terminal for
 // the session's lifetime.
 func spawnSessionRunner(ctx context.Context, payload []byte, disconnectCode int) (int, error) {
+	return spawnSessionRunnerIO(ctx, payload, disconnectCode, sessionRunnerIO{
+		stdin:                os.Stdin,
+		stdout:               os.Stdout,
+		stderr:               os.Stderr,
+		guardTerminalSignals: true,
+	})
+}
+
+// sessionRunnerIO selects where a session-runner child's stdio is
+// wired and whether the parent shields itself from terminal-generated
+// signals for the child's lifetime. `connect` inherits the real
+// terminal; a `tunnel` daemon has no terminal and instead collects the
+// child's output for its own log (ADR 0017).
+type sessionRunnerIO struct {
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+	// guardTerminalSignals ignores SIGINT/SIGTSTP/SIGQUIT (unix) for
+	// the child's lifetime; meaningless without a controlling
+	// terminal.
+	guardTerminalSignals bool
+}
+
+// spawnSessionRunnerIO is spawnSessionRunner with explicit stdio
+// wiring (see sessionRunnerIO).
+func spawnSessionRunnerIO(ctx context.Context, payload []byte, disconnectCode int, stdio sessionRunnerIO) (int, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return -1, fmt.Errorf("locate nakama binary for session runner: %w", err)
@@ -133,9 +159,9 @@ func spawnSessionRunner(ctx context.Context, payload []byte, disconnectCode int)
 	}
 
 	cmd := exec.Command(exe, sessionRunnerArgs...) // #nosec G204 -- argv is the re-exec'd nakama binary plus fixed args
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdin = stdio.stdin
+	cmd.Stdout = stdio.stdout
+	cmd.Stderr = stdio.stderr
 	env := os.Environ()
 	if disconnectCode > 0 {
 		env = append(env, fmt.Sprintf("%s=%d", disconnectExitCodeEnv, disconnectCode))
@@ -154,8 +180,10 @@ func spawnSessionRunner(ctx context.Context, payload []byte, disconnectCode int)
 	// orphan the session. Dispositions are restored after the child
 	// exits. The exact signal set is OS-specific (ignoreTerminalSignals
 	// in connect_session_unix.go / connect_session_windows.go).
-	restoreSignals := ignoreTerminalSignals()
-	defer restoreSignals()
+	if stdio.guardTerminalSignals {
+		restoreSignals := ignoreTerminalSignals()
+		defer restoreSignals()
+	}
 
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("start session runner: %w", err)

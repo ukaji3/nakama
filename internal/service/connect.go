@@ -37,7 +37,7 @@ type ConnectInput struct {
 // session-manager-plugin terminates the whole process with os.Exit on
 // both normal and abnormal session end. The child is spawned with
 // SSM_PLUGIN_DISCONNECT_EXIT_CODE so permanent disconnects surface as a
-// dedicated exit code, which this supervisor turns into a fresh
+// dedicated exit code, which the supervisor turns into a fresh
 // StartSession + child run with exponential backoff.
 func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 	if err := ValidateInstanceName(in.Name); err != nil {
@@ -51,9 +51,68 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 		return fmt.Errorf("nakama instance %q not found", in.Name)
 	}
 
-	hooks := s.connectHooksOrDefault()
 	docName, params := connectDocument(in)
-	shellMode := len(in.Command) == 0 && in.LocalPort == ""
+	return s.superviseSession(ctx, superviseSessionInput{
+		InstanceID:         instanceID,
+		DocumentName:       docName,
+		Parameters:         params,
+		MaxRetries:         in.MaxRetries,
+		ShellReconnectNote: len(in.Command) == 0 && in.LocalPort == "",
+	})
+}
+
+// sessionObserver receives lifecycle notifications from
+// superviseSession. Implementations must be safe for use from the
+// supervising goroutine only (no concurrency is introduced by the
+// supervisor itself). The terminal outcome is superviseSession's
+// return value, not an observer callback.
+type sessionObserver interface {
+	// SessionStarted fires after a successful StartSession, right
+	// before the session-runner child is spawned.
+	SessionStarted(sessionID string)
+	// SessionRetrying fires when the supervisor decides to retry
+	// (retryable StartSession error or permanent disconnect), before
+	// the backoff sleep. attempt is 1-based and counts against
+	// maxRetries.
+	SessionRetrying(attempt, maxRetries int, reason error)
+}
+
+// superviseSessionInput parameterizes one supervised Session Manager
+// session (ADR 0014). It is shared by `connect` (shell / command) and
+// by each `tunnel` port forward (ADR 0017).
+type superviseSessionInput struct {
+	InstanceID   string
+	DocumentName *string
+	Parameters   map[string][]string
+
+	// MaxRetries is the maximum number of automatic reconnect attempts
+	// after a permanent disconnect. 0 disables reconnection.
+	MaxRetries int
+
+	// ShellReconnectNote prints the "new session, shell state lost"
+	// advisory on reconnect (interactive shell mode only).
+	ShellReconnectNote bool
+
+	// Observer, when non-nil, receives lifecycle notifications.
+	Observer sessionObserver
+}
+
+// errConnectionLost is the reason passed to SessionRetrying when the
+// session-runner child reports a permanent disconnect.
+var errConnectionLost = errors.New("connection lost")
+
+// superviseSession runs the StartSession → session-runner child loop
+// with the ADR 0014 retry policy: a permanent disconnect (child exit
+// DisconnectExitCode) or a retryable StartSession error consumes one
+// attempt from the MaxRetries budget with exponential backoff; a
+// session that stayed alive for at least hooks.stableAfter replenishes
+// the budget (autossh-style); authentication errors abort immediately
+// with an `aws login` advisory.
+func (s *Service) superviseSession(ctx context.Context, in superviseSessionInput) error {
+	if in.MaxRetries < 0 {
+		return fmt.Errorf("invalid retry count %d: must be >= 0", in.MaxRetries)
+	}
+	hooks := s.connectHooksOrDefault()
 
 	// With reconnection disabled the child runs without the disconnect
 	// exit-code gate, so its behavior (including exit 0 on a server-side
@@ -64,15 +123,12 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 	}
 
 	// attempt counts reconnects used from the budget of in.MaxRetries.
-	// It is reset after a session that stayed alive for at least
-	// hooks.stableAfter, so long-lived tunnels never exhaust the budget
-	// across days (autossh-style).
 	attempt := 0
 	for {
 		out, err := s.clients.SSM.StartSession(ctx, &ssm.StartSessionInput{
-			Target:       aws.String(instanceID),
-			DocumentName: docName,
-			Parameters:   params,
+			Target:       aws.String(in.InstanceID),
+			DocumentName: in.DocumentName,
+			Parameters:   in.Parameters,
 		})
 		if err != nil {
 			switch classifyStartSessionError(err) {
@@ -85,6 +141,9 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 					return fmt.Errorf("StartSession: %w", err)
 				}
 				attempt++
+				if in.Observer != nil {
+					in.Observer.SessionRetrying(attempt, in.MaxRetries, err)
+				}
 				_, _ = fmt.Fprintf(hooks.notify, "target not connected; retrying (attempt %d/%d)...\n",
 					attempt, in.MaxRetries)
 				if err := hooks.sleep(ctx, backoffDelay(attempt)); err != nil {
@@ -102,12 +161,15 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 			TokenValue: aws.ToString(out.TokenValue),
 			Endpoint:   fmt.Sprintf("https://ssm.%s.amazonaws.com", s.clients.Region),
 			Region:     s.clients.Region,
-			TargetID:   instanceID,
+			TargetID:   in.InstanceID,
 		})
 		if err != nil {
 			return fmt.Errorf("encode session payload: %w", err)
 		}
 
+		if in.Observer != nil {
+			in.Observer.SessionStarted(aws.ToString(out.SessionId))
+		}
 		startedAt := hooks.now()
 		code, err := hooks.runSession(ctx, payload, disconnectCode)
 		if err != nil {
@@ -126,9 +188,12 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 				return fmt.Errorf("connection lost and %d reconnect attempt(s) exhausted", in.MaxRetries)
 			}
 			attempt++
+			if in.Observer != nil {
+				in.Observer.SessionRetrying(attempt, in.MaxRetries, errConnectionLost)
+			}
 			_, _ = fmt.Fprintf(hooks.notify, "connection lost; reconnecting (attempt %d/%d)...\n",
 				attempt, in.MaxRetries)
-			if shellMode {
+			if in.ShellReconnectNote {
 				_, _ = fmt.Fprintln(hooks.notify, "note: reconnecting opens a new session; previous shell state is lost")
 			}
 			if err := hooks.sleep(ctx, backoffDelay(attempt)); err != nil {
