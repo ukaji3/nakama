@@ -14,8 +14,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.55.4
 	github.com/aws/session-manager-plugin v0.0.0-00010101000000-000000000000
 	github.com/aws/smithy-go v1.22.1
+	github.com/gorilla/websocket v1.5.3
+	github.com/mattn/go-ieproxy v0.0.12
 	github.com/spf13/cobra v1.8.1
 	github.com/twinj/uuid v1.0.0
+	golang.org/x/net v0.58.0
 	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -33,7 +36,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.7 // indirect
 	github.com/cihub/seelog v0.0.0-20170130134532-f561c5e57575 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
@@ -41,6 +43,7 @@ require (
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
 
 replace github.com/aws/session-manager-plugin => ./third_party/session-manager-plugin
