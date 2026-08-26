@@ -37,18 +37,6 @@ func TestConnectDocument(t *testing.T) {
 			wantDoc:   aws.String("AWS-StartNonInteractiveCommand"),
 			wantParam: map[string][]string{"command": {`sudo su - ubuntu -c 'echo it'\''s'`}},
 		},
-		{
-			name:      "port forward to instance",
-			in:        ConnectInput{Name: "dev01", LocalPort: "8080", RemotePort: "8080"},
-			wantDoc:   aws.String("AWS-StartPortForwardingSession"),
-			wantParam: map[string][]string{"portNumber": {"8080"}, "localPortNumber": {"8080"}},
-		},
-		{
-			name:      "port forward to remote host",
-			in:        ConnectInput{Name: "dev01", LocalPort: "5432", RemoteHost: "db.internal", RemotePort: "5432"},
-			wantDoc:   aws.String("AWS-StartPortForwardingSessionToRemoteHost"),
-			wantParam: map[string][]string{"portNumber": {"5432"}, "localPortNumber": {"5432"}, "host": {"db.internal"}},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

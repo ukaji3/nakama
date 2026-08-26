@@ -33,6 +33,29 @@ func ValidateInstanceName(name string) error {
 	return nil
 }
 
+// reservedInstanceNames are names that would be ambiguous with
+// `nakama aws tunnel` subcommands in the start-omitted form
+// (`tunnel <name>` vs `tunnel stop`), so `create` rejects them for new
+// instances (ADR 0017). Existing instances are unaffected: every other
+// command keeps using ValidateInstanceName.
+var reservedInstanceNames = map[string]bool{
+	"start":  true,
+	"stop":   true,
+	"status": true,
+}
+
+// ValidateNewInstanceName validates a name for instances about to be
+// created: the v1 pattern plus the reserved-name check.
+func ValidateNewInstanceName(name string) error {
+	if err := ValidateInstanceName(name); err != nil {
+		return err
+	}
+	if reservedInstanceNames[name] {
+		return fmt.Errorf("instance name %q is reserved (it is a `nakama aws tunnel` subcommand); choose another name", name)
+	}
+	return nil
+}
+
 // SSM paths used by per-instance metadata.
 func ssmPasswordPath(name string) string {
 	return naming.SSMPath(name, "code-server", "password")

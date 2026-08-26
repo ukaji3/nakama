@@ -22,6 +22,11 @@ type Service struct {
 	// (`nakama aws connect` auto-reconnect, ADR 0014). nil selects the
 	// production defaults; tests inject fakes. See connect_session.go.
 	connect *connectHooks
+
+	// tunnel holds the process/network hooks used by the `nakama aws
+	// tunnel` orchestration (ADR 0017). nil selects the production
+	// defaults; tests inject fakes. See tunnel_start.go.
+	tunnel *tunnelHooks
 }
 
 // NewService returns a Service backed by the given AWS clients.

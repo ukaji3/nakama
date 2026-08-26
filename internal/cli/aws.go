@@ -22,7 +22,9 @@ func newAWSCommand() *cobra.Command {
 		newAWSBackupCommand(),
 		newAWSRestoreCommand(),
 		newAWSConnectCommand(),
+		newAWSTunnelCommand(),
 		newAWSSessionRunnerCommand(),
+		newAWSTunnelDaemonCommand(),
 		newAWSUpdateCommand(),
 		newAWSProfileCommand(),
 	)
