@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -17,23 +16,24 @@ import (
 // profileDeps bundles the collaborators of the `nakama aws profile`
 // subcommands so tests can substitute fakes. The profile commands run
 // on a lightweight path that never constructs awsx.NewClients:
-//   - save resolves STS identity via the default chain / aws CLI
-//     fallback only (ignoring any active nakama profile on purpose);
+//   - save resolves STS identity via the default chain / native
+//     login_session fallback only (ignoring any active nakama profile
+//     on purpose);
 //   - list / load / delete / unload use no AWS SDK calls at all;
-//     session validation shells out to `aws configure
-//     export-credentials` against nakama's own generated config.
+//     session validation goes through the native login-session
+//     provider (token cache + DPoP refresh, ADR 0016).
 type profileDeps struct {
 	// newStore returns the profile store (tests inject a temp BaseDir).
 	newStore func() *profilestore.Store
 	// callerIdentity resolves the CURRENT identity via the default
-	// chain + export-credentials fallback, ignoring the active profile.
+	// chain + login_session fallback, ignoring the active profile.
 	callerIdentity func(ctx context.Context) (accountID, callerARN string, err error)
 	// loginSession reads login_session from the user's normal AWS CLI
-	// config (AWS_PROFILE respected, AWS_CONFIG_FILE untouched).
+	// config ([default] section; AWS_CONFIG_FILE respected, read-only).
 	loginSession func(ctx context.Context) (string, error)
-	// checkProfile verifies that the given profile in nakama's
-	// generated aws_config can still yield credentials.
-	checkProfile func(ctx context.Context, profileName, configFile string) error
+	// checkSession verifies that the given login session can still
+	// yield credentials (native cache load + refresh).
+	checkSession func(ctx context.Context, loginSession string) error
 	// now is the clock (tests freeze it).
 	now func() time.Time
 }
@@ -42,15 +42,14 @@ func defaultProfileDeps() profileDeps {
 	return profileDeps{
 		newStore:       profilestore.New,
 		callerIdentity: awsx.ResolveCallerIdentity,
-		loginSession: func(ctx context.Context) (string, error) {
-			return (&awsx.LoginSessionResolver{}).Resolve(ctx)
+		loginSession: func(_ context.Context) (string, error) {
+			// The AWS_PROFILE section is honoured (like the former
+			// `aws configure get login_session` shell-out, which
+			// inherited the environment); [default] otherwise.
+			return awsx.ResolveCurrentLoginSession()
 		},
-		checkProfile: func(ctx context.Context, profileName, configFile string) error {
-			p := &awsx.AWSCLICredentialsProvider{Profile: profileName, ConfigFile: configFile}
-			_, err := p.Retrieve(ctx)
-			return err
-		},
-		now: time.Now,
+		checkSession: awsx.CheckLoginSession,
+		now:          time.Now,
 	}
 }
 
@@ -71,9 +70,11 @@ value) into nakama's own config under ~/.config/nakama, letting sessions for
 multiple accounts coexist. ` + "`load`" + ` selects which saved account every other
 nakama command operates on; ` + "`unload`" + ` returns to the default credential chain.
 
-No secrets are stored: the actual tokens stay in ~/.aws/login/cache/ and are
-managed by the AWS CLI. Refresh tokens last at most 12 hours; an expired
-session comes back by running ` + "`aws login`" + ` for that account again.`,
+No secrets are stored: the actual tokens stay in ~/.aws/login/cache/ (shared
+with the AWS CLI). Refresh tokens last at most 12 hours; an expired session
+comes back by running ` + "`nakama aws login`" + ` (or ` + "`aws login`" + `) for that account
+again. ` + "`nakama aws login`" + ` signs in natively and registers the profile in
+one step (ADR 0016).`,
 	}
 	cmd.AddCommand(
 		newAWSProfileSaveCommand(deps),
@@ -120,7 +121,8 @@ The active profile selection is not changed by this command.`,
 			session, err := deps.loginSession(ctx)
 			if err != nil || session == "" {
 				return errors.New("current credentials do not come from `aws login` (no login_session " +
-					"found in the AWS CLI config); `nakama aws profile save` supports aws login sessions only")
+					"found in the AWS CLI config); `nakama aws profile save` supports login sessions only — " +
+					"use `nakama aws login` to sign in and register a profile in one step")
 			}
 
 			resolvedAlias := alias
@@ -202,16 +204,15 @@ const (
 	profileStatusUnknown = "unknown"
 )
 
-// classifyProfileStatus maps a checkProfile error to the STATUS column
-// value. This is best-effort: a failing export-credentials run most
+// classifyProfileStatus maps a checkSession error to the STATUS column
+// value. This is best-effort: a failing native token load/refresh most
 // likely means the login session expired, while an inconclusive
-// failure (aws CLI missing, timeout/cancellation) yields "unknown".
+// failure (timeout/cancellation) yields "unknown".
 func classifyProfileStatus(err error) string {
 	switch {
 	case err == nil:
 		return profileStatusValid
-	case errors.Is(err, exec.ErrNotFound),
-		errors.Is(err, context.DeadlineExceeded),
+	case errors.Is(err, context.DeadlineExceeded),
 		errors.Is(err, context.Canceled):
 		return profileStatusUnknown
 	default:
@@ -231,15 +232,11 @@ func newAWSProfileListCommand(deps profileDeps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			configPath, err := store.AWSConfigPath()
-			if err != nil {
-				return err
-			}
 
 			rows := make([]profileRow, 0, len(data.Profiles))
 			for _, p := range data.Profiles {
 				status := classifyProfileStatus(
-					deps.checkProfile(ctx, profilestore.ProfileName(p.AccountID), configPath))
+					deps.checkSession(ctx, p.LoginSession))
 				rows = append(rows, profileRow{
 					Active:   p.AccountID == data.Active,
 					Account:  p.AccountID,
@@ -305,20 +302,16 @@ profile takes precedence over the AWS_PROFILE environment variable.`,
 			if !ok {
 				return profileNotFoundError(data, args[0])
 			}
-			configPath, err := store.AWSConfigPath()
-			if err != nil {
-				return err
-			}
 
 			// Best-effort validation. A failure does NOT abort the
 			// switch: the session can be revived later by running
-			// `aws login` for that account again.
-			if err := deps.checkProfile(ctx, profilestore.ProfileName(p.AccountID), configPath); err != nil {
+			// `nakama aws login` (or `aws login`) for that account.
+			if err := deps.checkSession(ctx, p.LoginSession); err != nil {
 				// Best-effort diagnostic; a failing write to stderr must
 				// not turn a successful profile switch into an error.
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 					"warning: could not obtain credentials for account %s (alias %s): %v\n"+
-						"The login session has probably expired; run `aws login` for account %s to revive it.\n"+
+						"The login session has probably expired; run `nakama aws login` (or `aws login`) for account %s to revive it.\n"+
 						"Loading the profile anyway.\n",
 					p.AccountID, p.Alias, err, p.AccountID)
 			}

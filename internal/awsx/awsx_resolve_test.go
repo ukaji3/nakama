@@ -11,11 +11,10 @@ import (
 	"github.com/ukaji3/nakama/internal/profilestore"
 )
 
-// fakeProvider is a stub aws.CredentialsProvider that records how it
-// was constructed by the newCLIProvider hook.
+// fakeProvider is a stub aws.CredentialsProvider that records the
+// login session the newLoginProvider hook was invoked with.
 type fakeProvider struct {
-	profileName string
-	configFile  string
+	loginSession string
 }
 
 func (f *fakeProvider) Retrieve(context.Context) (aws.Credentials, error) {
@@ -26,17 +25,22 @@ func (f *fakeProvider) Retrieve(context.Context) (aws.Credentials, error) {
 // fakes, recording every interaction for assertions.
 type resolveRecorder struct {
 	activeProfile *profilestore.Profile
-	awsConfigPath string
 	loadStoreErr  error
 
 	envProfile string
 
+	// resolveLoginSession script.
+	defaultSession    string
+	defaultSessionErr error
+	sessionProfiles   []string
+
 	// probe script: consumed one call at a time.
 	probeResults []probeResult
 
-	loadConfigCalls []loadConfigCall
-	providerCalls   []fakeProvider
-	probeCalls      int
+	loadConfigCalls     []loadConfigCall
+	providerCalls       []fakeProvider
+	probeCalls          int
+	defaultSessionCalls int
 }
 
 type probeResult struct {
@@ -53,8 +57,8 @@ type loadConfigCall struct {
 
 func (r *resolveRecorder) hooks() resolverHooks {
 	return resolverHooks{
-		loadActiveProfile: func() (*profilestore.Profile, string, error) {
-			return r.activeProfile, r.awsConfigPath, r.loadStoreErr
+		loadActiveProfile: func() (*profilestore.Profile, error) {
+			return r.activeProfile, r.loadStoreErr
 		},
 		profileFromEnv: func() string { return r.envProfile },
 		loadConfig: func(_ context.Context, profile string, provider aws.CredentialsProvider) (aws.Config, error) {
@@ -73,10 +77,15 @@ func (r *resolveRecorder) hooks() resolverHooks {
 			r.probeCalls++
 			return res.accountID, res.callerARN, res.err
 		},
-		newCLIProvider: func(profileName, configFile string) aws.CredentialsProvider {
-			p := &fakeProvider{profileName: profileName, configFile: configFile}
+		newLoginProvider: func(loginSession string) aws.CredentialsProvider {
+			p := &fakeProvider{loginSession: loginSession}
 			r.providerCalls = append(r.providerCalls, *p)
 			return p
+		},
+		resolveLoginSession: func(profile string) (string, error) {
+			r.defaultSessionCalls++
+			r.sessionProfiles = append(r.sessionProfiles, profile)
+			return r.defaultSession, r.defaultSessionErr
 		},
 	}
 }
@@ -95,7 +104,6 @@ func TestResolveAWSConfig_ActiveProfileUsed(t *testing.T) {
 	t.Parallel()
 	rec := &resolveRecorder{
 		activeProfile: activeFixture(),
-		awsConfigPath: "/fake/nakama/aws_config",
 		envProfile:    "should-be-ignored", // active profile must win over AWS_PROFILE
 		probeResults:  []probeResult{{accountID: "111111111111", callerARN: "arn:x"}},
 	}
@@ -108,10 +116,10 @@ func TestResolveAWSConfig_ActiveProfileUsed(t *testing.T) {
 	}
 
 	if len(rec.providerCalls) != 1 {
-		t.Fatalf("newCLIProvider calls=%d, want 1", len(rec.providerCalls))
+		t.Fatalf("newLoginProvider calls=%d, want 1", len(rec.providerCalls))
 	}
-	if got := rec.providerCalls[0]; got.profileName != "nakama-111111111111" || got.configFile != "/fake/nakama/aws_config" {
-		t.Errorf("provider constructed with (%q,%q)", got.profileName, got.configFile)
+	if got := rec.providerCalls[0]; got.loginSession != "arn:aws:signin:::user/example" {
+		t.Errorf("provider constructed with session %q", got.loginSession)
 	}
 	if len(rec.loadConfigCalls) != 1 {
 		t.Fatalf("loadConfig calls=%d, want 1", len(rec.loadConfigCalls))
@@ -121,7 +129,10 @@ func TestResolveAWSConfig_ActiveProfileUsed(t *testing.T) {
 		t.Errorf("loadConfig profile=%q; active profile must take precedence over AWS_PROFILE", lc.profile)
 	}
 	if !lc.hasProvider {
-		t.Error("loadConfig must receive the nakama CLI provider")
+		t.Error("loadConfig must receive the native login provider")
+	}
+	if rec.defaultSessionCalls != 0 {
+		t.Errorf("resolveLoginSession must not be consulted for the active profile path, got %d calls", rec.defaultSessionCalls)
 	}
 }
 
@@ -129,7 +140,6 @@ func TestResolveAWSConfig_ActiveProfileProbeFailure_FailClosed(t *testing.T) {
 	t.Parallel()
 	rec := &resolveRecorder{
 		activeProfile: activeFixture(),
-		awsConfigPath: "/fake/nakama/aws_config",
 		probeResults:  []probeResult{{err: errors.New("expired token")}},
 	}
 	_, _, _, err := resolveAWSConfig(context.Background(), rec.hooks())
@@ -149,7 +159,8 @@ func TestResolveAWSConfig_ActiveProfileProbeFailure_FailClosed(t *testing.T) {
 	for _, want := range []string{
 		"dev",                       // active alias
 		"111111111111",              // active account
-		"aws login",                 // recovery step 1
+		"nakama aws login",          // recovery step 1 (native login)
+		"aws login",                 // recovery alternative
 		"nakama aws profile unload", // recovery step 2
 	} {
 		if !strings.Contains(msg, want) {
@@ -162,7 +173,6 @@ func TestResolveAWSConfig_ActiveProfileAccountMismatch(t *testing.T) {
 	t.Parallel()
 	rec := &resolveRecorder{
 		activeProfile: activeFixture(),
-		awsConfigPath: "/fake/nakama/aws_config",
 		probeResults:  []probeResult{{accountID: "999999999999", callerARN: "arn:y"}},
 	}
 	_, _, _, err := resolveAWSConfig(context.Background(), rec.hooks())
@@ -170,14 +180,14 @@ func TestResolveAWSConfig_ActiveProfileAccountMismatch(t *testing.T) {
 		t.Fatal("expected account mismatch error")
 	}
 	msg := err.Error()
-	for _, want := range []string{"111111111111", "999999999999", "nakama aws profile unload"} {
+	for _, want := range []string{"111111111111", "999999999999", "nakama aws profile unload", "nakama aws login"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("mismatch error missing %q:\n%s", want, msg)
 		}
 	}
 }
 
-func TestResolveAWSConfig_NoActive_LegacyDefaultChain(t *testing.T) {
+func TestResolveAWSConfig_NoActive_DefaultChain(t *testing.T) {
 	t.Parallel()
 	rec := &resolveRecorder{
 		envProfile:   "my-profile",
@@ -198,20 +208,21 @@ func TestResolveAWSConfig_NoActive_LegacyDefaultChain(t *testing.T) {
 		t.Errorf("loadConfig profile=%q, want AWS_PROFILE value", lc.profile)
 	}
 	if lc.hasProvider {
-		t.Error("legacy first phase must use the default chain (nil provider)")
+		t.Error("first phase must use the default chain (nil provider)")
 	}
 	if len(rec.providerCalls) != 0 {
-		t.Errorf("newCLIProvider must not be called when the default chain works, got %d calls", len(rec.providerCalls))
+		t.Errorf("newLoginProvider must not be called when the default chain works, got %d calls", len(rec.providerCalls))
 	}
 }
 
-func TestResolveAWSConfig_NoActive_LegacyFallbackToCLI(t *testing.T) {
+func TestResolveAWSConfig_NoActive_FallbackToLoginSession(t *testing.T) {
 	t.Parallel()
 	rec := &resolveRecorder{
-		envProfile: "my-profile",
+		envProfile:     "my-profile",
+		defaultSession: "arn:aws:signin:::user/default-example",
 		probeResults: []probeResult{
 			{err: errors.New("no credential providers")},          // default chain fails
-			{accountID: "333333333333", callerARN: "arn:aws:..."}, // CLI fallback succeeds
+			{accountID: "333333333333", callerARN: "arn:aws:..."}, // login_session fallback succeeds
 		},
 	}
 	_, accountID, _, err := resolveAWSConfig(context.Background(), rec.hooks())
@@ -221,29 +232,63 @@ func TestResolveAWSConfig_NoActive_LegacyFallbackToCLI(t *testing.T) {
 	if accountID != "333333333333" {
 		t.Errorf("accountID=%q", accountID)
 	}
-	if len(rec.providerCalls) != 1 {
-		t.Fatalf("newCLIProvider calls=%d, want 1", len(rec.providerCalls))
+	if rec.defaultSessionCalls != 1 {
+		t.Errorf("resolveLoginSession calls=%d, want 1", rec.defaultSessionCalls)
 	}
-	// The legacy fallback must NOT point at nakama's config file.
-	if got := rec.providerCalls[0]; got.profileName != "my-profile" || got.configFile != "" {
-		t.Errorf("fallback provider constructed with (%q,%q), want (my-profile, \"\")", got.profileName, got.configFile)
+	if len(rec.providerCalls) != 1 {
+		t.Fatalf("newLoginProvider calls=%d, want 1", len(rec.providerCalls))
+	}
+	if got := rec.providerCalls[0]; got.loginSession != "arn:aws:signin:::user/default-example" {
+		t.Errorf("fallback provider constructed with session %q", got.loginSession)
+	}
+	if len(rec.loadConfigCalls) != 2 {
+		t.Fatalf("loadConfig calls=%d, want 2", len(rec.loadConfigCalls))
+	}
+	// AWS_PROFILE is still honoured for non-credential settings.
+	if lc := rec.loadConfigCalls[1]; lc.profile != "my-profile" || !lc.hasProvider {
+		t.Errorf("fallback loadConfig=(%q,provider=%v), want (my-profile,true)", lc.profile, lc.hasProvider)
+	}
+}
+
+func TestResolveAWSConfig_NoActive_NoLoginSessionFound(t *testing.T) {
+	t.Parallel()
+	rec := &resolveRecorder{
+		defaultSession: "", // no login_session in ~/.aws/config
+		probeResults: []probeResult{
+			{err: errors.New("no credential providers")},
+		},
+	}
+	_, _, _, err := resolveAWSConfig(context.Background(), rec.hooks())
+	if err == nil {
+		t.Fatal("expected error when the default chain fails and no login_session exists")
+	}
+	if len(rec.providerCalls) != 0 {
+		t.Errorf("no provider must be built without a login_session, got %d calls", len(rec.providerCalls))
+	}
+	for _, want := range []string{"login_session", "nakama aws login"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q:\n%s", want, err)
+		}
 	}
 }
 
 func TestResolveAWSConfig_NoActive_BothPhasesFail(t *testing.T) {
 	t.Parallel()
 	rec := &resolveRecorder{
+		defaultSession: "arn:aws:signin:::user/default-example",
 		probeResults: []probeResult{
 			{err: errors.New("no credential providers")},
-			{err: errors.New("aws CLI also failed")},
+			{err: errors.New("login session also failed")},
 		},
 	}
 	_, _, _, err := resolveAWSConfig(context.Background(), rec.hooks())
 	if err == nil {
 		t.Fatal("expected error when both phases fail")
 	}
-	if !strings.Contains(err.Error(), "export-credentials") {
-		t.Errorf("error should mention the export-credentials fallback:\n%s", err)
+	for _, want := range []string{"login_session", "nakama aws login"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q:\n%s", want, err)
+		}
 	}
 }
 
