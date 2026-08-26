@@ -59,8 +59,9 @@
 | バックアップ | `nakama aws restore <n> [--label <label>] [--yes]` | インプレース復元。`--label` 省略時は最新バックアップへ復元。インスタンスを停止しスナップショットから作成したボリュームをルートに差し替え (旧ルートは削除) |
 | 接続 | `nakama aws connect <n>` | AWS Systems Manager Session Manager 経由で対話シェルにログイン (SSH 不要・受信ポート開放なし) |
 | 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY) |
-| 接続 | `nakama aws connect <n> -L <local>:<remote>` | ポートフォワード。`localhost:<local>` を接続先 instance の `<remote>` に転送 |
-| 接続 | `nakama aws connect <n> -L <local>:<host>:<remote>` | instance 経由で `<host>:<remote>` を `localhost:<local>` に転送 |
+| 接続 | `nakama aws tunnel [start] <n> -L <spec> [-L <spec>...]` | バックグラウンドに常駐してポート転送 (ADR 0017)。`start` は省略可。複数 `-L` 可 (転送ごとに SSM セッション)。既に転送中なら転送一覧を表示して exit 1 |
+| 接続 | `nakama aws tunnel stop <n>` | ポート転送を停止し、常駐デーモンも終了する |
+| 接続 | `nakama aws tunnel status <n>` | 転送ごとの状態 (active / reconnecting / dead) を表示する |
 | 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
 | 認証 | `nakama aws login [--remote] [--name <alias>]` | AWS Management Console のセッションを使いネイティブにサインイン (OAuth 2.0 authorization code + PKCE + DPoP、aws CLI 不要。ADR 0016)。ブラウザ起動 (不可なら URL 表示で待機継続) → 127.0.0.1 のコールバックで認可コード受領 (10 分タイムアウト、state 検証) → AWS CLI 互換キャッシュ (`~/.aws/login/cache/`) へ保存 → STS で識別確認 → nakama profile へ**自動 save & load**。`--remote` は SSH/headless 向けにブラウザの検証コード貼り付けで完了。`~/.aws/config` は変更しない。要 `SignInLocalDevelopmentAccess` ポリシー |
 | プロファイル | `nakama aws profile save [--name <alias>]` | 現在の `aws login` セッション (login_session 識別子 + STS identity) をアカウント ID キーで nakama のレジストリ (`~/.config/nakama`) に保存。active profile は無視して「今 login しているもの」を保存し、同一アカウントの再 save は上書き。alias 省略時はアカウント ID。login_session が無い資格情報 (SSO・アクセスキー等) はエラー (ADR 0011) |
@@ -78,7 +79,7 @@
 
 ### 4.3 入力バリデーション
 
-- `<name>`: `^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$` (DNS 安全)
+- `<name>`: `^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$` (DNS 安全)。`start` / `stop` / `status` は `tunnel` サブコマンド名と曖昧になるため**予約名**とし、`create` の新規名として拒否する (既存インスタンスの操作は影響しない。ADR 0017)
 - `<IP>`: IPv4 単独 (`/32` 自動付与) または IPv4 CIDR。**IPv6 は v1 非対応**
 - `<instance-type>`: `ec2:DescribeInstanceTypes` で存在を事前検証し CPU アーキ (x86_64 / arm64) を判定 (create / edit 双方)。存在しないタイプはインスタンスを停止せず即時エラー (`instance type %q does not exist`)。Graviton (arm64) タイプ指定時は arm64 版 Ubuntu AMI を自動選択する。`edit` での**アーキ跨ぎ変更は不可** (別アーキへは delete → create)
 - `--ebs <size>`: 現在のサイズより大きい整数 (GiB)
@@ -87,11 +88,11 @@
 - `--keep <N>`: 1 以上の整数。省略時は自動削除なし (手動 `backup delete` のみ)。`update` でも自動バックアップの世代数制御に使用
 - `--label <label>`: バックアップの人間可読な識別子。`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$`。当該 `<name>` 内で一意 (重複はエラー)。`restore` / `backup delete` での選択に使用。利用者は AWS の snapshot-id を意識しない
 - `--note <text>`: バックアップの自由記述メモ。最大 255 文字、Unicode 可 (日本語・空白可)。空文字でメモ消去。識別子ではないため一意性は不要
-- `-L <spec>` (connect 専用): `<localPort>:<remotePort>` または `<localPort>:<host>:<remotePort>`。各ポートは 1–65535。`<host>` 省略時は接続先 instance 自身。コマンド指定とは排他
+- `-L <spec>` (tunnel 専用): `<localPort>:<remotePort>` または `<localPort>:<host>:<remotePort>`。各ポートは 1–65535。`<host>` 省略時は接続先 instance 自身。複数指定可 (転送ごとに SSM セッションを 1 本張る)。start 系呼び出しでは 1 つ以上必須
 - `--tty` (connect 専用): コマンド実行を対話 (PTY) モードにする。省略時は非対話
-- `--retry <n>` (connect 専用): セッションが恒久的に切断された際の自動再接続の最大試行回数。0 以上の整数。省略時の既定は対話シェル / ポートフォワード = 5、コマンド実行モード (`--tty` 含む) = 0 (非冪等コマンドの再実行を避けるため)。明示指定した値はモード不問で尊重。`0` で無効。再接続は新規セッション (シェル状態は失われる) で、指数バックオフ (1s〜30s cap)。セッションが 60 秒以上安定してから切断された場合は試行回数をリセット。資格情報失効時は再試行せず `aws login` を促してエラー (詳細は ADR 0014)
+- `--retry <n>` (connect 専用): セッションが恒久的に切断された際の自動再接続の最大試行回数。0 以上の整数。省略時の既定は対話シェル = 5、コマンド実行モード (`--tty` 含む) = 0 (非冪等コマンドの再実行を避けるため)。明示指定した値はモード不問で尊重。`0` で無効。再接続は新規セッション (シェル状態は失われる) で、指数バックオフ (1s〜30s cap)。セッションが 60 秒以上安定してから切断された場合は試行回数をリセット。資格情報失効時は再試行せず `aws login` を促してエラー (詳細は ADR 0014)。`tunnel` の転送はフラグなしで同じポリシー (予算 5・バックオフ・安定リセット) を常に適用 (ADR 0017)
 - `open` のフラグ: `--no-auth` はパスワード取得と one-shot サーバを完全にスキップ。`--print-url` はブラウザを起動せず URL を表示 (auth 有効時は one-shot ログイン URL も表示し、timeout までローカルサーバを維持。headless / SSH 向け)。`--browser <cmd>` はブラウザ起動コマンドの上書き (URL は末尾引数として付加。`$BROWSER` 環境変数も尊重、優先度は `--browser` > `$BROWSER` > OS 既定)。`--timeout <duration>` は one-shot ページの取得待ち上限 (既定 30s)
-- connect の位置引数: `<name>` の後続をすべてリモートコマンドとして扱う (cobra `SetInterspersed(false)`)。`-L` 等の nakama フラグは `<name>` より前に置く
+- connect の位置引数: `<name>` の後続をすべてリモートコマンドとして扱う (cobra `SetInterspersed(false)`)。`--retry` 等の nakama フラグは `<name>` より前に置く
 - `profile save --name <alias>`: alias が**別アカウント**の alias またはアカウント ID と衝突する場合はエラー (`profile load <alias>` の曖昧化防止)。自アカウントのエントリ上書きは可
 - `profile load/delete <account|alias>`: アカウント ID 完全一致を優先し、次に alias 一致。見つからない場合は保存済み候補一覧付きのエラー
 
@@ -135,6 +136,7 @@
 - 一覧取得: `ResourceGroupsTaggingAPI` で `nakama:managed=true` を絞り込み
 - per-instance: `nakama:name=<name>` を AND 条件として付加
 - 例外: `nakama aws profile` のレジストリのみローカル状態 (`$XDG_CONFIG_HOME/nakama`、未設定時 `~/.config/nakama`) を持つ。これは AWS リソースではなく「どのアカウントの `aws login` セッションを使うか」というクライアント側の選択であり、タグでは表現できないため (ADR 0011)
+- 例外: `nakama aws tunnel` のデーモン状態 (`~/.config/nakama/tunnels/<name>.json`, 0600。PID・制御ポート・制御トークン・転送一覧・開始時刻) もローカル状態を持つ。常駐プロセスはクライアント側にのみ存在し、タグでは表現できないため (ADR 0017)
 
 ## 7. 制限事項 (v1 で対応しない)
 
@@ -151,6 +153,8 @@
 - 別名インスタンスとしての復元 (v1 はインプレース復元のみ)
 - `connect` でのファイル転送 (scp / sftp 相当)
 - `connect` セッションログの S3 / CloudWatch Logs への記録 (Session Manager logging 設定)
+- `tunnel` のポートごとの転送量 (バイト数) 計測・表示
+- `tunnel` の資格情報失効 (login refresh token 最長 12h) 後の自動復旧 (該当転送は dead 表示。再 `nakama aws login` + `tunnel start` のし直しで復旧)
 - macOS の OS プロキシ設定 (システム設定) の自動検出 (リリースバイナリは CGO_ENABLED=0 のため。環境変数での指定は可。ADR 0015)
 - WebSocket (CONNECT トンネル上のアップグレード) を遮断する監査型プロキシ環境での `connect` 動作保証
 
@@ -166,7 +170,7 @@
 8. `nakama aws restore <n> --yes` 後、インスタンスを start すると最新バックアップ取得時点のファイルが復元されている (snapshot-id を一切指定していない)
 9. `nakama aws connect <n>` で対話シェルのプロンプトが表示され、コマンドが実行できる
 10. `nakama aws connect <n> ls` でリモートの実行結果が表示され、セッションが終了する
-11. `nakama aws connect <n> -L 8080:8080` 実行中、`localhost:8080` への接続が instance の 8080 (code-server 等) に到達する
+11. `nakama aws tunnel <n> -L 8080:8080 -L 5432:db.internal:5432` 実行後プロンプトが即返り、`localhost:8080` / `localhost:5432` への接続がそれぞれの宛先に到達する。同じ `<n>` への再実行は「既に転送中」+ 転送一覧を表示して exit 1。`tunnel status <n>` が転送ごとの状態を表示し、`tunnel stop <n>` でデーモンと全転送が終了して状態ファイルが消える
 12. `nakama aws edit <n> --instance-type <t>` 後、`nakama aws info <n>` の instance_type が `<t>` になり、変更前に running だったインスタンスは再び running になる。存在しないタイプ指定時はインスタンスを停止せず即時エラー。現インスタンスとアーキの異なるタイプ指定時も停止せず即時エラー
 13. `nakama aws update <n>` 実行で、更新前にバックアップが1件作成され (`backup list` に出現)、code-server が latest へ更新され (`info` の code_server_version が更新)、`apt-get dist-upgrade` が適用される。実行前 stopped のインスタンスは実行後も stopped に戻る。元 running でカーネル更新があった場合のみ reboot される
 
