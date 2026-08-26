@@ -62,6 +62,14 @@ fmt-check: ## gofmt -s -d (CI: fail when not formatted)
 		exit 1; \
 	fi
 
+.PHONY: notices
+notices: ## THIRD-PARTY-NOTICES を再生成
+	$(GO) run ./tools/gen-third-party-notices
+
+.PHONY: notices-check
+notices-check: ## THIRD-PARTY-NOTICES の鮮度を検証 (CI 相当)
+	$(GO) run ./tools/gen-third-party-notices -check
+
 .PHONY: lint
 lint: ## golangci-lint (要インストール)
 	@command -v golangci-lint >/dev/null || { echo "golangci-lint not installed: https://golangci-lint.run/"; exit 1; }
