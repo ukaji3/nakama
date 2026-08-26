@@ -29,7 +29,8 @@
 - `connect` 利用時の追加 IAM 権限 (**呼び出し側プリンシパル**): `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession`。接続先 EC2 の instance role 側は既存 `AmazonSSMManagedInstanceCore` で充足
 - `connect` 利用時のクライアント前提: 追加バイナリ不要 (plugin を nakama 本体に取り込むため。詳細は design.md §12)
 - ビルド環境: Go 1.23+
-- 実行環境: Linux / macOS
+- 実行環境: Linux / macOS / Windows
+- ネットワーク: HTTP(S) プロキシ環境では自動検出で対応 (優先順位: `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` 環境変数 → Windows のみ OS 設定 (WinHTTP/IE 静的設定・PAC)。macOS/Linux の OS 設定検出は非対応で環境変数のみ。TLS 検証は OS 証明書ストアを使用するため企業 CA の追加設定は不要。ADR 0015)
 
 ## 4. 機能要件
 
@@ -148,7 +149,8 @@
 - 別名インスタンスとしての復元 (v1 はインプレース復元のみ)
 - `connect` でのファイル転送 (scp / sftp 相当)
 - `connect` セッションログの S3 / CloudWatch Logs への記録 (Session Manager logging 設定)
-- Windows クライアントでの `connect` 動作保証 (v1 は Linux / macOS のみ)
+- macOS の OS プロキシ設定 (システム設定) の自動検出 (リリースバイナリは CGO_ENABLED=0 のため。環境変数での指定は可。ADR 0015)
+- WebSocket (CONNECT トンネル上のアップグレード) を遮断する監査型プロキシ環境での `connect` 動作保証
 
 ## 8. 受け入れ基準
 

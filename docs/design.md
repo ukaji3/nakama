@@ -389,7 +389,10 @@ vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` ま�
       TargetNotConnected → 予算内でバックオフ再試行 / その他 → 即エラー
 ```
 
-- TokenValue は秘匿値のため argv・環境変数・ディスクに置かず、fd 3 の pipe でのみ受け渡す
+- TokenValue は秘匿値のため argv・環境変数・ディスクに置かず、inherited pipe でのみ受け渡す
+- payload 受け渡しと親のシグナル処理は OS でメカニズムが異なる (ADR 0015。`connect_session_unix.go` / `connect_session_windows.go` に分割):
+  - **unix**: pipe の読み口を `ExtraFiles` で fd 3 として継承 (上図)。親は子の実行中 SIGINT/SIGTSTP/SIGQUIT を無視し、ctx キャンセル時は SIGTERM で子を停止
+  - **windows**: `ExtraFiles` 非対応のため、pipe の読み口ハンドルに `HANDLE_FLAG_INHERIT` を付与して `SysProcAttr.AdditionalInheritedHandles` で継承し、**ハンドル番号 (非秘匿の整数) のみ**を環境変数 `NAKAMA_SESSION_PAYLOAD_HANDLE` で子に通知 (payload 本体は pipe の中だけ)。親は SIGINT (^C) のみ無視 (SIGTSTP/SIGQUIT は存在しない)、ctx キャンセル時は `Kill()` で子を停止
 - `--retry` 既定: シェル / ポートフォワード = 5、コマンドモード = 0 (明示指定はモード不問で尊重)。`--retry 0` では env ゲートを設定せず spawn するため子の挙動は従来の一発実行と同一
 - 監督ループは `runSession` / `sleep` / `now` / `notify` を関数フィールド注入可能にし、実プロセス・実 AWS なしでユニットテスト (`internal/service/connect_reconnect_test.go`)
 - vendored パッチの一覧は `third_party/session-manager-plugin/PINNED.md` の「Local patches」節を参照
@@ -414,6 +417,7 @@ GitHub Actions で以下を main / PR で実行:
 - `go build ./...`
 - `govulncheck ./...`
 - (任意) `golangci-lint`
+- Windows (windows-latest): `go vet ./...` + `go test -count=1 ./...` (`-race` なし。race ランタイムが Windows では cgo / gcc に依存するため) + ビルド & スモークテスト
 
 ## 11. 用語注
 
@@ -503,3 +507,30 @@ AWS SDK 不使用 (セッション検証は `AWSCLICredentialsProvider` の直�
   AWS CLI のトークンキャッシュ (`~/.aws/login/cache/`) への参照識別子に
   すぎない。ユーザーの `~/.aws/config` / `~/.aws/credentials` へは
   書き込まない。
+
+## 14. アウトバウンド通信のプロキシ解決 (ADR 0015)
+
+nakama の outbound HTTP(S) 経路は 3 つあり、いずれも `internal/proxy` を
+通してプロキシを解決する (third_party は非改変):
+
+| 経路 | 注入方法 |
+|---|---|
+| AWS SDK 全クライアント | `internal/awsx` の `loadConfig` で `config.WithHTTPClient(BuildableClient.WithTransportOptions(...))` により `Transport.Proxy = proxy.Func()` を設定。active profile / 既定チェーンの両パスが同一関数を通る |
+| Session Manager data-channel (WSS) | `service.RunSessionRunner` (session-runner 子プロセス) で `websocket.DefaultDialer.Proxy = proxy.Func()`。vendored plugin の websocketutil はこの package 変数を参照するためパッチ不要。副作用は子プロセス内に閉じる |
+| checkip (`IPDiscoverer`) | `internal/awsx/ip.go` で `proxy.NewTransport()` (http.DefaultTransport の Clone に Proxy 差し替え) を使用 |
+
+`proxy.Func()` の解決順序 (二段構え):
+
+1. `golang.org/x/net/http/httpproxy` の `FromEnvironment()` を**呼び出し
+   ごとに**評価し、`HTTP_PROXY` / `HTTPS_PROXY` (小文字可) のいずれかが
+   設定済みならその `ProxyFunc` を使用 (`NO_PROXY` 尊重)。
+   `http.ProxyFromEnvironment` は sync.Once キャッシュのため不採用
+   (`t.Setenv` による決定的テストができない)。
+2. env 未設定時は `ieproxy.GetProxyFunc()` (github.com/mattn/go-ieproxy
+   v0.0.12) に委譲。Windows では WinHTTP / IE の静的設定と PAC を読む
+   (cgo 不要)。macOS の OS 設定検出は cgo 必須のため CGO_ENABLED=0 の
+   リリースバイナリでは env フォールバック。Linux は env のみ。
+
+TLS 検証は Go 標準の platform verifier (OS 証明書ストア) のまま変更
+しない。企業 CA (TLS 傍受プロキシ含む) は Windows / macOS の OS ストア
+経由で自動的に信頼される。
