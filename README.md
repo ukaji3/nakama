@@ -1,6 +1,6 @@
 # nakama
 
-> All Rights Reserved. Proprietary software. License: Private.
+> MIT License. See [LICENSE](LICENSE).
 
 `nakama` は AWS 上で [coder/code-server](https://github.com/coder/code-server) を実行する EC2 インスタンスを、CloudFront VPC Origin (Private Origin) 経由で WSS アクセス可能な状態で構築・管理する CLI ツールです。
 
@@ -213,4 +213,4 @@ TLS 検証は Go 標準の platform verifier により **OS の証明書スト�
 
 ## ライセンス
 
-Private (All Rights Reserved). 外部公開・再配布・派生物の作成は許可されません。
+[MIT License](LICENSE)。同梱する第三者コンポーネントのライセンスは [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES) を参照してください。
