@@ -52,6 +52,7 @@ archives:
       {{- end }}
     files:
       - LICENSE*
+      - THIRD-PARTY-NOTICES
       - README.md
 
 checksum:
