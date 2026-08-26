@@ -60,7 +60,7 @@ type CreateInstanceOutput struct {
 // nakama code-server instance through CloudFront. The flow is
 // described in docs/design.md §8.2.
 func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*CreateInstanceOutput, error) {
-	if err := ValidateInstanceName(in.Name); err != nil {
+	if err := ValidateNewInstanceName(in.Name); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(in.InstanceType) == "" {

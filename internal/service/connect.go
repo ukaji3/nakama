@@ -12,16 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
-// ConnectInput selects the connect mode. The three modes are mutually
-// exclusive: a non-empty Command runs a command; a non-empty LocalPort
-// starts a port-forward; otherwise an interactive shell is opened.
+// ConnectInput selects the connect mode. The two modes are mutually
+// exclusive: a non-empty Command runs a command; otherwise an
+// interactive shell is opened. Port forwarding lives in
+// `nakama aws tunnel` (ADR 0017).
 type ConnectInput struct {
-	Name       string
-	Command    []string // empty => interactive shell
-	TTY        bool     // run Command in an interactive PTY
-	LocalPort  string   // port-forward: local listener port
-	RemotePort string   // port-forward: target port
-	RemoteHost string   // optional: forward through the instance to this host
+	Name    string
+	Command []string // empty => interactive shell
+	TTY     bool     // run Command in an interactive PTY
 
 	// MaxRetries is the maximum number of automatic reconnect attempts
 	// after a permanent disconnect (server-side session gone, e.g. after
@@ -57,7 +55,7 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 		DocumentName:       docName,
 		Parameters:         params,
 		MaxRetries:         in.MaxRetries,
-		ShellReconnectNote: len(in.Command) == 0 && in.LocalPort == "",
+		ShellReconnectNote: len(in.Command) == 0,
 	})
 }
 
@@ -109,10 +107,16 @@ var errConnectionLost = errors.New("connection lost")
 // the budget (autossh-style); authentication errors abort immediately
 // with an `aws login` advisory.
 func (s *Service) superviseSession(ctx context.Context, in superviseSessionInput) error {
+	return s.superviseSessionWithHooks(ctx, in, s.connectHooksOrDefault())
+}
+
+// superviseSessionWithHooks is superviseSession with explicit
+// supervision hooks; the tunnel daemon injects hooks that wire child
+// stdio into the OS log instead of a terminal (ADR 0017).
+func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSessionInput, hooks *connectHooks) error {
 	if in.MaxRetries < 0 {
 		return fmt.Errorf("invalid retry count %d: must be >= 0", in.MaxRetries)
 	}
-	hooks := s.connectHooksOrDefault()
 
 	// With reconnection disabled the child runs without the disconnect
 	// exit-code gate, so its behavior (including exit 0 on a server-side
@@ -253,30 +257,19 @@ const connectUser = "ubuntu"
 //     is single-quoted so the outer shell does not re-split or expand
 //     it.
 //
-// Port-forwarding carries no user context and is unchanged.
+// Port forwarding is handled by `nakama aws tunnel`
+// (portForwardDocument in tunnel.go, ADR 0017).
 func connectDocument(in ConnectInput) (*string, map[string][]string) {
-	switch {
-	case in.LocalPort != "":
-		params := map[string][]string{
-			"portNumber":      {in.RemotePort},
-			"localPortNumber": {in.LocalPort},
-		}
-		if in.RemoteHost != "" {
-			params["host"] = []string{in.RemoteHost}
-			return aws.String("AWS-StartPortForwardingSessionToRemoteHost"), params
-		}
-		return aws.String("AWS-StartPortForwardingSession"), params
-	case len(in.Command) > 0:
+	if len(in.Command) > 0 {
 		doc := "AWS-StartNonInteractiveCommand"
 		if in.TTY {
 			doc = "AWS-StartInteractiveCommand"
 		}
 		command := fmt.Sprintf("sudo su - %s -c %s", connectUser, shellQuote(strings.Join(in.Command, " ")))
 		return aws.String(doc), map[string][]string{"command": {command}}
-	default:
-		command := fmt.Sprintf("exec sudo su - %s", connectUser)
-		return aws.String("AWS-StartInteractiveCommand"), map[string][]string{"command": {command}}
 	}
+	command := fmt.Sprintf("exec sudo su - %s", connectUser)
+	return aws.String("AWS-StartInteractiveCommand"), map[string][]string{"command": {command}}
 }
 
 // shellQuote returns s as a single POSIX shell word: wrapped in single
