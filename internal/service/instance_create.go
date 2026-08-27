@@ -51,7 +51,7 @@ type CreateInstanceOutput struct {
 	DistributionID     string `json:"distribution_id"`
 	DistributionDomain string `json:"distribution_domain"`
 	URL                string `json:"url"`
-	Password           string `json:"password"`
+	Password           string `json:"password,omitempty"` // cleared by the CLI unless --show-password
 	IAMRole            string `json:"iam_role,omitempty"`
 	InstanceProfile    string `json:"instance_profile,omitempty"`
 }
@@ -65,6 +65,9 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	}
 	if strings.TrimSpace(in.InstanceType) == "" {
 		return nil, errors.New("instance-type is required")
+	}
+	if err := userdata.ValidatePinnedVersion(in.CodeServerVersion); err != nil {
+		return nil, err
 	}
 	if in.WithAdmin && in.WithRole != "" {
 		return nil, errors.New("--with-admin and --with-role are mutually exclusive")
