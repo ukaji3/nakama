@@ -88,6 +88,8 @@ github.com/ukaji3/nakama
 | Security Group | `nakama-sg-<name>` |
 | ENI | `nakama-eni-<name>` |
 | IAM Instance Profile | `nakama-instance-profile` |
+| IAM Role (NAT インスタンス用, SSM core のみ) | `nakama-nat-role` |
+| IAM Instance Profile (NAT インスタンス用) | `nakama-nat-instance-profile` |
 | IAM Instance Role | `nakama-instance-role` |
 | IAM Instance Role (admin, `--with-admin`) | `nakama-instance-role-admin` |
 | IAM Instance Profile (admin, `--with-admin`) | `nakama-instance-profile-admin` |
@@ -244,7 +246,7 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 ### 8.6 `nakama aws backup note`
 
 1. `--label` で当該 `<name>` のスナップショットを解決
-2. `--note` 指定時: `CreateTags` で `nakama:note=<text>` を上書き。空文字/省略時: `DeleteTags` で `nakama:note` を除去
+2. `--note <text>` 指定時: `CreateTags` で `nakama:note=<text>` を上書き。空文字明示時: `DeleteTags` で `nakama:note` を除去 (`--note` の省略は CLI がエラーにする)
 3. 更新後のラベル / メモを出力
 
 > Description はスナップショット作成後に変更できないため、メモ編集の正は常に `nakama:note` タグ側とする。
