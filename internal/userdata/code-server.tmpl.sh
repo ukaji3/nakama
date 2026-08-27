@@ -41,6 +41,10 @@ ln -sf /snap/bin/aws /usr/local/bin/aws
 /snap/bin/aws --version
 
 # 2. Pull the password from SSM Parameter Store (SecureString).
+#    xtrace would expand the secret into /var/log/nakama-userdata.log
+#    (and any EBS snapshot taken later), so tracing stays off for the
+#    whole block that touches it (CWE-532).
+set +x
 PASSWORD="$(/snap/bin/aws ssm get-parameter \
   --region "${REGION}" \
   --name "${PASSWORD_PARAM}" \
@@ -52,6 +56,7 @@ if [ -z "${PASSWORD}" ]; then
   echo "FATAL: empty password retrieved from ${PASSWORD_PARAM}" >&2
   exit 1
 fi
+set -x
 
 # 3. Install code-server via the official install script.
 INSTALL_FLAGS=()
@@ -70,6 +75,8 @@ auth: password
 password: ${PASSWORD}
 cert: false
 EOF
+# The config contains the plaintext password; keep it owner-only.
+chmod 600 "${HOME_DIR}/.config/code-server/config.yaml"
 chown -R "${TARGET_USER}:${TARGET_USER}" "${HOME_DIR}/.config"
 
 # 5. Enable and start the systemd unit (template form: code-server@<user>).

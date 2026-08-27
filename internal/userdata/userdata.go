@@ -6,11 +6,31 @@ package userdata
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
+	"regexp"
 	"text/template"
 )
 
 //go:embed code-server.tmpl.sh
 var codeServerTemplate string
+
+// pinnedVersionPattern is the accepted shape of an explicit
+// code-server version (plain semver, e.g. "4.96.4"). The value is
+// interpolated into a double-quoted shell string inside the rendered
+// User Data, so anything else is rejected up front.
+var pinnedVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ValidatePinnedVersion rejects --code-server-version values that are
+// not plain X.Y.Z semver. Empty means "latest" and is allowed.
+func ValidatePinnedVersion(v string) error {
+	if v == "" {
+		return nil
+	}
+	if !pinnedVersionPattern.MatchString(v) {
+		return fmt.Errorf("invalid --code-server-version %q: expected X.Y.Z (e.g. 4.96.4)", v)
+	}
+	return nil
+}
 
 // CodeServerParams is the data passed to the code-server cloud-init
 // template.
@@ -37,6 +57,9 @@ type CodeServerParams struct {
 // RenderCodeServer returns the rendered cloud-init User Data shell
 // script for a code-server instance.
 func RenderCodeServer(p CodeServerParams) (string, error) {
+	if err := ValidatePinnedVersion(p.PinnedVersion); err != nil {
+		return "", err
+	}
 	t, err := template.New("code-server").Parse(codeServerTemplate)
 	if err != nil {
 		return "", err
