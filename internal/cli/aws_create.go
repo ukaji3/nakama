@@ -11,6 +11,7 @@ type createFlags struct {
 	name              string
 	instanceType      string
 	codeServerVersion string
+	showPassword      bool
 	withAdmin         bool
 	withRole          string
 }
@@ -62,11 +63,20 @@ resource when the permissions are insufficient.`,
 			if err != nil {
 				return err
 			}
+			// The generated password is not shown (or serialized) unless
+			// explicitly requested, mirroring `info --show-password`, so
+			// terminal scrollback and CI logs stay secret-free by default.
+			passwordLine := "  password          : (use `nakama aws info " + out.Name + " --show-password`)"
+			if f.showPassword {
+				passwordLine = "  password          : " + out.Password
+			} else {
+				out.Password = ""
+			}
 			fallback := "instance created\n" +
 				"  name              : " + out.Name + "\n" +
 				"  instance_id       : " + out.InstanceID + "\n" +
 				"  url               : " + out.URL + "\n" +
-				"  password          : " + out.Password
+				passwordLine
 			if out.IAMRole != "" {
 				fallback += "\n  iam_role          : " + out.IAMRole
 			}
@@ -79,6 +89,7 @@ resource when the permissions are insufficient.`,
 	cmd.Flags().StringVar(&f.name, "name", "", "Logical name of the instance (required, [a-z0-9][a-z0-9-]*)")
 	cmd.Flags().StringVar(&f.instanceType, "instance-type", "", "EC2 instance type (required, e.g. t3.medium)")
 	cmd.Flags().StringVar(&f.codeServerVersion, "code-server-version", "", "Pin a specific code-server version (default: latest)")
+	cmd.Flags().BoolVar(&f.showPassword, "show-password", false, "Print the generated code-server password in plain text")
 	cmd.Flags().BoolVar(&f.withAdmin, "with-admin", false, "Attach a shared nakama-managed IAM role with AdministratorAccess to the instance")
 	cmd.Flags().StringVar(&f.withRole, "with-role", "", "Attach an existing IAM role (by name) to the instance")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")
