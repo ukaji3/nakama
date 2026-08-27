@@ -266,3 +266,43 @@ func TestFindFirstFile_PrefixPriorityAndCase(t *testing.T) {
 		t.Errorf("findFirstFile = %s, want LICENSE.txt", base)
 	}
 }
+
+// TestBuildNotices_DualLicenseModule pins the L8 fix: a module that
+// ships more than one license file (LICENSE-APACHE + LICENSE-MIT)
+// must have every text reproduced, each attributable to its file
+// name, under a combined label.
+func TestBuildNotices_DualLicenseModule(t *testing.T) {
+	t.Parallel()
+
+	dualDir := writeModuleDir(t, map[string]string{
+		"LICENSE-APACHE": fakeApache,
+		"LICENSE-MIT":    fakeMIT,
+	})
+	got, err := buildNotices("stdlib license text\n", []moduleInfo{
+		{Path: "example.com/dual", Version: "v1.0.0", Dir: dualDir},
+	})
+	if err != nil {
+		t.Fatalf("buildNotices: %v", err)
+	}
+	for _, want := range []string{
+		"-- LICENSE-APACHE --",
+		"-- LICENSE-MIT --",
+		"Apache License",
+		"MIT License",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output is missing %q", want)
+		}
+	}
+
+	// A single unknown file among several must still fail the build.
+	badDir := writeModuleDir(t, map[string]string{
+		"LICENSE-MIT": fakeMIT,
+		"LICENSE-X":   "Example Public License v42\n",
+	})
+	if _, err := buildNotices("stdlib\n", []moduleInfo{
+		{Path: "example.com/bad", Version: "v1.0.0", Dir: badDir},
+	}); err == nil {
+		t.Error("unknown license among multiple files must fail")
+	}
+}

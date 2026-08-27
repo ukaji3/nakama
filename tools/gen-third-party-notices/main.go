@@ -206,22 +206,37 @@ type licenseGroup struct {
 func buildNotices(stdlibLicense string, mods []moduleInfo) (string, error) {
 	groups := map[[32]byte]*licenseGroup{}
 	for _, m := range mods {
-		licPath, err := findFirstFile(m.Dir, "LICENSE", "COPYING")
+		licPaths, err := findLicenseFiles(m.Dir, "LICENSE", "COPYING")
 		if err != nil {
 			return "", fmt.Errorf("module %s: %w", m.Path, err)
 		}
-		licBytes, err := os.ReadFile(licPath) // #nosec G304 -- path discovered under the module cache directory
-		if err != nil {
-			return "", fmt.Errorf("module %s: read license: %w", m.Path, err)
+		// Every license file must classify to a known license; a
+		// single unknown one fails the build, exactly as before.
+		var labels []string
+		var texts []string
+		for _, licPath := range licPaths {
+			licBytes, err := os.ReadFile(licPath) // #nosec G304 -- path discovered under the module cache directory
+			if err != nil {
+				return "", fmt.Errorf("module %s: read license: %w", m.Path, err)
+			}
+			label, err := classifyLicense(string(licBytes))
+			if err != nil {
+				return "", fmt.Errorf("module %s (%s): %w", m.Path, licPath, err)
+			}
+			// Normalize CRLF (e.g. seelog's license file) so the
+			// document uses one line-ending style throughout; the
+			// text itself stays verbatim.
+			text := strings.ReplaceAll(string(licBytes), "\r\n", "\n")
+			if len(licPaths) > 1 {
+				// Multiple files: keep each attributable to its
+				// source file name inside the reproduced text.
+				text = "-- " + filepath.Base(licPath) + " --\n\n" + text
+			}
+			labels = append(labels, label)
+			texts = append(texts, text)
 		}
-		label, err := classifyLicense(string(licBytes))
-		if err != nil {
-			return "", fmt.Errorf("module %s (%s): %w", m.Path, licPath, err)
-		}
-		// Normalize CRLF (e.g. seelog's license file) so the document
-		// uses one line-ending style throughout; the text itself stays
-		// verbatim.
-		licText := strings.ReplaceAll(string(licBytes), "\r\n", "\n")
+		label := strings.Join(dedupeInOrder(labels), " + ")
+		licText := strings.Join(texts, "\n\n")
 		key := sha256.Sum256([]byte(licText))
 		g, ok := groups[key]
 		if !ok {
@@ -288,6 +303,55 @@ func appendSection(out []string, title string, moduleLines []string, notices []n
 	}
 	out = append(out, "", strings.TrimRight(licenseText, "\n"), "")
 	return out
+}
+
+// dedupeInOrder removes duplicates while keeping first-seen order,
+// so a module shipping two MIT files is labeled "MIT License", not
+// "MIT License + MIT License".
+func dedupeInOrder(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// findLicenseFiles returns every direct child of dir whose name
+// starts (case-insensitively) with one of the prefixes, sorted
+// lexicographically. Unlike findFirstFile, it does not stop at the
+// first match: dual-licensed modules ship LICENSE-APACHE and
+// LICENSE-MIT side by side, and reproducing only the alphabetically
+// first file would silently drop license text from the document.
+func findLicenseFiles(dir string, prefixes ...string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read dir %s: %w", dir, err)
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(strings.ToUpper(e.Name()), prefix) {
+				names = append(names, e.Name())
+				break
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no %s file found in %s", strings.Join(prefixes, "/"), dir)
+	}
+	sort.Strings(names)
+	paths := make([]string, len(names))
+	for i, n := range names {
+		paths[i] = filepath.Join(dir, n)
+	}
+	return paths, nil
 }
 
 // findFirstFile returns the lexicographically first direct child of
