@@ -230,10 +230,11 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 2. Distribution → disable → wait → delete
 3. VpcOrigin → delete
 4. EC2 → terminate → wait
-5. ENI → delete (terminate 完了後)
-6. SG → delete
-7. SSM `/nakama/<name>/*` を全削除
-8. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerStateExcluding`。削除対象を除外し、他に稼働中の code-server が無ければ NAT インスタンスも停止。ADR 0007)
+5. 孤児 EBS ボリュームの掃除: `nakama:managed` + `nakama:name=<name>` + `nakama:component=ebs` タグ付きで `available` のボリュームを削除 (過去の restore が DeleteOnTermination=false のまま残したルートボリューム対策。terminate 直後の detach 遷移は短時間ポーリングで追従し、in-use のボリュームは削除しない)
+6. ENI → delete (terminate 完了後)
+7. SG → delete
+8. SSM `/nakama/<name>/*` を全削除
+9. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerStateExcluding`。削除対象を除外し、他に稼働中の code-server が無ければ NAT インスタンスも停止。ADR 0007)
 
 ### 8.4 `nakama aws backup create`
 
@@ -259,9 +260,10 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 4. インスタンスを `stop` → `stopped` まで待機
 5. スナップショットから新ボリュームを `CreateVolume` (同 AZ / 同タイプ、暗号化は継承)
 6. 旧ルートを `DetachVolume` → 新ボリュームを同デバイス名で `AttachVolume`
-7. 旧ルートボリュームを `DeleteVolume`
-8. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。インスタンスは停止のまま残るため、他に稼働中が無ければ NAT インスタンスも停止。ADR 0007)
-9. インスタンスは停止のまま終了 (利用者が `start`)
+7. `ModifyInstanceAttribute` で新ルートに `DeleteOnTermination=true` を再設定 (起動後アタッチのボリュームは既定 false のため。これを怠ると `delete` 後にルート EBS が available のまま残存する)
+8. 旧ルートボリュームを `DeleteVolume`
+9. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。インスタンスは停止のまま残るため、他に稼働中が無ければ NAT インスタンスも停止。ADR 0007)
+10. インスタンスは停止のまま終了 (利用者が `start`)
 
 ### 8.7 `nakama aws connect`
 

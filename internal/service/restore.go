@@ -88,6 +88,14 @@ func (s *Service) Restore(ctx context.Context, in RestoreInput) error {
 	if err := s.waitVolumeState(ctx, newVolumeID, ec2types.VolumeStateInUse); err != nil {
 		return err
 	}
+	// Volumes attached after launch default to DeleteOnTermination=
+	// false (unlike the launch-time root volume, which create sets to
+	// true). Without re-asserting it here, `delete` would terminate
+	// the instance but leave this root volume behind in state
+	// "available", silently billing forever.
+	if err := s.setDeleteOnTermination(ctx, instanceID, device, newVolumeID); err != nil {
+		return err
+	}
 
 	if _, err := s.clients.EC2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(oldVolumeID)}); err != nil {
 		return fmt.Errorf("DeleteVolume(%s): %w", oldVolumeID, err)
@@ -185,4 +193,24 @@ func (s *Service) waitVolumeState(ctx context.Context, volumeID string, want ec2
 		}
 		return false, nil
 	})
+}
+
+// setDeleteOnTermination marks the volume attached at device so it is
+// deleted together with the instance, restoring the launch-time
+// behavior for a root volume that was swapped in after launch.
+func (s *Service) setDeleteOnTermination(ctx context.Context, instanceID, device, volumeID string) error {
+	if _, err := s.clients.EC2.ModifyInstanceAttribute(ctx, &ec2.ModifyInstanceAttributeInput{
+		InstanceId: aws.String(instanceID),
+		BlockDeviceMappings: []ec2types.InstanceBlockDeviceMappingSpecification{{
+			DeviceName: aws.String(device),
+			Ebs: &ec2types.EbsInstanceBlockDeviceSpecification{
+				DeleteOnTermination: aws.Bool(true),
+				VolumeId:            aws.String(volumeID),
+			},
+		}},
+	}); err != nil {
+		return fmt.Errorf("ModifyInstanceAttribute(DeleteOnTermination, %s): %w", volumeID, err)
+	}
+	slog.Info("restore: delete-on-termination re-asserted", "volume", volumeID, "device", device)
+	return nil
 }

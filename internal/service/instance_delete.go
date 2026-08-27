@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
 	"github.com/ukaji3/nakama/internal/awshelper"
+	"github.com/ukaji3/nakama/internal/tagging"
 )
 
 // DeleteInstanceInput controls how forgiving DeleteInstance should be.
@@ -86,6 +87,18 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 			slog.Warn("delete: instance failed (continuing due to --force)", "error", err)
 		}
 	}
+	// Root volumes swapped in by a pre-#38 restore carry
+	// DeleteOnTermination=false and survive the termination above in
+	// state "available". Sweep them by their nakama tags so delete
+	// keeps its "no resources left behind" contract. Runs regardless
+	// of instanceID: the orphan outlives its instance by definition.
+	if err := s.deleteOrphanedVolumes(ctx, in.Name); err != nil {
+		if !in.Force {
+			return fmt.Errorf("volumes: %w", err)
+		}
+		slog.Warn("delete: orphaned volume sweep failed (continuing due to --force)", "error", err)
+	}
+
 	if eniID != "" {
 		if err := s.deleteENI(ctx, eniID); err != nil {
 			if !in.Force {
@@ -353,4 +366,56 @@ func (s *Service) deleteSSMUnderInstance(ctx context.Context, name string) error
 		slog.Info("ssm: parameters deleted", "count", len(names), "prefix", prefix)
 	}
 	return nil
+}
+
+// deleteOrphanedVolumes removes EBS volumes that belong to the named
+// instance (nakama:managed + nakama:name + nakama:component=ebs tags)
+// but are no longer attached to anything. Detachment during instance
+// termination is asynchronous, so volumes still in a transient state
+// are polled briefly before being swept; volumes legitimately in use
+// (state in-use) are never touched.
+func (s *Service) deleteOrphanedVolumes(ctx context.Context, name string) error {
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		out, err := s.clients.EC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+			Filters: []ec2types.Filter{
+				{Name: aws.String("tag:" + tagging.KeyManaged), Values: []string{tagging.ValueManagedTrue}},
+				{Name: aws.String("tag:" + tagging.KeyName), Values: []string{name}},
+				{Name: aws.String("tag:" + tagging.KeyComponent), Values: []string{tagging.ComponentEBS}},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("DescribeVolumes: %w", err)
+		}
+
+		var transient bool
+		for _, v := range out.Volumes {
+			if v.VolumeId == nil {
+				continue
+			}
+			switch v.State {
+			case ec2types.VolumeStateAvailable:
+				if _, err := s.clients.EC2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: v.VolumeId}); err != nil {
+					return fmt.Errorf("DeleteVolume(%s): %w", *v.VolumeId, err)
+				}
+				slog.Info("delete: orphaned volume removed", "volume", *v.VolumeId)
+			case ec2types.VolumeStateCreating, ec2types.VolumeStateDeleting, ec2types.VolumeStateInUse:
+				// in-use covers the asynchronous detach right after
+				// the termination above; deleting resolves on its
+				// own. Recheck until the deadline — an in-use volume
+				// is never deleted, only re-observed.
+				transient = true
+			default:
+				// error: not ours to sweep.
+			}
+		}
+		if !transient || time.Now().After(deadline) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
