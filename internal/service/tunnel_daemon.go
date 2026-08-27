@@ -193,7 +193,7 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 		logger.Errorf("%s: %v", in.Name, err)
 		return err
 	}
-	defer func() { _ = removeTunnelState(in.Name) }()
+	defer func() { _ = removeTunnelStateOwned(in.Name, state.Token) }()
 
 	tracker := newForwardTracker(in.Forwards, time.Now)
 
@@ -281,7 +281,7 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = server.Shutdown(shutdownCtx)
-	if err := removeTunnelState(in.Name); err != nil {
+	if err := removeTunnelStateOwned(in.Name, state.Token); err != nil {
 		logger.Errorf("%s: %v", in.Name, err)
 	}
 	logger.Infof("%s: tunnel daemon stopped", in.Name)
