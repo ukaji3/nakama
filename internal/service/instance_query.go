@@ -71,9 +71,11 @@ func (s *Service) ListInstances(ctx context.Context, showNAT bool) ([]InstanceSu
 				InstanceType: string(i.InstanceType),
 			}
 			if name != "" {
-				if dom := s.ssmGetOptional(ctx, ssmDistributionDomainPath(name)); dom != "" {
-					summary.DistributionDomain = dom
+				dom, err := s.ssmGetOptional(ctx, ssmDistributionDomainPath(name))
+				if err != nil {
+					return nil, err
 				}
+				summary.DistributionDomain = dom
 			}
 			summaries = append(summaries, summary)
 		}
@@ -124,13 +126,24 @@ func (s *Service) GetInstanceInfo(ctx context.Context, name string, showPassword
 
 	info := &InstanceInfo{Name: name}
 
-	info.InstanceID = s.ssmGetOptional(ctx, ssmInstanceIDPath(name))
-	info.ENIID = s.ssmGetOptional(ctx, ssmENIIDPath(name))
-	info.SecurityGroupID = s.ssmGetOptional(ctx, ssmSGIDPath(name))
-	info.VPCOriginID = s.ssmGetOptional(ctx, ssmVPCOriginIDPath(name))
-	info.DistributionID = s.ssmGetOptional(ctx, ssmDistributionIDPath(name))
-	info.DistributionDomain = s.ssmGetOptional(ctx, ssmDistributionDomainPath(name))
-	info.CodeServerVersion = s.ssmGetOptional(ctx, ssmVersionPath(name))
+	for _, f := range []struct {
+		dst  *string
+		path string
+	}{
+		{&info.InstanceID, ssmInstanceIDPath(name)},
+		{&info.ENIID, ssmENIIDPath(name)},
+		{&info.SecurityGroupID, ssmSGIDPath(name)},
+		{&info.VPCOriginID, ssmVPCOriginIDPath(name)},
+		{&info.DistributionID, ssmDistributionIDPath(name)},
+		{&info.DistributionDomain, ssmDistributionDomainPath(name)},
+		{&info.CodeServerVersion, ssmVersionPath(name)},
+	} {
+		v, err := s.ssmGetOptional(ctx, f.path)
+		if err != nil {
+			return nil, err
+		}
+		*f.dst = v
+	}
 	if info.DistributionDomain != "" {
 		info.URL = "https://" + info.DistributionDomain
 	}
@@ -183,19 +196,24 @@ func (s *Service) fetchInstanceStateAndType(ctx context.Context, instanceID stri
 }
 
 // ssmGetOptional returns the value of an SSM parameter, or "" when
-// it is missing or any other error occurs (logged at Debug elsewhere
-// to keep the optional read truly best-effort).
-func (s *Service) ssmGetOptional(ctx context.Context, name string) string {
+// the parameter does not exist. Unlike the historical behavior, any
+// other failure (authorization, throttling, network) is returned as
+// an error: treating those as "missing" made DeleteInstance skip
+// resources and report success during SSM outages.
+func (s *Service) ssmGetOptional(ctx context.Context, name string) (string, error) {
 	out, err := s.clients.SSM.GetParameter(ctx, &ssm.GetParameterInput{
 		Name: aws.String(name),
 	})
 	if err != nil {
-		return ""
+		if awshelper.IsAPIError(err, "ParameterNotFound") {
+			return "", nil
+		}
+		return "", fmt.Errorf("GetParameter(%s): %w", name, err)
 	}
 	if out.Parameter == nil || out.Parameter.Value == nil {
-		return ""
+		return "", nil
 	}
-	return *out.Parameter.Value
+	return *out.Parameter.Value, nil
 }
 
 // ssmGetSecure retrieves a SecureString parameter, returning an error

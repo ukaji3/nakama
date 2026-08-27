@@ -44,7 +44,10 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 	if in.MaxRetries < 0 {
 		return fmt.Errorf("invalid retry count %d: must be >= 0", in.MaxRetries)
 	}
-	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	instanceID, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	if err != nil {
+		return err
+	}
 	if instanceID == "" {
 		return fmt.Errorf("nakama instance %q not found", in.Name)
 	}

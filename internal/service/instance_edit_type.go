@@ -39,7 +39,10 @@ func (s *Service) EditInstanceType(ctx context.Context, in EditInstanceTypeInput
 		return nil, errors.New("--instance-type is required")
 	}
 
-	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	instanceID, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	if err != nil {
+		return nil, err
+	}
 	if instanceID == "" {
 		return nil, fmt.Errorf("nakama instance %q not found", in.Name)
 	}

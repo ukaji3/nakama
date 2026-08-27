@@ -152,7 +152,11 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 		logger.Errorf("%s: %v", in.Name, err)
 		return err
 	}
-	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	instanceID, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	if err != nil {
+		logger.Errorf("%v", err)
+		return err
+	}
 	if instanceID == "" {
 		err := fmt.Errorf("nakama instance %q not found", in.Name)
 		logger.Errorf("%v", err)

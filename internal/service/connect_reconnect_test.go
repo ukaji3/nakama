@@ -32,7 +32,9 @@ type fakeConnectSSM struct {
 
 func (f *fakeConnectSSM) GetParameter(_ context.Context, _ *ssm.GetParameterInput, _ ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
 	if f.instanceID == "" {
-		return nil, errors.New("ParameterNotFound")
+		// The real SDK returns the modeled exception; ssmGetOptional
+		// distinguishes it from other failures.
+		return nil, &ssmtypes.ParameterNotFound{}
 	}
 	return &ssm.GetParameterOutput{
 		Parameter: &ssmtypes.Parameter{Value: aws.String(f.instanceID)},
