@@ -168,15 +168,12 @@ type ipSetSummary struct {
 }
 
 func (s *Service) findIPSetSummary(ctx context.Context) (ipSetSummary, error) {
-	out, err := s.clients.WAF.ListIPSets(ctx, &wafv2.ListIPSetsInput{
-		Scope: scopeCloudFront,
-		Limit: aws.Int32(100),
-	})
+	all, err := s.listAllIPSets(ctx)
 	if err != nil {
-		return ipSetSummary{}, fmt.Errorf("ListIPSets: %w", err)
+		return ipSetSummary{}, err
 	}
 	want := "nakama-allowed-ips"
-	for _, ip := range out.IPSets {
+	for _, ip := range all {
 		if ip.Name != nil && *ip.Name == want && ip.Id != nil && ip.ARN != nil {
 			return ipSetSummary{id: *ip.Id, name: *ip.Name, arn: *ip.ARN}, nil
 		}
