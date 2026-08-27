@@ -37,11 +37,26 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 		return err
 	}
 
-	distID := s.ssmGetOptional(ctx, ssmDistributionIDPath(in.Name))
-	vpcOriginID := s.ssmGetOptional(ctx, ssmVPCOriginIDPath(in.Name))
-	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
-	eniID := s.ssmGetOptional(ctx, ssmENIIDPath(in.Name))
-	sgID := s.ssmGetOptional(ctx, ssmSGIDPath(in.Name))
+	// Resource IDs come from SSM. A read failure here must abort the
+	// delete: treating it as "no such resource" would skip cleanup and
+	// falsely report success (leaving CloudFront/EC2/ENI/SG behind).
+	var distID, vpcOriginID, instanceID, eniID, sgID string
+	for _, f := range []struct {
+		dst  *string
+		path string
+	}{
+		{&distID, ssmDistributionIDPath(in.Name)},
+		{&vpcOriginID, ssmVPCOriginIDPath(in.Name)},
+		{&instanceID, ssmInstanceIDPath(in.Name)},
+		{&eniID, ssmENIIDPath(in.Name)},
+		{&sgID, ssmSGIDPath(in.Name)},
+	} {
+		v, err := s.ssmGetOptional(ctx, f.path)
+		if err != nil {
+			return err
+		}
+		*f.dst = v
+	}
 
 	slog.Info("delete: starting", "name", in.Name,
 		"distribution", distID, "vpc_origin", vpcOriginID,

@@ -9,6 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/ukaji3/nakama/internal/awsx"
 	"github.com/ukaji3/nakama/internal/naming"
@@ -68,7 +70,9 @@ func (f *fakeListEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInsta
 type fakeListSSM struct{ awsx.SSMAPI }
 
 func (fakeListSSM) GetParameter(context.Context, *ssm.GetParameterInput, ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
-	return nil, errors.New("parameter not found")
+	// The real SDK returns the modeled exception; ssmGetOptional
+	// distinguishes it from other failures.
+	return nil, &ssmtypes.ParameterNotFound{}
 }
 
 func newServiceForList(ec2api awsx.EC2API) *Service {
@@ -170,5 +174,58 @@ func TestListInstances_ShowNATNoNATInstance(t *testing.T) {
 	}
 	if rows[0].Type != instanceKindVSCode {
 		t.Fatalf("row Type = %q, want %q", rows[0].Type, instanceKindVSCode)
+	}
+}
+
+// fakeSSMScripted lets each test dictate the GetParameter outcome.
+type fakeSSMScripted struct {
+	awsx.SSMAPI
+	value string
+	err   error
+}
+
+func (f fakeSSMScripted) GetParameter(context.Context, *ssm.GetParameterInput, ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &ssm.GetParameterOutput{Parameter: &ssmtypes.Parameter{Value: aws.String(f.value)}}, nil
+}
+
+// TestSSMGetOptional pins the M4 fix: only ParameterNotFound maps to
+// "missing"; authorization/network failures must surface as errors so
+// callers (DeleteInstance in particular) cannot mistake an outage for
+// an already-clean state.
+func TestSSMGetOptional(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		fake    fakeSSMScripted
+		want    string
+		wantErr bool
+	}{
+		{name: "value present", fake: fakeSSMScripted{value: "i-0123"}, want: "i-0123"},
+		{name: "parameter not found", fake: fakeSSMScripted{err: &ssmtypes.ParameterNotFound{}}},
+		{name: "access denied surfaces", fake: fakeSSMScripted{err: &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "denied"}}, wantErr: true},
+		{name: "transport error surfaces", fake: fakeSSMScripted{err: errors.New("dial tcp: i/o timeout")}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			svc := &Service{clients: &awsx.Clients{SSM: tt.fake}}
+			got, err := svc.ssmGetOptional(context.Background(), "/nakama/dev01/meta/instance-id")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("want error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

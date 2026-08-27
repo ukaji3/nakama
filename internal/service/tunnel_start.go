@@ -101,7 +101,11 @@ func (s *Service) StartTunnel(ctx context.Context, name string, forwards []Forwa
 
 	// Fail fast in the CLI process, where errors are visible: instance
 	// existence and local port availability.
-	if id := s.ssmGetOptional(ctx, ssmInstanceIDPath(name)); id == "" {
+	id, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(name))
+	if err != nil {
+		return nil, err
+	}
+	if id == "" {
 		return nil, fmt.Errorf("nakama instance %q not found", name)
 	}
 	for _, f := range forwards {

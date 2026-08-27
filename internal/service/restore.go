@@ -34,7 +34,10 @@ func (s *Service) Restore(ctx context.Context, in RestoreInput) error {
 	if err != nil {
 		return err
 	}
-	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	instanceID, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	if err != nil {
+		return err
+	}
 	if instanceID == "" {
 		return fmt.Errorf("nakama instance %q not found", in.Name)
 	}

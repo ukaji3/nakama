@@ -34,7 +34,10 @@ func (s *Service) EditEBS(ctx context.Context, in EditEBSInput) error {
 		return errors.New("--ebs must be a positive integer (GiB)")
 	}
 
-	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	instanceID, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	if err != nil {
+		return err
+	}
 	if instanceID == "" {
 		return fmt.Errorf("nakama instance %q not found", in.Name)
 	}

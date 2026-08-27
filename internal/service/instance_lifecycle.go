@@ -17,7 +17,10 @@ func (s *Service) StartInstance(ctx context.Context, name string) (string, error
 	if err := ValidateInstanceName(name); err != nil {
 		return "", err
 	}
-	id := s.ssmGetOptional(ctx, ssmInstanceIDPath(name))
+	id, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(name))
+	if err != nil {
+		return "", err
+	}
 	if id == "" {
 		return "", fmt.Errorf("nakama instance %q not found", name)
 	}
@@ -43,7 +46,10 @@ func (s *Service) StopInstance(ctx context.Context, name string) (string, error)
 	if err := ValidateInstanceName(name); err != nil {
 		return "", err
 	}
-	id := s.ssmGetOptional(ctx, ssmInstanceIDPath(name))
+	id, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(name))
+	if err != nil {
+		return "", err
+	}
 	if id == "" {
 		return "", fmt.Errorf("nakama instance %q not found", name)
 	}

@@ -44,7 +44,10 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 		return nil, err
 	}
 
-	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	instanceID, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	if err != nil {
+		return nil, err
+	}
 	if instanceID == "" {
 		return nil, fmt.Errorf("nakama instance %q not found", in.Name)
 	}
@@ -142,7 +145,13 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 		return res, fmt.Errorf("update command: %w", runErr)
 	}
 
-	res.CodeServerVersion = s.ssmGetOptional(ctx, ssmVersionPath(in.Name))
+	// Display-only read-back after a successful update: keep it
+	// best-effort instead of failing the whole result.
+	if v, err := s.ssmGetOptional(ctx, ssmVersionPath(in.Name)); err == nil {
+		res.CodeServerVersion = v
+	} else {
+		slog.Warn("update: reading back code-server version failed", "error", err)
+	}
 	return res, nil
 }
 

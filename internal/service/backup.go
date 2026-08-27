@@ -67,7 +67,10 @@ func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Back
 		return nil, fmt.Errorf("invalid --label %q: must match %s", in.Label, backupLabelPattern.String())
 	}
 
-	instanceID := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	instanceID, err := s.ssmGetOptional(ctx, ssmInstanceIDPath(in.Name))
+	if err != nil {
+		return nil, err
+	}
 	if instanceID == "" {
 		return nil, fmt.Errorf("nakama instance %q not found", in.Name)
 	}
