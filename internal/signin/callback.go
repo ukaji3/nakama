@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -43,22 +44,36 @@ type CallbackServer struct {
 	ln      net.Listener
 	srv     *http.Server
 	results chan callbackResult
+	// expectedState is the OAuth state of the login attempt this
+	// server belongs to. Requests carrying any other state are
+	// rejected at the handler, so a local process (or a web page
+	// blindly POKing 127.0.0.1 ports) cannot occupy the one-shot
+	// result channel and starve the real redirect (login DoS).
+	expectedState string
 	// timeout is the overall wait budget; tests may shorten it.
 	timeout time.Duration
+
+	strayMu sync.Mutex
+	// strayError records the error parameter of the last rejected
+	// request, surfaced in the timeout message for diagnosability
+	// (e.g. if the endpoint ever omitted state on error redirects).
+	strayError string
 }
 
 // StartCallbackServer binds 127.0.0.1 on an ephemeral port and starts
-// serving the /oauth/callback endpoint in the background. The caller
-// must Close the server when done.
-func StartCallbackServer() (*CallbackServer, error) {
+// serving the /oauth/callback endpoint in the background. Only
+// redirects carrying expectedState are accepted. The caller must
+// Close the server when done.
+func StartCallbackServer(expectedState string) (*CallbackServer, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("start the local sign-in callback server: %w", err)
 	}
 	s := &CallbackServer{
-		ln:      ln,
-		results: make(chan callbackResult, 1),
-		timeout: callbackTimeout,
+		ln:            ln,
+		results:       make(chan callbackResult, 1),
+		expectedState: expectedState,
+		timeout:       callbackTimeout,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(callbackPath, s.handleCallback)
@@ -82,13 +97,28 @@ func (s *CallbackServer) RedirectURI() string {
 // logged or echoed.
 func (s *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+
+	// RFC 6749 §4.1.2/§4.1.2.1: the state parameter is REQUIRED on
+	// both success and error redirects when the request carried one.
+	// Anything without the expected state is not our redirect — reject
+	// it before it can occupy the one-shot result channel.
+	if q.Get("state") != s.expectedState {
+		if e := q.Get("error"); e != "" {
+			s.strayMu.Lock()
+			s.strayError = e
+			s.strayMu.Unlock()
+		}
+		http.NotFound(w, r)
+		return
+	}
+
 	var res callbackResult
 	switch {
 	case q.Get("error") != "":
 		// The error code is server-controlled but bounded; report only
 		// its value, never the code/state parameters.
 		res = callbackResult{err: fmt.Errorf("the authorization endpoint reported an error (%s)", q.Get("error"))}
-	case q.Get("code") != "" && q.Get("state") != "":
+	case q.Get("code") != "":
 		res = callbackResult{code: q.Get("code"), state: q.Get("state")}
 	default:
 		http.NotFound(w, r)
@@ -125,7 +155,14 @@ func (s *CallbackServer) WaitForCode(ctx context.Context, expectedState string) 
 		}
 		return res.code, nil
 	case <-timer.C:
-		return "", errors.New("sign-in timed out: no browser redirect was received within 10 minutes; run `nakama aws login` again")
+		msg := "sign-in timed out: no browser redirect was received within 10 minutes; run `nakama aws login` again"
+		s.strayMu.Lock()
+		stray := s.strayError
+		s.strayMu.Unlock()
+		if stray != "" {
+			msg += fmt.Sprintf(" (an ignored redirect with a non-matching state reported error %q)", stray)
+		}
+		return "", errors.New(msg)
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}

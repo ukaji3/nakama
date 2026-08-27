@@ -32,7 +32,7 @@ type LoginOptions struct {
 	newState      func() (string, error)
 	newVerifier   func() (string, error)
 	newKey        func() (*ecdsa.PrivateKey, error)
-	startCallback func() (*CallbackServer, error)
+	startCallback func(expectedState string) (*CallbackServer, error)
 	now           func() time.Time
 }
 
@@ -126,7 +126,7 @@ func Login(ctx context.Context, opts LoginOptions) (*LoginResult, error) {
 		code = gotCode
 	} else {
 		clientID = ClientIDSameDevice
-		server, err := startCallback()
+		server, err := startCallback(state)
 		if err != nil {
 			return nil, err
 		}
