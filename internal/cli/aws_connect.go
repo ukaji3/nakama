@@ -35,11 +35,14 @@ automatically with a fresh session, up to --retry times (default 5 for
 the shell, 0 for command mode). A reconnected shell is a new session:
 previous shell state is lost.
 
+Flags must precede <name>: everything after <name> is sent to the
+instance as the remote command (ssh-style).
+
 Examples:
   nakama aws connect dev01
   nakama aws connect dev01 ls -la
-  nakama aws connect dev01 --tty top
-  nakama aws connect dev01 --retry 0`,
+  nakama aws connect --tty dev01 top
+  nakama aws connect --retry 0 dev01`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := withCancel(cmd)
