@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -84,10 +85,15 @@ func newAWSBackupListCommand() *cobra.Command {
 func newAWSBackupNoteCommand() *cobra.Command {
 	var label, note string
 	cmd := &cobra.Command{
-		Use:   "note <name> --label <label>",
+		Use:   "note <name> --label <label> --note <text>",
 		Short: "Set or clear the memo on an existing backup",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Require an explicit --note: without this check, leaving
+			// the flag off would silently wipe the existing memo.
+			if !cmd.Flags().Changed("note") {
+				return errors.New("--note is required (pass --note \"\" to clear the memo)")
+			}
 			ctx := withCancel(cmd)
 			clients, err := awsx.NewClients(ctx)
 			if err != nil {
@@ -102,7 +108,7 @@ func newAWSBackupNoteCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&label, "label", "", "Label of the backup to annotate (required)")
-	cmd.Flags().StringVar(&note, "note", "", "Memo text (empty clears the memo)")
+	cmd.Flags().StringVar(&note, "note", "", "Memo text (required; pass an empty string to clear)")
 	_ = cmd.MarkFlagRequired("label")
 	return cmd
 }
