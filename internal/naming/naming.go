@@ -100,5 +100,14 @@ func SSMMetaVersion() string { return "/" + Prefix + "/_meta/version" }
 // NATInstance returns the canonical NAT instance name (ADR 0007).
 func NATInstance() string { return Prefix + "-nat" }
 
+// NATInstanceRole is the IAM role attached to the shared NAT
+// instance. It is deliberately separate from InstanceRole: the NAT
+// node needs SSM manageability only and must not be able to read
+// code-server passwords or meta parameters.
+func NATInstanceRole() string { return Prefix + "-nat-role" }
+
+// NATInstanceProfile is the instance profile wrapping NATInstanceRole.
+func NATInstanceProfile() string { return Prefix + "-nat-instance-profile" }
+
 // NATInstanceSG returns the security group name for the NAT instance.
 func NATInstanceSG() string { return Prefix + "-nat-sg" }
