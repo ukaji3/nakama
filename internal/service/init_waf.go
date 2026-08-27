@@ -44,14 +44,11 @@ func (s *Service) initWAF(ctx context.Context, res *InitResult) error {
 func (s *Service) upsertIPSet(ctx context.Context) (string, string, error) {
 	name := naming.WAFIPSet()
 
-	listOut, err := s.clients.WAF.ListIPSets(ctx, &wafv2.ListIPSetsInput{
-		Scope: scopeCloudFront,
-		Limit: aws.Int32(100),
-	})
+	ipSets, err := s.listAllIPSets(ctx)
 	if err != nil {
-		return "", "", fmt.Errorf("ListIPSets: %w", err)
+		return "", "", err
 	}
-	for _, ip := range listOut.IPSets {
+	for _, ip := range ipSets {
 		if ip.Name != nil && *ip.Name == name && ip.Id != nil && ip.ARN != nil {
 			slog.Info("waf ip set: reusing existing", "id", *ip.Id, "arn", *ip.ARN)
 			return *ip.Id, *ip.ARN, nil
@@ -80,14 +77,11 @@ func (s *Service) upsertIPSet(ctx context.Context) (string, string, error) {
 func (s *Service) upsertWebACL(ctx context.Context, ipSetARN string) (string, string, error) {
 	name := naming.WAFWebACL()
 
-	listOut, err := s.clients.WAF.ListWebACLs(ctx, &wafv2.ListWebACLsInput{
-		Scope: scopeCloudFront,
-		Limit: aws.Int32(100),
-	})
+	acls, err := s.listAllWebACLs(ctx)
 	if err != nil {
-		return "", "", fmt.Errorf("ListWebACLs: %w", err)
+		return "", "", err
 	}
-	for _, a := range listOut.WebACLs {
+	for _, a := range acls {
 		if a.Name != nil && *a.Name == name && a.Id != nil && a.ARN != nil {
 			slog.Info("waf web acl: reusing existing", "id", *a.Id, "arn", *a.ARN)
 			return *a.Id, *a.ARN, nil
@@ -136,4 +130,53 @@ func (s *Service) upsertWebACL(ctx context.Context, ipSetARN string) (string, st
 	}
 	slog.Info("waf web acl: created", "id", *c.Summary.Id, "arn", *c.Summary.ARN)
 	return *c.Summary.Id, *c.Summary.ARN, nil
+}
+
+// listAllIPSets pages through ListIPSets. WAFv2 caps each page at
+// Limit and signals continuation via NextMarker; a single fixed-limit
+// call silently misses resources in accounts with more than 100 IP
+// sets in the CloudFront scope.
+func (s *Service) listAllIPSets(ctx context.Context) ([]wafv2types.IPSetSummary, error) {
+	var all []wafv2types.IPSetSummary
+	var marker *string
+	for {
+		out, err := s.clients.WAF.ListIPSets(ctx, &wafv2.ListIPSetsInput{
+			Scope:      scopeCloudFront,
+			Limit:      aws.Int32(100),
+			NextMarker: marker,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ListIPSets: %w", err)
+		}
+		all = append(all, out.IPSets...)
+		// Guards against both terminal shapes (nil/empty marker) and a
+		// server echoing the same marker back, which would loop forever.
+		if out.NextMarker == nil || *out.NextMarker == "" || len(out.IPSets) == 0 ||
+			(marker != nil && *marker == *out.NextMarker) {
+			return all, nil
+		}
+		marker = out.NextMarker
+	}
+}
+
+// listAllWebACLs pages through ListWebACLs (see listAllIPSets).
+func (s *Service) listAllWebACLs(ctx context.Context) ([]wafv2types.WebACLSummary, error) {
+	var all []wafv2types.WebACLSummary
+	var marker *string
+	for {
+		out, err := s.clients.WAF.ListWebACLs(ctx, &wafv2.ListWebACLsInput{
+			Scope:      scopeCloudFront,
+			Limit:      aws.Int32(100),
+			NextMarker: marker,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ListWebACLs: %w", err)
+		}
+		all = append(all, out.WebACLs...)
+		if out.NextMarker == nil || *out.NextMarker == "" || len(out.WebACLs) == 0 ||
+			(marker != nil && *marker == *out.NextMarker) {
+			return all, nil
+		}
+		marker = out.NextMarker
+	}
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	cftypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/wafv2"
 
 	"github.com/ukaji3/nakama/internal/awshelper"
 	"github.com/ukaji3/nakama/internal/config"
@@ -31,15 +30,12 @@ const (
 // The CLOUDFRONT scope means the WAFv2 client is in us-east-1, which
 // is hidden inside awsx.WAFAPI.
 func (s *Service) findWAFWebACLARN(ctx context.Context) (string, error) {
-	out, err := s.clients.WAF.ListWebACLs(ctx, &wafv2.ListWebACLsInput{
-		Scope: scopeCloudFront,
-		Limit: aws.Int32(100),
-	})
+	acls, err := s.listAllWebACLs(ctx)
 	if err != nil {
-		return "", fmt.Errorf("ListWebACLs: %w", err)
+		return "", err
 	}
 	want := naming.WAFWebACL()
-	for _, a := range out.WebACLs {
+	for _, a := range acls {
 		if a.Name != nil && *a.Name == want && a.ARN != nil {
 			return *a.ARN, nil
 		}
