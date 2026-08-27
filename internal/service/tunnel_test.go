@@ -607,3 +607,37 @@ func TestValidateNewInstanceNameReserved(t *testing.T) {
 		t.Error("pattern violations must still be rejected")
 	}
 }
+
+// TestRemoveTunnelStateOwned pins the compare-and-delete semantics:
+// only the daemon generation that owns the file (token match) may
+// remove it; a foreign (newer) file is left untouched.
+func TestRemoveTunnelStateOwned(t *testing.T) {
+	withTunnelStateDir(t)
+
+	// Missing file: no error.
+	if err := removeTunnelStateOwned("dev01", "tok-abc"); err != nil {
+		t.Fatalf("missing file: %v", err)
+	}
+
+	// Token match: removed.
+	if err := writeTunnelState(testTunnelState("dev01")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := removeTunnelStateOwned("dev01", "tok-abc"); err != nil {
+		t.Fatalf("owned removal: %v", err)
+	}
+	if _, err := readTunnelState("dev01"); err == nil {
+		t.Error("state file must be gone after owned removal")
+	}
+
+	// Token mismatch (a newer daemon rewrote the file): preserved.
+	if err := writeTunnelState(testTunnelState("dev01")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := removeTunnelStateOwned("dev01", "tok-of-old-daemon"); err != nil {
+		t.Fatalf("foreign removal attempt: %v", err)
+	}
+	if _, err := readTunnelState("dev01"); err != nil {
+		t.Errorf("state file of the newer daemon was deleted: %v", err)
+	}
+}

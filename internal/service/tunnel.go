@@ -218,6 +218,29 @@ func readTunnelState(name string) (*TunnelState, error) {
 
 // removeTunnelState deletes the state file; a missing file is not an
 // error (stop and daemon shutdown may race benignly).
+// removeTunnelStateOwned deletes the state file only while it still
+// carries the given control token, i.e. while it belongs to the
+// daemon generation the caller actually observed. Without the check,
+// cleaning up a daemon that was merely slow to answer could delete
+// the state file a newer daemon just wrote (or the old daemon's exit
+// cleanup could delete the new daemon's file). The read-check-delete
+// window is not atomic, but it shrinks the race from "any time" to
+// microseconds. A missing file is not an error.
+func removeTunnelStateOwned(name, token string) error {
+	st, err := readTunnelState(name)
+	if err != nil {
+		var missing *NoTunnelError
+		if errors.As(err, &missing) {
+			return nil
+		}
+		return err
+	}
+	if st.Token != token {
+		return nil
+	}
+	return removeTunnelState(name)
+}
+
 func removeTunnelState(name string) error {
 	path, err := tunnelStatePath(name)
 	if err != nil {

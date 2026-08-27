@@ -94,7 +94,7 @@ func (s *Service) StartTunnel(ctx context.Context, name string, forwards []Forwa
 		if status, qErr := hooks.query(ctx, st, tunnelControlTimeout); qErr == nil {
 			return nil, &TunnelAlreadyRunningError{Status: status}
 		}
-		if err := removeTunnelState(name); err != nil {
+		if err := removeTunnelStateOwned(name, st.Token); err != nil {
 			return nil, err
 		}
 	}
@@ -159,7 +159,7 @@ func (s *Service) StopTunnel(ctx context.Context, name string) (*TunnelStopOutco
 	}
 	if err := hooks.requestStop(ctx, st, tunnelControlTimeout); err != nil {
 		// Daemon unreachable: nothing is forwarding; clean up.
-		if rmErr := removeTunnelState(name); rmErr != nil {
+		if rmErr := removeTunnelStateOwned(name, st.Token); rmErr != nil {
 			return nil, rmErr
 		}
 		return &TunnelStopOutcome{WasRunning: false}, nil
@@ -198,7 +198,7 @@ func (s *Service) GetTunnelStatus(ctx context.Context, name string) (*TunnelStat
 	}
 	status, err := hooks.query(ctx, st, tunnelControlTimeout)
 	if err != nil {
-		if rmErr := removeTunnelState(name); rmErr != nil {
+		if rmErr := removeTunnelStateOwned(name, st.Token); rmErr != nil {
 			return nil, rmErr
 		}
 		return nil, &NoTunnelError{Name: name}
