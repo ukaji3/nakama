@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -135,7 +136,7 @@ func (s *Service) runNATInstance(ctx context.Context, subnetID, sgID string) (na
 	tags := tagging.ForShared(tagging.ComponentNATInstance, naming.NATInstance())
 	volTags := tagging.ForShared(tagging.ComponentNATInstance, naming.NATInstance()+"-root")
 
-	out, err := s.clients.EC2.RunInstances(ctx, &ec2.RunInstancesInput{
+	runIn := &ec2.RunInstancesInput{
 		ImageId:      aws.String(amiID),
 		InstanceType: ec2types.InstanceType(config.NATInstanceType),
 		MinCount:     aws.Int32(1),
@@ -148,16 +149,34 @@ func (s *Service) runNATInstance(ctx context.Context, subnetID, sgID string) (na
 			DeleteOnTermination:      aws.Bool(true),
 		}},
 		IamInstanceProfile: &ec2types.IamInstanceProfileSpecification{
-			Name: aws.String(naming.InstanceProfile()),
+			Name: aws.String(naming.NATInstanceProfile()),
 		},
 		UserData: aws.String(base64.StdEncoding.EncodeToString([]byte(natInstanceUserData()))),
 		TagSpecifications: []ec2types.TagSpecification{
 			awshelper.EC2TagSpec(ec2types.ResourceTypeInstance, tags),
 			awshelper.EC2TagSpec(ec2types.ResourceTypeVolume, volTags),
 		},
-	})
-	if err != nil {
-		return natInstanceInfo{}, fmt.Errorf("RunInstances(nat): %w", err)
+	}
+	// The NAT instance profile may have been created moments ago in
+	// the same init run; IAM is eventually consistent and RunInstances
+	// rejects a not-yet-propagated profile with InvalidParameterValue.
+	// Retry that specific failure with a bounded backoff.
+	var out *ec2.RunInstancesOutput
+	for attempt := 1; ; attempt++ {
+		out, err = s.clients.EC2.RunInstances(ctx, runIn)
+		if err == nil {
+			break
+		}
+		if attempt >= 20 || !awshelper.IsAPIError(err, "InvalidParameterValue") {
+			return natInstanceInfo{}, fmt.Errorf("RunInstances(nat): %w", err)
+		}
+		slog.Info("nat instance: waiting for IAM instance profile propagation",
+			"attempt", attempt, "error", err)
+		select {
+		case <-ctx.Done():
+			return natInstanceInfo{}, ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
 	}
 	if len(out.Instances) == 0 || out.Instances[0].InstanceId == nil {
 		return natInstanceInfo{}, errors.New("RunInstances(nat) returned no instance")

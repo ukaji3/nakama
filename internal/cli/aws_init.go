@@ -66,7 +66,9 @@ func initSummary(r *service.InitResult) string {
 		"  waf web acl        : " + r.WAFWebACLARN + "\n" +
 		"  waf ip set         : " + r.WAFIPSetARN + "\n" +
 		"  iam role           : " + r.InstanceRoleARN + "\n" +
-		"  iam instance prof. : " + r.InstanceProfileARN
+		"  iam instance prof. : " + r.InstanceProfileARN + "\n" +
+		"  nat iam role       : " + r.NATInstanceRoleARN + "\n" +
+		"  nat instance prof. : " + r.NATInstanceProfileARN
 	if r.DeletedNATGatewayID != "" {
 		s += "\n  deleted legacy natgw: " + r.DeletedNATGatewayID
 	}

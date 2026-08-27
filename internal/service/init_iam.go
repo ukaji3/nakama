@@ -39,45 +39,76 @@ const (
 // to the instance role to grant per-/nakama/* SSM access.
 const nakamaInlinePolicyName = "nakama-instance-ssm-access"
 
-// nakamaInlinePolicyDocument grants:
-//   - GetParameter / PutParameter on /nakama/* (used by User Data)
-//   - Decrypt on the default SSM KMS key (handled implicitly by
-//     Parameter Store SecureString reads through the IAM service
-//     principal, no explicit grant required for `aws/ssm`)
+// nakamaInlinePolicyDocument grants the two SSM Parameter Store
+// operations the instance-side scripts actually perform:
+//   - GetParameter on .../code-server/password (User Data pulls the
+//     SecureString; KMS decrypt via `aws/ssm` needs no explicit grant)
+//   - PutParameter on .../code-server/version (User Data and the
+//     `update` Run Command write the running version back)
+//
+// The role is shared by every code-server instance, so the paths keep
+// a wildcard segment for the instance name. meta/* is deliberately
+// out of reach: instances must not be able to read or redirect the
+// resource IDs (instance-id, eni-id, ...) that the CLI trusts.
 const nakamaInlinePolicyDocument = `{
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "NakamaSSMParameterAccess",
+      "Sid": "NakamaReadCodeServerPassword",
       "Effect": "Allow",
       "Action": [
-        "ssm:GetParameter",
-        "ssm:GetParameters",
+        "ssm:GetParameter"
+      ],
+      "Resource": "arn:aws:ssm:*:*:parameter/nakama/*/code-server/password"
+    },
+    {
+      "Sid": "NakamaWriteCodeServerVersion",
+      "Effect": "Allow",
+      "Action": [
         "ssm:PutParameter"
       ],
-      "Resource": "arn:aws:ssm:*:*:parameter/nakama/*"
+      "Resource": "arn:aws:ssm:*:*:parameter/nakama/*/code-server/version"
     }
   ]
 }`
 
 func (s *Service) initIAM(ctx context.Context, res *InitResult) error {
-	roleARN, err := s.upsertInstanceRole(ctx)
+	roleARN, err := s.upsertRole(ctx, naming.InstanceRole(),
+		"nakama-managed EC2 instance role", s.attachRolePolicies)
 	if err != nil {
 		return err
 	}
 	res.InstanceRoleARN = roleARN
 
-	profileARN, err := s.upsertInstanceProfile(ctx)
+	profileARN, err := s.upsertProfile(ctx, naming.InstanceProfile(), naming.InstanceRole())
 	if err != nil {
 		return err
 	}
 	res.InstanceProfileARN = profileARN
+
+	// The NAT instance gets its own role: SSM-managed for
+	// troubleshooting, but with no Parameter Store access, so a
+	// compromised NAT node cannot read code-server passwords or
+	// redirect meta parameters.
+	natRoleARN, err := s.upsertRole(ctx, naming.NATInstanceRole(),
+		"nakama-managed NAT instance role (SSM core only, no Parameter Store access)",
+		s.attachNATRolePolicies)
+	if err != nil {
+		return err
+	}
+	res.NATInstanceRoleARN = natRoleARN
+
+	natProfileARN, err := s.upsertProfile(ctx, naming.NATInstanceProfile(), naming.NATInstanceRole())
+	if err != nil {
+		return err
+	}
+	res.NATInstanceProfileARN = natProfileARN
 	return nil
 }
 
-func (s *Service) upsertInstanceRole(ctx context.Context) (string, error) {
-	roleName := naming.InstanceRole()
-
+// upsertRole creates or reuses an IAM role and (re-)applies its
+// policies through attach, healing manual deletions idempotently.
+func (s *Service) upsertRole(ctx context.Context, roleName, description string, attach func(context.Context, string) error) (string, error) {
 	getOut, err := s.clients.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	switch {
 	case err == nil:
@@ -86,7 +117,7 @@ func (s *Service) upsertInstanceRole(ctx context.Context) (string, error) {
 		}
 		slog.Info("iam role: reusing existing", "name", roleName, "arn", *getOut.Role.Arn)
 		// Best-effort re-attach of policies so manual deletions are healed.
-		if err := s.attachRolePolicies(ctx, roleName); err != nil {
+		if err := attach(ctx, roleName); err != nil {
 			return "", err
 		}
 		return *getOut.Role.Arn, nil
@@ -101,7 +132,7 @@ func (s *Service) upsertInstanceRole(ctx context.Context) (string, error) {
 	c, err := s.clients.IAM.CreateRole(ctx, &iam.CreateRoleInput{
 		RoleName:                 aws.String(roleName),
 		AssumeRolePolicyDocument: aws.String(ec2AssumeRolePolicy),
-		Description:              aws.String("nakama-managed EC2 instance role"),
+		Description:              aws.String(description),
 		Tags:                     awshelper.IAMTags(tags),
 	})
 	if err != nil {
@@ -112,7 +143,7 @@ func (s *Service) upsertInstanceRole(ctx context.Context) (string, error) {
 	}
 	slog.Info("iam role: created", "name", roleName, "arn", *c.Role.Arn)
 
-	if err := s.attachRolePolicies(ctx, roleName); err != nil {
+	if err := attach(ctx, roleName); err != nil {
 		return "", err
 	}
 	return *c.Role.Arn, nil
@@ -135,10 +166,19 @@ func (s *Service) attachRolePolicies(ctx context.Context, roleName string) error
 	return nil
 }
 
-func (s *Service) upsertInstanceProfile(ctx context.Context) (string, error) {
-	name := naming.InstanceProfile()
-	roleName := naming.InstanceRole()
+// attachNATRolePolicies grants the NAT role SSM manageability only:
+// no inline Parameter Store policy.
+func (s *Service) attachNATRolePolicies(ctx context.Context, roleName string) error {
+	if _, err := s.clients.IAM.AttachRolePolicy(ctx, &iam.AttachRolePolicyInput{
+		RoleName:  aws.String(roleName),
+		PolicyArn: aws.String(ssmCoreManagedPolicyARN),
+	}); err != nil {
+		return fmt.Errorf("AttachRolePolicy(%s): %w", ssmCoreManagedPolicyARN, err)
+	}
+	return nil
+}
 
+func (s *Service) upsertProfile(ctx context.Context, name, roleName string) (string, error) {
 	getOut, err := s.clients.IAM.GetInstanceProfile(ctx, &iam.GetInstanceProfileInput{
 		InstanceProfileName: aws.String(name),
 	})

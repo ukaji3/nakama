@@ -36,6 +36,10 @@ type InitResult struct {
 	WAFWebACLARN        string
 	InstanceRoleARN     string
 	InstanceProfileARN  string
+	// NAT instance IAM identity (separate from the code-server role:
+	// SSM core only, no Parameter Store access).
+	NATInstanceRoleARN    string
+	NATInstanceProfileARN string
 }
 
 // Init creates or re-uses the shared nakama base infrastructure.
