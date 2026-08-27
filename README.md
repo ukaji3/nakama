@@ -111,7 +111,7 @@ nakama aws backup delete dev01 --label before-upgrade
 # インスタンスへのログイン (SSM Session Manager 経由・SSH 不要・受信ポート開放なし)
 nakama aws connect dev01                       # 対話シェル (ubuntu ユーザー・exit で切断)
 nakama aws connect dev01 ls -la                # 単発コマンド実行 (ubuntu 実行・ssh 風)
-nakama aws connect dev01 --tty top             # 対話 (PTY) でコマンド実行
+nakama aws connect --tty dev01 top             # 対話 (PTY) でコマンド実行 (フラグは name より前に置く)
 
 # バックグラウンド常駐のポート転送 (ターミナルを専有しない)
 nakama aws tunnel dev01 -L 8080:8080               # localhost:8080 -> instance:8080 (start は省略可)
