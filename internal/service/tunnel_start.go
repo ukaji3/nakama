@@ -184,6 +184,39 @@ func (s *Service) StopTunnel(ctx context.Context, name string) (*TunnelStopOutco
 	}
 }
 
+// RestartTunnel restarts the instance's tunnel with the forward specs
+// recorded in its state file: the running daemon (if any) is stopped
+// gracefully — a stale state file is cleaned up silently — and a fresh
+// daemon is spawned with the same forwards. The new daemon starts from
+// this CLI process's current credential chain, so `nakama aws login`
+// followed by `tunnel restart` is the recovery path for forwards that
+// died with expired credentials (ADR 0017). Without a state file there
+// is nothing to restart: *NoTunnelError tells the caller to use
+// `tunnel start` with explicit -L specs instead.
+func (s *Service) RestartTunnel(ctx context.Context, name string) (*TunnelStatus, error) {
+	if err := ValidateInstanceName(name); err != nil {
+		return nil, err
+	}
+	st, err := readTunnelState(name)
+	if err != nil {
+		return nil, err // includes *NoTunnelError
+	}
+	// Re-validate the recorded specs before tearing anything down: the
+	// state file is user-writable, and a spec that no longer parses
+	// must fail while the old daemon (if alive) keeps forwarding.
+	forwards, err := ParseForwardSpecs(st.Forwards)
+	if err != nil {
+		return nil, fmt.Errorf("tunnel state for %q contains invalid forwards: %w", name, err)
+	}
+	// StopTunnel waits until the state file is gone, so the subsequent
+	// start cannot race the new daemon's O_EXCL state-file create, and
+	// the local port probe runs after the old listeners are torn down.
+	if _, err := s.StopTunnel(ctx, name); err != nil {
+		return nil, err
+	}
+	return s.StartTunnel(ctx, name, forwards)
+}
+
 // GetTunnelStatus returns the live status of the instance's tunnel
 // daemon. A stale state file is cleaned up and reported as
 // *NoTunnelError.
