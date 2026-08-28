@@ -429,7 +429,8 @@ vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` ま�
 - **SSM ドキュメント**: `-L L:R` → `AWS-StartPortForwardingSession` (`portNumber`, `localPortNumber`)、`-L L:host:R` → `AWS-StartPortForwardingSessionToRemoteHost` (+`host`)。1 セッション 1 ポートのため複数 `-L` はセッションを転送数ぶん並行に張る。ローカル listener は vendored plugin (session-runner 子) が bind する
 - **stop の経路**: 制御チャネル経由のグレースフル停止が正 (Windows の外部 Kill は子を道連れにしないため)。unix ではデーモンが SIGTERM でも同じ停止経路に合流する
 - **status**: CLI が状態ファイル → `GET /status` で転送ごとの {spec, state (active/reconnecting/dead), 直近エラー, 開始時刻, 再接続消費数} を取得して表示。デーモン不在 (ping 不達) なら stale 掃除の上「転送なし」を表示
-- **予約名**: `start` / `stop` / `status` は `tunnel <name>` 省略形と曖昧になるため create の新規名として拒否 (`service.ValidateNewInstanceName`。既存インスタンス操作の `ValidateInstanceName` は不変)
+- **restart**: 状態ファイルに記録された転送スペックのまま stop → start を合成 (`-L` は受け付けない。変更は stop → start で)。スペックの再検証は stop の**前**に行い、壊れた状態ファイルのために生きているデーモンを止めない。新デーモンは CLI プロセスの現行資格情報チェーンで起動するため、資格情報失効で dead(auth) になった転送の復旧手段 (`nakama aws login` → `tunnel restart <n>`)。状態ファイルが無い場合はエラー (推測で張らない)
+- **予約名**: `start` / `stop` / `status` / `restart` は `tunnel <name>` 省略形と曖昧になるため create の新規名として拒否 (`service.ValidateNewInstanceName`。既存インスタンス操作の `ValidateInstanceName` は不変)
 - **転送量計測は非対応** (要件から除外。ADR 0017 Alternatives 6)
 
 ## 9. テスト戦略

@@ -62,6 +62,7 @@
 | 接続 | `nakama aws tunnel [start] <n> -L <spec> [-L <spec>...]` | バックグラウンドに常駐してポート転送 (ADR 0017)。`start` は省略可。複数 `-L` 可 (転送ごとに SSM セッション)。既に転送中なら転送一覧を表示して exit 1 |
 | 接続 | `nakama aws tunnel stop <n>` | ポート転送を停止し、常駐デーモンも終了する |
 | 接続 | `nakama aws tunnel status <n>` | 転送ごとの状態 (active / reconnecting / dead) を表示する |
+| 接続 | `nakama aws tunnel restart <n>` | 状態ファイルに記録された転送スペックのまま再接続する (stop → start の合成。資格情報失効などで dead になった転送の復旧手段。ADR 0017) |
 | 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
 | 認証 | `nakama aws login [--remote] [--name <alias>]` | AWS Management Console のセッションを使いネイティブにサインイン (OAuth 2.0 authorization code + PKCE + DPoP、aws CLI 不要。ADR 0016)。ブラウザ起動 (不可なら URL 表示で待機継続) → 127.0.0.1 のコールバックで認可コード受領 (10 分タイムアウト、state 検証) → AWS CLI 互換キャッシュ (`~/.aws/login/cache/`) へ保存 → STS で識別確認 → nakama profile へ**自動 save & load**。`--remote` は SSH/headless 向けにブラウザの検証コード貼り付けで完了。`~/.aws/config` は変更しない。要 `SignInLocalDevelopmentAccess` ポリシー |
 | プロファイル | `nakama aws profile save [--name <alias>]` | 現在の `aws login` セッション (login_session 識別子 + STS identity) をアカウント ID キーで nakama のレジストリ (`~/.config/nakama`) に保存。active profile は無視して「今 login しているもの」を保存し、同一アカウントの再 save は上書き。alias 省略時はアカウント ID。login_session が無い資格情報 (SSO・アクセスキー等) はエラー (ADR 0011) |
@@ -79,7 +80,7 @@
 
 ### 4.3 入力バリデーション
 
-- `<name>`: `^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$` (DNS 安全)。`start` / `stop` / `status` は `tunnel` サブコマンド名と曖昧になるため**予約名**とし、`create` の新規名として拒否する (既存インスタンスの操作は影響しない。ADR 0017)
+- `<name>`: `^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$` (DNS 安全)。`start` / `stop` / `status` / `restart` は `tunnel` サブコマンド名と曖昧になるため**予約名**とし、`create` の新規名として拒否する (既存インスタンスの操作は影響しない。ADR 0017)
 - `<IP>`: IPv4 単独 (`/32` 自動付与) または IPv4 CIDR。**IPv6 は v1 非対応**
 - `<instance-type>`: `ec2:DescribeInstanceTypes` で存在を事前検証し CPU アーキ (x86_64 / arm64) を判定 (create / edit 双方)。存在しないタイプはインスタンスを停止せず即時エラー (`instance type %q does not exist`)。Graviton (arm64) タイプ指定時は arm64 版 Ubuntu AMI を自動選択する。`edit` での**アーキ跨ぎ変更は不可** (別アーキへは delete → create)
 - `--ebs <size>`: 現在のサイズより大きい整数 (GiB)
@@ -154,7 +155,7 @@
 - `connect` でのファイル転送 (scp / sftp 相当)
 - `connect` セッションログの S3 / CloudWatch Logs への記録 (Session Manager logging 設定)
 - `tunnel` のポートごとの転送量 (バイト数) 計測・表示
-- `tunnel` の資格情報失効 (login refresh token 最長 12h) 後の自動復旧 (該当転送は dead 表示。再 `nakama aws login` + `tunnel start` のし直しで復旧)
+- `tunnel` の資格情報失効 (login refresh token 最長 12h) 後の自動復旧 (該当転送は dead 表示。再 `nakama aws login` + `tunnel restart <n>` で復旧)
 - macOS の OS プロキシ設定 (システム設定) の自動検出 (リリースバイナリは CGO_ENABLED=0 のため。環境変数での指定は可。ADR 0015)
 - WebSocket (CONNECT トンネル上のアップグレード) を遮断する監査型プロキシ環境での `connect` 動作保証
 
@@ -170,7 +171,7 @@
 8. `nakama aws restore <n> --yes` 後、インスタンスを start すると最新バックアップ取得時点のファイルが復元されている (snapshot-id を一切指定していない)
 9. `nakama aws connect <n>` で対話シェルのプロンプトが表示され、コマンドが実行できる
 10. `nakama aws connect <n> ls` でリモートの実行結果が表示され、セッションが終了する
-11. `nakama aws tunnel <n> -L 8080:8080 -L 5432:db.internal:5432` 実行後プロンプトが即返り、`localhost:8080` / `localhost:5432` への接続がそれぞれの宛先に到達する。同じ `<n>` への再実行は「既に転送中」+ 転送一覧を表示して exit 1。`tunnel status <n>` が転送ごとの状態を表示し、`tunnel stop <n>` でデーモンと全転送が終了して状態ファイルが消える
+11. `nakama aws tunnel <n> -L 8080:8080 -L 5432:db.internal:5432` 実行後プロンプトが即返り、`localhost:8080` / `localhost:5432` への接続がそれぞれの宛先に到達する。同じ `<n>` への再実行は「既に転送中」+ 転送一覧を表示して exit 1。`tunnel status <n>` が転送ごとの状態を表示し、`tunnel restart <n>` が記録済みの転送スペックのまま再接続し (状態ファイルが無ければエラー)、`tunnel stop <n>` でデーモンと全転送が終了して状態ファイルが消える
 12. `nakama aws edit <n> --instance-type <t>` 後、`nakama aws info <n>` の instance_type が `<t>` になり、変更前に running だったインスタンスは再び running になる。存在しないタイプ指定時はインスタンスを停止せず即時エラー。現インスタンスとアーキの異なるタイプ指定時も停止せず即時エラー
 13. `nakama aws update <n>` 実行で、更新前にバックアップが1件作成され (`backup list` に出現)、code-server が latest へ更新され (`info` の code_server_version が更新)、`apt-get dist-upgrade` が適用される。実行前 stopped のインスタンスは実行後も stopped に戻る。元 running でカーネル更新があった場合のみ reboot される
 
