@@ -251,7 +251,7 @@ func TestForwardTrackerTransitions(t *testing.T) {
 		{LocalPort: "8080", RemotePort: "8080"},
 		{LocalPort: "5432", RemoteHost: "db.internal", RemotePort: "5432"},
 	}
-	tr := newForwardTracker(forwards, clock.now)
+	tr := newForwardTracker("dev01", forwards, clock.now)
 
 	snap := tr.snapshot()
 	if snap[0].State != ForwardStateConnecting || snap[1].State != ForwardStateConnecting {
@@ -283,11 +283,14 @@ func TestForwardTrackerTransitions(t *testing.T) {
 		t.Errorf("activeSessionIDs after retry = %v", ids)
 	}
 
-	// Auth-classified death gets the login advisory.
+	// Auth-classified death gets the login + restart advisory with the
+	// instance name filled in (copy-pastable).
 	authErr := &smithy.GenericAPIError{Code: "ExpiredTokenException", Message: "expired"}
 	tr.setDead(0, authErr)
 	snap = tr.snapshot()
-	if snap[0].State != ForwardStateDead || !strings.Contains(snap[0].Detail, "nakama aws login") {
+	if snap[0].State != ForwardStateDead ||
+		!strings.Contains(snap[0].Detail, "nakama aws login") ||
+		!strings.Contains(snap[0].Detail, "nakama aws tunnel restart dev01") {
 		t.Errorf("forward 0 after auth death = %+v", snap[0])
 	}
 
@@ -590,7 +593,7 @@ func TestSuperviseSessionNotifiesObserver(t *testing.T) {
 }
 
 func TestValidateNewInstanceNameReserved(t *testing.T) {
-	for _, name := range []string{"start", "stop", "status"} {
+	for _, name := range []string{"start", "stop", "status", "restart"} {
 		if err := ValidateNewInstanceName(name); err == nil {
 			t.Errorf("reserved name %q must be rejected", name)
 		}
@@ -639,5 +642,112 @@ func TestRemoveTunnelStateOwned(t *testing.T) {
 	}
 	if _, err := readTunnelState("dev01"); err != nil {
 		t.Errorf("state file of the newer daemon was deleted: %v", err)
+	}
+}
+
+func TestRestartTunnelRestartsWithRecordedForwards(t *testing.T) {
+	withTunnelStateDir(t)
+	env := newTunnelTestEnv(t)
+	// Seed a live daemon's state with two recorded forwards.
+	st := testTunnelState("dev01")
+	st.Forwards = []string{"8080:8080", "5432:db.internal:5432"}
+	if err := writeTunnelState(st); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	// Capture the specs handed to spawn and recreate the state file
+	// like a real daemon would.
+	var spawnedForwards []string
+	baseSpawn := env.svc.tunnel.spawn
+	env.svc.tunnel.spawn = func(name string, forwards []ForwardSpec) (int, error) {
+		for _, f := range forwards {
+			spawnedForwards = append(spawnedForwards, f.String())
+		}
+		if _, err := baseSpawn(name, forwards); err != nil {
+			return -1, err
+		}
+		return 4242, writeTunnelState(testTunnelState(name))
+	}
+	ready := &TunnelStatus{Name: "dev01", PID: 4242}
+	env.queryResults = []queryResult{{status: ready}} // readiness after respawn
+
+	got, err := env.svc.RestartTunnel(context.Background(), "dev01")
+	if err != nil {
+		t.Fatalf("RestartTunnel: %v", err)
+	}
+	if got != ready {
+		t.Errorf("status = %+v", got)
+	}
+	if env.stopCalled != 1 {
+		t.Errorf("stopCalled = %d, want 1 (graceful stop before respawn)", env.stopCalled)
+	}
+	want := []string{"8080:8080", "5432:db.internal:5432"}
+	if len(spawnedForwards) != len(want) {
+		t.Fatalf("spawned forwards = %v, want %v", spawnedForwards, want)
+	}
+	for i := range want {
+		if spawnedForwards[i] != want[i] {
+			t.Errorf("spawned forward %d = %q, want %q", i, spawnedForwards[i], want[i])
+		}
+	}
+}
+
+func TestRestartTunnelStaleDaemonStillRestarts(t *testing.T) {
+	withTunnelStateDir(t)
+	env := newTunnelTestEnv(t)
+	if err := writeTunnelState(testTunnelState("dev01")); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	// The daemon is gone: stop's control request fails, the stale state
+	// is cleaned up, and the restart proceeds from the recorded specs.
+	env.stopErr = errors.New("connection refused")
+	baseSpawn := env.svc.tunnel.spawn
+	env.svc.tunnel.spawn = func(name string, forwards []ForwardSpec) (int, error) {
+		if _, err := baseSpawn(name, forwards); err != nil {
+			return -1, err
+		}
+		return 4242, writeTunnelState(testTunnelState(name))
+	}
+	ready := &TunnelStatus{Name: "dev01", PID: 4242}
+	env.queryResults = []queryResult{{status: ready}}
+
+	got, err := env.svc.RestartTunnel(context.Background(), "dev01")
+	if err != nil {
+		t.Fatalf("RestartTunnel: %v", err)
+	}
+	if got != ready {
+		t.Errorf("status = %+v", got)
+	}
+	if len(env.spawned) != 1 {
+		t.Errorf("spawned = %v", env.spawned)
+	}
+}
+
+func TestRestartTunnelNoState(t *testing.T) {
+	withTunnelStateDir(t)
+	env := newTunnelTestEnv(t)
+	_, err := env.svc.RestartTunnel(context.Background(), "dev01")
+	var nt *NoTunnelError
+	if !errors.As(err, &nt) {
+		t.Fatalf("want *NoTunnelError, got %T: %v", err, err)
+	}
+	if env.stopCalled != 0 || len(env.spawned) != 0 {
+		t.Error("nothing must be stopped or spawned without a state file")
+	}
+}
+
+func TestRestartTunnelInvalidRecordedSpecs(t *testing.T) {
+	withTunnelStateDir(t)
+	env := newTunnelTestEnv(t)
+	st := testTunnelState("dev01")
+	st.Forwards = []string{"not-a-spec"}
+	if err := writeTunnelState(st); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	_, err := env.svc.RestartTunnel(context.Background(), "dev01")
+	if err == nil || !strings.Contains(err.Error(), "invalid forwards") {
+		t.Fatalf("want invalid-forwards error, got %v", err)
+	}
+	if env.stopCalled != 0 {
+		t.Error("the running daemon must not be stopped when the recorded specs are unusable")
 	}
 }

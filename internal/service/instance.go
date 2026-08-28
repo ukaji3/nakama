@@ -39,9 +39,10 @@ func ValidateInstanceName(name string) error {
 // instances (ADR 0017). Existing instances are unaffected: every other
 // command keeps using ValidateInstanceName.
 var reservedInstanceNames = map[string]bool{
-	"start":  true,
-	"stop":   true,
-	"status": true,
+	"start":   true,
+	"stop":    true,
+	"status":  true,
+	"restart": true,
 }
 
 // ValidateNewInstanceName validates a name for instances about to be

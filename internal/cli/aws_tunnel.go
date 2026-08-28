@@ -16,8 +16,8 @@ import (
 // (ADR 0017): background port forwarding kept alive by a detached
 // daemon, so the terminal is not occupied. Running `tunnel <name>`
 // without a subcommand behaves like `tunnel start <name>`; the
-// subcommand names start/stop/status are therefore reserved instance
-// names (rejected by `create`).
+// subcommand names start/stop/status/restart are therefore reserved
+// instance names (rejected by `create`).
 func newAWSTunnelCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tunnel [start] <name> -L <spec> [-L <spec>...]",
@@ -36,6 +36,7 @@ Examples:
   nakama aws tunnel dev01 -L 8080:8080
   nakama aws tunnel start dev01 -L 8080:8080 -L 5432:db.internal:5432
   nakama aws tunnel status dev01
+  nakama aws tunnel restart dev01
   nakama aws tunnel stop dev01`,
 		Args: cobra.ExactArgs(1),
 		RunE: runTunnelStart,
@@ -49,6 +50,37 @@ Examples:
 		RunE:  runTunnelStart,
 	}
 	addTunnelForwardFlag(start)
+
+	restart := &cobra.Command{
+		Use:   "restart <name>",
+		Short: "Restart port forwarding with the same forwards (e.g. after re-login)",
+		Long: `Stop the tunnel daemon (if it is still alive) and start a new one
+with the forward specs recorded in the tunnel state file. The new
+daemon picks up this process's current AWS credentials, so after
+credentials expire (forwards shown as dead by "tunnel status"), run
+"nakama aws login" and then this command to reconnect with the same
+settings. To change the forwards instead, use stop and start.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := withCancel(cmd)
+			clients, err := awsx.NewClients(ctx)
+			if err != nil {
+				return err
+			}
+			name := args[0]
+			st, err := service.NewService(clients).RestartTunnel(ctx, name)
+			if err != nil {
+				var notRunning *service.NoTunnelError
+				if errors.As(err, &notRunning) {
+					return fmt.Errorf("no tunnel state for %s to restart; start one with `nakama aws tunnel %s -L <local>:<remote>`", name, name)
+				}
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "tunnel restarted for %s (pid %d):\n", name, st.PID)
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), formatTunnelStatus(st, time.Now()))
+			return nil
+		},
+	}
 
 	stop := &cobra.Command{
 		Use:   "stop <name>",
@@ -92,7 +124,7 @@ Examples:
 		},
 	}
 
-	cmd.AddCommand(start, stop, status)
+	cmd.AddCommand(start, restart, stop, status)
 	return cmd
 }
 

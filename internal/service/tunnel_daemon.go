@@ -26,7 +26,10 @@ import (
 // written by the supervision goroutines (through forwardObserver) and
 // read by the control channel's /status handler.
 type forwardTracker struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// name is the instance name, used to render copy-pastable recovery
+	// commands in dead-forward details.
+	name     string
 	now      func() time.Time
 	statuses []ForwardStatus
 	// sessionIDs remembers the most recent session of each forward for
@@ -34,8 +37,8 @@ type forwardTracker struct {
 	sessionIDs []string
 }
 
-func newForwardTracker(forwards []ForwardSpec, now func() time.Time) *forwardTracker {
-	t := &forwardTracker{now: now, sessionIDs: make([]string, len(forwards))}
+func newForwardTracker(name string, forwards []ForwardSpec, now func() time.Time) *forwardTracker {
+	t := &forwardTracker{name: name, now: now, sessionIDs: make([]string, len(forwards))}
 	t.statuses = make([]ForwardStatus, len(forwards))
 	for i, f := range forwards {
 		t.statuses[i] = ForwardStatus{
@@ -65,7 +68,7 @@ func (t *forwardTracker) setDead(i int, reason error) {
 	case reason == nil:
 		st.Detail = "session ended"
 	case classifyStartSessionError(reason) == startSessionErrAuth:
-		st.Detail = "credentials expired or invalid; run `nakama aws login` and start the tunnel again"
+		st.Detail = fmt.Sprintf("credentials expired or invalid; run `nakama aws login` then `nakama aws tunnel restart %s`", t.name)
 	default:
 		st.Detail = reason.Error()
 	}
@@ -195,7 +198,7 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 	}
 	defer func() { _ = removeTunnelStateOwned(in.Name, state.Token) }()
 
-	tracker := newForwardTracker(in.Forwards, time.Now)
+	tracker := newForwardTracker(in.Name, in.Forwards, time.Now)
 
 	// Graceful stop plumbing: control channel POST /stop, and (unix)
 	// SIGTERM/SIGINT, both funnel into stopOnce.
