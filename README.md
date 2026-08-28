@@ -202,9 +202,23 @@ TLS 検証は Go 標準の platform verifier により **OS の証明書スト�
 
 > **運用注意**: 監査型プロキシが WebSocket (CONNECT トンネル上のアップグレード) を遮断する環境では、`connect` (Session Manager の data-channel は WSS) は利用できません。この場合はプロキシ管理者に WebSocket の許可を依頼してください。
 
+### aws CLI 本体を企業プロキシ環境で使う (Windows)
+
+nakama 自身は上記の自動解決で動きますが、**aws CLI 本体**は OS のプロキシ設定も Windows 証明書ストアも読まないため、TLS インスペクション (MITM) プロキシ配下では既定で CERT エラーになります。Windows では次の 1 コマンドで、aws CLI がそのまま使えるサブシェルを開けます (詳細は ADR 0018):
+
+```
+nakama aws cli shell
+```
+
+- OS のプロキシ設定 (WinHTTP / PAC) を自動解決し、TLS インスペクションを検出すると **Windows 証明書ストアで検証済み**の企業 CA チェーン + Amazon Trust Services ルートを `AWS_CA_BUNDLE` 用 PEM (`~/.config/nakama/aws-ca-bundle.pem`) に書き出します
+- `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` / `AWS_CA_BUNDLE` を注入した新しいシェル (親シェルと同種を自動判別、`--shell` で指定可) を同じウィンドウ内に開きます。中では `aws s3 ls` などが追加設定なしで動きます
+- `exit` で元のシェルへ戻ります。レジストリ・ユーザー環境変数・`~/.aws/config`・親シェルには**何も残しません**
+- プロキシが NTLM/Negotiate 認証を要求する場合は検出して回避策 (px / Cntlm などのローカル認証リレー) を案内します (aws CLI は Basic 認証のみ対応のため)
+- Windows 以外の OS では Windows 専用オプションである旨を表示します (Linux/macOS は環境変数 `HTTP(S)_PROXY` / `AWS_CA_BUNDLE` を直接設定してください)
+
 ## ステータス
 
-主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `update` / `profile`) は実装済み。
+主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `update` / `profile` / `cli shell`) は実装済み。
 
 ## ドキュメント
 

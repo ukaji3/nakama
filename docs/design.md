@@ -433,6 +433,15 @@ vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` ま�
 - **予約名**: `start` / `stop` / `status` / `restart` は `tunnel <name>` 省略形と曖昧になるため create の新規名として拒否 (`service.ValidateNewInstanceName`。既存インスタンス操作の `ValidateInstanceName` は不変)
 - **転送量計測は非対応** (要件から除外。ADR 0017 Alternatives 6)
 
+### 8.13 `nakama aws cli shell` — aws CLI 用の設定済みサブシェル (ADR 0018)
+
+aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書ストアも読まないため、企業の TLS インスペクション環境では既定で動かない。nakama の検出能力 (ADR 0015) を aws CLI の公式構成面 (環境変数 + `AWS_CA_BUNDLE`) に変換し、それを注入したサブシェルを提供する。Windows 専用 (他 OS では Windows 専用オプションである旨を表示してエラー)。
+
+- **検出エンジン** (`internal/cliproxy`): ADR 0015 の解決器でプロキシを解決 → STS エンドポイントへ TLS プローブ → **OS ストア検証済みチェーン**のルートを同梱の Amazon Trust Services (ATS) ルート 5 枚 (取得時に 2 ソース照合、テストで SHA-256 をピン留め) と照合 → ATS 以外なら TLS インスペクションと判定し、企業 CA チェーン (リーフ除く) + ATS ルートを `~/.config/nakama/aws-ca-bundle.pem` (0600) へ書き出す。ATS 同梱は「`AWS_CA_BUNDLE` は既定バンドルの置き換え」であることへの対策 (インスペクション除外エンドポイントの検証を壊さない)。最後に生成した設定そのもので疎通を再確認しバナー表示する
+- **env 注入**: `HTTP_PROXY`/`HTTPS_PROXY` (解決したプロキシ。直結なら設定しない)、`NO_PROXY` (既存値へ localhost 系をマージ)、`AWS_CA_BUNDLE` (インスペクション時のみ)、`NAKAMA_AWS_CLI_SHELL=1` (ネスト防止マーカー)。既存の同名変数は大文字小文字を無視して置換する
+- **サブシェル**: 親プロセスの実体 (`QueryFullProcessImageName`) が powershell.exe / pwsh.exe / cmd.exe ならそれを、不明なら `ComSpec` を起動 (`--shell` で明示指定可)。stdio 継承で同一ウィンドウ内、シェルの exit code は伝搬。親シェル・レジストリ・ユーザー環境変数・`~/.aws/config` (ADR 0011/0016 の不変条件) には一切変更を残さない
+- **プロキシ認証の診断**: CONNECT が 407 を返す場合は `Proxy-Authenticate` のスキームを読み、Basic あり → プロキシ URL への資格情報埋め込みを案内 / NTLM・Negotiate のみ → ローカル認証リレー (px / Cntlm) を案内してエラー終了 (aws CLI は Basic のみ対応のため)
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |
