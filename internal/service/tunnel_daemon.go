@@ -241,11 +241,12 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 			docName, params := portForwardDocument(f)
 			logger.Infof("%s: forward %s: starting", in.Name, f)
 			err := s.superviseSessionWithHooks(fwdCtx, superviseSessionInput{
-				InstanceID:   instanceID,
-				DocumentName: docName,
-				Parameters:   params,
-				MaxRetries:   defaultTunnelRetries,
-				Observer:     tracker.observer(i),
+				InstanceID:         instanceID,
+				DocumentName:       docName,
+				Parameters:         params,
+				MaxRetries:         defaultTunnelRetries,
+				RetryChildFailures: true,
+				Observer:           tracker.observer(i),
 			}, hooks)
 			// Context cancellation is the shutdown path, not a forward
 			// failure.

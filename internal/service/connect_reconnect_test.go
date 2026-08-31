@@ -386,3 +386,101 @@ func TestBackoffDelay(t *testing.T) {
 		}
 	}
 }
+
+// --- RetryChildFailures (tunnel forwards, Issue #45) ---
+
+func TestSuperviseRetriesRunnerFailureWhenEnabled(t *testing.T) {
+	env := newConnectTestEnv(t, []sessionRun{
+		{code: 1, alive: time.Second},
+		{code: 1, alive: time.Second},
+		{code: 0, alive: time.Second},
+	}, nil)
+	err := env.svc.superviseSessionWithHooks(context.Background(), superviseSessionInput{
+		InstanceID:         "i-0123456789abcdef0",
+		MaxRetries:         5,
+		RetryChildFailures: true,
+	}, env.svc.connect)
+	if err != nil {
+		t.Fatalf("supervise: %v", err)
+	}
+	if env.runs != 3 {
+		t.Errorf("runSession calls = %d, want 3", env.runs)
+	}
+	want := []time.Duration{time.Second, 2 * time.Second}
+	if len(env.sleeps) != len(want) || env.sleeps[0] != want[0] || env.sleeps[1] != want[1] {
+		t.Errorf("backoff sleeps = %v, want %v", env.sleeps, want)
+	}
+	if !strings.Contains(env.stderr.String(), "session runner failed (exit code 1); reconnecting (attempt 1/5)") {
+		t.Errorf("notify output %q lacks the runner-failure reconnect notice", env.stderr.String())
+	}
+}
+
+func TestSuperviseRunnerFailureExhaustsBudget(t *testing.T) {
+	env := newConnectTestEnv(t, []sessionRun{
+		{code: 1, alive: time.Second},
+		{code: 1, alive: time.Second},
+		{code: 1, alive: time.Second},
+	}, nil)
+	err := env.svc.superviseSessionWithHooks(context.Background(), superviseSessionInput{
+		InstanceID:         "i-0123456789abcdef0",
+		MaxRetries:         2,
+		RetryChildFailures: true,
+	}, env.svc.connect)
+	if err == nil {
+		t.Fatal("want error after exhausting the reconnect budget")
+	}
+	var ec *ExitCodeError
+	if !errors.As(err, &ec) || ec.Code != 1 {
+		t.Errorf("error %v does not carry ExitCodeError with code 1", err)
+	}
+	if !strings.Contains(err.Error(), "exited with code 1") || !strings.Contains(err.Error(), "2 reconnect attempt(s) exhausted") {
+		t.Errorf("error %q does not state the exit code and budget exhaustion", err)
+	}
+	if env.runs != 3 {
+		t.Errorf("runSession calls = %d, want 3", env.runs)
+	}
+}
+
+func TestSuperviseRunnerFailureFatalWithoutFlag(t *testing.T) {
+	// connect semantics (ADR 0014): the child's exit code is the remote
+	// command's exit code and must propagate unchanged without retries.
+	env := newConnectTestEnv(t, []sessionRun{{code: 2, alive: time.Second}}, nil)
+	err := env.svc.superviseSessionWithHooks(context.Background(), superviseSessionInput{
+		InstanceID: "i-0123456789abcdef0",
+		MaxRetries: 5,
+	}, env.svc.connect)
+	var ec *ExitCodeError
+	if !errors.As(err, &ec) || ec.Code != 2 {
+		t.Fatalf("err = %v, want ExitCodeError{Code: 2}", err)
+	}
+	if env.runs != 1 {
+		t.Errorf("runSession calls = %d, want 1 (no retry)", env.runs)
+	}
+	if len(env.sleeps) != 0 {
+		t.Errorf("sleeps = %v, want none", env.sleeps)
+	}
+}
+
+func TestSuperviseRunnerFailureStabilityReplenishesBudget(t *testing.T) {
+	// A session that stayed alive >= stableAfter replenishes the budget
+	// before its failure consumes an attempt (same policy as the
+	// DisconnectExitCode path). Without replenishment MaxRetries=2 would
+	// be exhausted at the third failure; with it the run succeeds.
+	env := newConnectTestEnv(t, []sessionRun{
+		{code: 1, alive: time.Second},
+		{code: 1, alive: 2 * time.Minute},
+		{code: 1, alive: time.Second},
+		{code: 0, alive: time.Second},
+	}, nil)
+	err := env.svc.superviseSessionWithHooks(context.Background(), superviseSessionInput{
+		InstanceID:         "i-0123456789abcdef0",
+		MaxRetries:         2,
+		RetryChildFailures: true,
+	}, env.svc.connect)
+	if err != nil {
+		t.Fatalf("supervise: %v", err)
+	}
+	if env.runs != 4 {
+		t.Errorf("runSession calls = %d, want 4", env.runs)
+	}
+}

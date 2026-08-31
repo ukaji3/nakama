@@ -94,6 +94,18 @@ type superviseSessionInput struct {
 	// advisory on reconnect (interactive shell mode only).
 	ShellReconnectNote bool
 
+	// RetryChildFailures also consumes reconnect attempts for generic
+	// session-runner failures (any non-zero exit other than
+	// DisconnectExitCode). Tunnel forwards enable this: a port-forward
+	// child has no user shell whose exit code must be preserved, and a
+	// failure to (re-)establish the data channel — e.g. the websocket
+	// dial right after a laptop wake, before the network is back —
+	// surfaces as a generic exit 1, not as the DisconnectExitCode gate
+	// (which only fires after the channel was established). connect
+	// keeps this off so the remote command's exit code propagates
+	// unchanged (ADR 0014).
+	RetryChildFailures bool
+
 	// Observer, when non-nil, receives lifecycle notifications.
 	Observer sessionObserver
 }
@@ -210,9 +222,32 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 		case code < 0:
 			return errors.New("session runner terminated abnormally (killed by a signal)")
 		default:
-			// Propagate the child's exit code unchanged (see ExitCodeError
-			// handling in cmd/nakama).
-			return &ExitCodeError{Code: code}
+			// Generic child failure. For connect, propagate the exit code
+			// unchanged (see ExitCodeError handling in cmd/nakama): it is
+			// the remote command's exit code. Tunnel forwards instead
+			// consume a reconnect attempt (RetryChildFailures), because a
+			// failed data-channel establishment exits with a generic code
+			// and never reaches the DisconnectExitCode gate.
+			exitErr := &ExitCodeError{Code: code}
+			if !in.RetryChildFailures || disconnectCode == 0 {
+				return exitErr
+			}
+			if alive >= hooks.stableAfter {
+				attempt = 0
+			}
+			if attempt >= in.MaxRetries {
+				return fmt.Errorf("%w and %d reconnect attempt(s) exhausted", exitErr, in.MaxRetries)
+			}
+			attempt++
+			if in.Observer != nil {
+				in.Observer.SessionRetrying(attempt, in.MaxRetries, exitErr)
+			}
+			_, _ = fmt.Fprintf(hooks.notify, "session runner failed (exit code %d); reconnecting (attempt %d/%d)...\n",
+				code, attempt, in.MaxRetries)
+			if err := hooks.sleep(ctx, backoffDelay(attempt)); err != nil {
+				return err
+			}
+			continue
 		}
 	}
 }
