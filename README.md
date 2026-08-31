@@ -188,7 +188,7 @@ nakama aws tunnel restart dev01                    # 既存設定のまま再接
 nakama aws tunnel stop dev01                       # 転送を停止しデーモンも終了
 ```
 
-`tunnel` はバックグラウンドに常駐するデーモンがポート転送を維持し、ターミナルを専有しません (ADR 0017)。複数の `-L` を同時に指定できます (転送ごとに SSM セッションを 1 本使用)。切断時は `connect` と同じポリシー (最大 5 回・指数バックオフ・60 秒以上安定していれば試行回数リセット) で自動再接続するため、長時間のトンネルが日をまたいでも維持されます。デーモンのログは OS 標準ログ (Linux/macOS: syslog、Windows: イベントログ) に出力され、状態は `~/.config/nakama/tunnels/<name>.json` (0600) にのみ保存されて `tunnel stop` で削除されます。AWS 資格情報が失効した場合、該当転送は `status` で dead と表示されます — `nakama aws login` (または `aws login`) の後に `tunnel restart <name>` で既存設定のまま再接続できます。`start` / `stop` / `status` / `restart` はサブコマンド名と曖昧になるため、インスタンス名としては予約され `create` で拒否されます。
+`tunnel` はバックグラウンドに常駐するデーモンがポート転送を維持し、ターミナルを専有しません (ADR 0017)。複数の `-L` を同時に指定できます (転送ごとに SSM セッションを 1 本使用)。切断時は `connect` と同じポリシー (最大 5 回・指数バックオフ・60 秒以上安定していれば試行回数リセット) で自動再接続するため、長時間のトンネルが日をまたいでも維持されます。再接続時のセッション確立失敗 (PC のスリープ復帰直後にネットワークが未復帰のケースなど) も同じ再接続枠で再試行されます。デーモンのログは OS 標準ログ (Linux/macOS: syslog、Windows: イベントログ) に出力され、状態は `~/.config/nakama/tunnels/<name>.json` (0600) にのみ保存されて `tunnel stop` で削除されます。AWS 資格情報が失効した場合、該当転送は `status` で dead と表示されます — `nakama aws login` (または `aws login`) の後に `tunnel restart <name>` で既存設定のまま再接続できます。`start` / `stop` / `status` / `restart` はサブコマンド名と曖昧になるため、インスタンス名としては予約され `create` で拒否されます。
 
 ## 企業プロキシ環境での利用
 
