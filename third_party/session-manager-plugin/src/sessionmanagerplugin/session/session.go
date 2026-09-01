@@ -116,11 +116,6 @@ var handleStreamMessageResendTimeout = func(session *Session, log log.T) {
 				if err := session.TerminateSession(log); err != nil {
 					log.Errorf("Unable to terminate session upon stream data timeout. %v", err)
 				}
-				// NAKAMA PATCH: the stream resend timed out and the session was
-				// terminated; upstream just returns from this goroutine and the
-				// process hangs. Report a permanent disconnect when
-				// SSM_PLUGIN_DISCONNECT_EXIT_CODE is set (no-op otherwise).
-				nakamaExitOnPermanentDisconnect()
 				return
 			}
 		}
