@@ -63,6 +63,14 @@ upstream behavior completely unchanged when unset.
   `internal/service/connect_session.go` (`installPluginResumeConfig`).
   Nil leaves the upstream behavior completely unchanged.
 
+- `SSM_PLUGIN_PING_INTERVAL_SECONDS` (Issue #49, upstream #15) — the
+  `nakamaPingInterval` helper in `src/communicator/websocketchannel.go`
+  (+ `os`/`strconv` imports): when set to a positive integer, the
+  websocket keepalive ping interval becomes that many seconds instead
+  of the fixed 5-minute `config.PingTimeInterval`. Aggressive corporate
+  proxies drop idle CONNECT tunnels well below 5 minutes. Unset or
+  invalid values leave the upstream behavior completely unchanged.
+
 ## Known integration caveats
 
 - The in-place resume control plane (`GetResumeSessionParams`) uses
