@@ -204,7 +204,7 @@ TLS 検証は Go 標準の platform verifier により **OS の証明書スト�
 
 サインインと資格情報のリフレッシュも**すべて nakama がネイティブに行う**ため (aws CLI へのシェルアウトなし。ADR 0016)、Python 製 AWS CLI が certifi の CA バンドル起因で起こす CERT エラーは発生しません。監査プロキシ環境でも「ブラウザで AWS コンソールにログイン → `nakama aws login`」だけで利用を開始できます。
 
-> **運用注意**: 監査型プロキシが WebSocket (CONNECT トンネル上のアップグレード) を遮断する環境では、`connect` (Session Manager の data-channel は WSS) は利用できません。この場合はプロキシ管理者に WebSocket の許可を依頼してください。
+> **運用注意**: 監査型プロキシが WebSocket (CONNECT トンネル上のアップグレード) を遮断する環境では、`connect` (Session Manager の data-channel は WSS) は利用できません。この場合はプロキシ管理者に WebSocket の許可を依頼してください。また、アイドル接続を積極的に切断するプロキシ配下で `connect` / `tunnel` の切断が多発する場合は、環境変数 `SSM_PLUGIN_PING_INTERVAL_SECONDS` (秒、既定 300) で WebSocket keepalive の間隔を短くできます (例: `30`)。
 
 ### aws CLI 本体を企業プロキシ環境で使う (Windows: `cli shell`)
 

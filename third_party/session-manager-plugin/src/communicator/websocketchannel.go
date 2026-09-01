@@ -21,6 +21,8 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -129,6 +131,23 @@ func (webSocketChannel *WebSocketChannel) StartPings(log log.T, pingInterval tim
 	}()
 }
 
+// NAKAMA PATCH: nakamaPingInterval returns the websocket keepalive
+// interval: config.PingTimeInterval (the upstream 5-minute default)
+// unless SSM_PLUGIN_PING_INTERVAL_SECONDS is set to a positive integer.
+// Corporate proxies that aggressively drop idle CONNECT tunnels need a
+// shorter interval (upstream aws/session-manager-plugin#15, open since
+// 2021). Unset or invalid values leave the upstream behavior
+// completely unchanged (same gating style as the other NAKAMA
+// patches).
+func nakamaPingInterval() time.Duration {
+	if v := os.Getenv("SSM_PLUGIN_PING_INTERVAL_SECONDS"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return config.PingTimeInterval
+}
+
 // SendMessage sends a byte message through the websocket connection.
 // Examples of message type are websocket.TextMessage or websocket.Binary
 func (webSocketChannel *WebSocketChannel) SendMessage(log log.T, input []byte, inputType int) error {
@@ -232,7 +251,7 @@ func (webSocketChannel *WebSocketChannel) Open(log log.T) error {
 	}
 	webSocketChannel.Connection = ws
 	webSocketChannel.IsOpen = true
-	webSocketChannel.StartPings(log, config.PingTimeInterval)
+	webSocketChannel.StartPings(log, nakamaPingInterval())
 
 	// spin up a different routine to listen to the incoming traffic
 	go func() {
