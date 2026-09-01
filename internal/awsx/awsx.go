@@ -65,6 +65,14 @@ type Clients struct {
 	// vendored plugin reuses nakama's credential resolution instead of
 	// running its own chain.
 	Credentials aws.CredentialsProvider
+
+	// Config is the fully resolved aws.Config these clients were built
+	// from (nakama credential resolution, forced region, proxy-aware
+	// HTTP client). The session-runner injects it into the vendored
+	// plugin's in-place resume path (ResumeSession control plane +
+	// data-channel re-signing), which would otherwise run the default
+	// credential chain (see third_party/session-manager-plugin/PINNED.md).
+	Config aws.Config
 }
 
 // NewClients loads AWS configuration and constructs the concrete
@@ -372,5 +380,6 @@ func newClientsFromConfig(cfg aws.Config) *Clients {
 		IPDiscoverer: NewHTTPIPDiscoverer(),
 		Region:       cfg.Region,
 		Credentials:  cfg.Credentials,
+		Config:       cfg,
 	}
 }
