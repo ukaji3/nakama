@@ -52,12 +52,23 @@ upstream behavior completely unchanged when unset.
   process so the supervisor can distinguish a permanent disconnect
   (reconnect with a fresh `StartSession`) from a normal session end.
 
+- `NakamaAWSConfigProvider` (Issue #49) — an exported hook in
+  `src/sessionmanagerplugin/session/sessionhandler.go` (+ an `aws`
+  import). When non-nil, `GetResumeSessionParams` resolves its
+  `aws.Config` through it instead of the default AWS credential chain
+  (`sdkutil.GetConfigWithQuickCheck`), so both the ResumeSession
+  control-plane call and the data-channel re-signing use nakama's
+  credential resolution (profile registry / native login token cache,
+  proxy-aware HTTP client). The session-runner child installs it in
+  `internal/service/connect_session.go` (`installPluginResumeConfig`).
+  Nil leaves the upstream behavior completely unchanged.
+
 ## Known integration caveats
 
-- The in-place resume control plane (`GetResumeSessionParams` →
-  `sdkutil.GetConfigWithQuickCheck` → `config.LoadDefaultConfig`) uses
-  the **default AWS credential chain**, not the credentials nakama
-  injects for data-channel signing. In environments where only nakama's
-  own login session provides credentials, in-place resume fails and
-  recovery happens via the disconnect exit code + a fresh
-  `StartSession` from the supervisor.
+- The in-place resume control plane (`GetResumeSessionParams`) uses
+  the **default AWS credential chain** upstream; nakama environments
+  rely on the `NakamaAWSConfigProvider` patch above to make in-place
+  resume work at all. If a future re-vendor drops that patch,
+  in-place resume silently degrades to full session replacement via
+  the disconnect exit code + a fresh `StartSession` (functional but
+  slower, and it burns supervisor reconnect budget).

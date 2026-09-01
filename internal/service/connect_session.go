@@ -13,6 +13,7 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/smithy-go"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/gorilla/websocket"
 	"github.com/twinj/uuid"
 
@@ -249,6 +250,15 @@ func RunSessionRunner(ctx context.Context, clients *awsx.Clients, payloadJSON []
 	// child process: the supervisor parent never dials websockets, and
 	// the process exits with the session.
 	websocket.DefaultDialer.Proxy = proxy.Func()
+	// The vendored plugin's in-place resume (the ResumeSession control
+	// plane and the data-channel re-signing) resolves credentials
+	// through the default AWS chain, which in nakama-managed
+	// environments often carries no credentials at all. Point it at the
+	// nakama-resolved config instead (NAKAMA PATCH hook; see
+	// third_party/session-manager-plugin/PINNED.md). Package-variable
+	// mutation is confined to this disposable child process, same as
+	// the dialer proxy above.
+	installPluginResumeConfig(clients)
 	// Tell the vendored plugin to skip its own credential lookup in
 	// OpenDataChannel and use the Signer/Credentials we set below.
 	// Scope the variable to this call so it is not inherited by any
@@ -318,5 +328,17 @@ func classifyStartSessionError(err error) startSessionErrorKind {
 		return startSessionErrAuth
 	default:
 		return startSessionErrFatal
+	}
+}
+
+// installPluginResumeConfig points the vendored plugin's in-place
+// resume path (NakamaAWSConfigProvider, a NAKAMA PATCH) at the
+// nakama-resolved aws.Config: nakama credential resolution, the forced
+// region, and the proxy-aware HTTP client. Split out of
+// RunSessionRunner so the wiring is unit-testable.
+func installPluginResumeConfig(clients *awsx.Clients) {
+	cfg := clients.Config
+	smpsession.NakamaAWSConfigProvider = func(context.Context) (aws.Config, error) {
+		return cfg, nil
 	}
 }

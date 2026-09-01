@@ -22,6 +22,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/session-manager-plugin/src/communicator"
@@ -151,6 +152,29 @@ func (s *Session) Stop() {
 	os.Exit(0)
 }
 
+// NAKAMA PATCH: NakamaAWSConfigProvider, when non-nil, replaces the
+// default AWS credential chain (sdkutil.GetConfigWithQuickCheck) in
+// GetResumeSessionParams. nakama's session-runner child
+// (internal/service/connect_session.go) sets it to the aws.Config
+// resolved through nakama's own credential resolution (profile
+// registry / native login token cache, with the proxy-aware HTTP
+// client), because in nakama-managed environments the default chain
+// often carries no credentials at all, which makes in-place
+// ResumeSession structurally impossible. Mutating a package variable
+// is safe there for the same reason as websocket.DefaultDialer.Proxy:
+// the session-runner is a disposable single-session child process.
+// When nil the upstream behavior is completely unchanged.
+var NakamaAWSConfigProvider func(ctx context.Context) (aws.Config, error)
+
+// nakamaResumeConfig returns the injected config when the provider is
+// set and the upstream default chain otherwise (NAKAMA PATCH).
+func nakamaResumeConfig(ctx context.Context) (aws.Config, error) {
+	if NakamaAWSConfigProvider != nil {
+		return NakamaAWSConfigProvider(ctx)
+	}
+	return sdkutil.GetConfigWithQuickCheck(ctx)
+}
+
 // GetResumeSessionParams calls ResumeSession API and gets tokenvalue for reconnecting
 func (s *Session) GetResumeSessionParams(log log.T) (string, string, error) {
 	ctx := context.Background()
@@ -169,7 +193,9 @@ func (s *Session) GetResumeSessionParams(log log.T) (string, string, error) {
 
 	// Only attempt credential lookup if URL is not presigned
 	if !presigned {
-		cfg, err := sdkutil.GetConfigWithQuickCheck(ctx)
+		// NAKAMA PATCH: resolve through the injected provider when set
+		// (see NakamaAWSConfigProvider above); upstream default otherwise.
+		cfg, err := nakamaResumeConfig(ctx)
 		if err != nil {
 			return "", "", err
 		}
