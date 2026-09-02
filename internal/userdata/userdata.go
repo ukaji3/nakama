@@ -14,6 +14,33 @@ import (
 //go:embed code-server.tmpl.sh
 var codeServerTemplate string
 
+//go:embed bare.tmpl.sh
+var bareTemplate string
+
+// BareParams is the data passed to the bare cloud-init template
+// (`nakama aws create --bare`, Issue #52).
+type BareParams struct {
+	// InstanceName is the nakama instance name.
+	InstanceName string
+	// Region is the AWS region.
+	Region string
+}
+
+// RenderBare returns the rendered cloud-init User Data shell script for
+// a bare instance: no code-server, no password, just a reachable
+// development box.
+func RenderBare(p BareParams) (string, error) {
+	t, err := template.New("bare").Parse(bareTemplate)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, p); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
 // pinnedVersionPattern is the accepted shape of an explicit
 // code-server version (plain semver, e.g. "4.96.4"). The value is
 // interpolated into a double-quoted shell string inside the rendered

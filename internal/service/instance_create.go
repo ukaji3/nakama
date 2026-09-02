@@ -41,6 +41,11 @@ type CreateInstanceInput struct {
 	// Provision declares post-create provisioning (setup script,
 	// dotfiles, preset). The zero value provisions nothing (Issue #54).
 	Provision ProvisionSpec
+
+	// Bare creates a lightweight development box: no code-server, no
+	// password, no CloudFront distribution and no VPC origin. Reached
+	// with connect / ssh / tunnel instead of a browser (Issue #52).
+	Bare bool
 }
 
 // CreateInstanceOutput is what the CLI ultimately renders to the
@@ -58,6 +63,10 @@ type CreateInstanceOutput struct {
 	Password           string `json:"password,omitempty"` // cleared by the CLI unless --show-password
 	IAMRole            string `json:"iam_role,omitempty"`
 	InstanceProfile    string `json:"instance_profile,omitempty"`
+
+	// Bare reports that the instance carries no code-server and no
+	// CloudFront distribution (Issue #52).
+	Bare bool `json:"bare,omitempty"`
 
 	// Provision reports the post-create provisioning outcome when
 	// --setup / --dotfiles / --preset were used (Issue #54). A failed
@@ -123,12 +132,16 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	}
 	slog.Info("create: ami resolved", "architecture", arch, "ami_id", amiID)
 
-	password, err := generatePassword()
-	if err != nil {
-		return nil, fmt.Errorf("generate password: %w", err)
-	}
-	if err := s.putPasswordSecure(ctx, in.Name, password); err != nil {
-		return nil, fmt.Errorf("store password: %w", err)
+	// A bare instance has no code-server, so there is no password to
+	// generate or store (Issue #52).
+	var password string
+	if !in.Bare {
+		if password, err = generatePassword(); err != nil {
+			return nil, fmt.Errorf("generate password: %w", err)
+		}
+		if err := s.putPasswordSecure(ctx, in.Name, password); err != nil {
+			return nil, fmt.Errorf("store password: %w", err)
+		}
 	}
 
 	base, err := s.discoverBaseInfra(ctx)
@@ -151,14 +164,22 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		return nil, fmt.Errorf("eni: %w", err)
 	}
 
-	ud, err := userdata.RenderCodeServer(userdata.CodeServerParams{
-		InstanceName:         in.Name,
-		Region:               config.Region,
-		Port:                 config.CodeServerPort,
-		SSMPasswordParameter: ssmPasswordPath(in.Name),
-		SSMVersionParameter:  ssmVersionPath(in.Name),
-		PinnedVersion:        in.CodeServerVersion,
-	})
+	var ud string
+	if in.Bare {
+		ud, err = userdata.RenderBare(userdata.BareParams{
+			InstanceName: in.Name,
+			Region:       config.Region,
+		})
+	} else {
+		ud, err = userdata.RenderCodeServer(userdata.CodeServerParams{
+			InstanceName:         in.Name,
+			Region:               config.Region,
+			Port:                 config.CodeServerPort,
+			SSMPasswordParameter: ssmPasswordPath(in.Name),
+			SSMVersionParameter:  ssmVersionPath(in.Name),
+			PinnedVersion:        in.CodeServerVersion,
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("render user data: %w", err)
 	}
@@ -187,20 +208,28 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		return nil, fmt.Errorf("wait instance running: %w", err)
 	}
 
-	privateDNS, err := s.privateDNSNameForInstance(ctx, instanceID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve private DNS: %w", err)
-	}
-	slog.Info("create: private DNS resolved", "private_dns", privateDNS)
+	// The browser entry path (private DNS -> VPC origin -> distribution)
+	// exists only for code-server instances. Skipping it is what makes
+	// --bare fast: no CloudFront deploy wait (Issue #52).
+	var privateDNS, vpcOriginID, distID, distDomain string
+	if !in.Bare {
+		privateDNS, err = s.privateDNSNameForInstance(ctx, instanceID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve private DNS: %w", err)
+		}
+		slog.Info("create: private DNS resolved", "private_dns", privateDNS)
 
-	vpcOriginID, err := s.createInstanceVPCOrigin(ctx, in.Name, instanceID)
-	if err != nil {
-		return nil, fmt.Errorf("create vpc origin: %w", err)
+		vpcOriginID, err = s.createInstanceVPCOrigin(ctx, in.Name, instanceID)
+		if err != nil {
+			return nil, fmt.Errorf("create vpc origin: %w", err)
+		}
 	}
 
-	distID, distDomain, err := s.createInstanceDistribution(ctx, in.Name, vpcOriginID, privateDNS, base.WAFWebACLARN)
-	if err != nil {
-		return nil, fmt.Errorf("create distribution: %w", err)
+	if !in.Bare {
+		distID, distDomain, err = s.createInstanceDistribution(ctx, in.Name, vpcOriginID, privateDNS, base.WAFWebACLARN)
+		if err != nil {
+			return nil, fmt.Errorf("create distribution: %w", err)
+		}
 	}
 
 	// Persist instance metadata BEFORE waiting for the distribution
@@ -215,12 +244,15 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		DistributionDomain: distDomain,
 		IAMRole:            selectedRoleName(roleSel),
 		InstanceProfile:    selectedProfileName(roleSel),
+		Bare:               in.Bare,
 	})); err != nil {
 		return nil, fmt.Errorf("write instance metadata: %w", err)
 	}
 
-	if err := s.waitDistributionDeployed(ctx, distID); err != nil {
-		return nil, fmt.Errorf("wait distribution: %w", err)
+	if !in.Bare {
+		if err := s.waitDistributionDeployed(ctx, distID); err != nil {
+			return nil, fmt.Errorf("wait distribution: %w", err)
+		}
 	}
 
 	out := &CreateInstanceOutput{
@@ -231,10 +263,13 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		VPCOriginID:        vpcOriginID,
 		DistributionID:     distID,
 		DistributionDomain: distDomain,
-		URL:                "https://" + distDomain,
 		Password:           password,
+		Bare:               in.Bare,
 		IAMRole:            selectedRoleName(roleSel),
 		InstanceProfile:    selectedProfileName(roleSel),
+	}
+	if distDomain != "" {
+		out.URL = "https://" + distDomain
 	}
 	slog.Info("create: completed",
 		"name", in.Name,
@@ -295,18 +330,31 @@ type instanceMetaValues struct {
 	DistributionDomain string
 	IAMRole            string
 	InstanceProfile    string
+	// Bare marks the instance as having no code-server / distribution.
+	Bare bool
 }
 
 // instanceMetaEntries maps the metadata values to their SSM parameter
 // paths. Split out of CreateInstance so the key set is unit-testable.
 func instanceMetaEntries(name string, v instanceMetaValues) map[string]string {
 	m := map[string]string{
-		ssmInstanceIDPath(name):         v.InstanceID,
-		ssmENIIDPath(name):              v.ENIID,
-		ssmSGIDPath(name):               v.SecurityGroupID,
+		ssmInstanceIDPath(name): v.InstanceID,
+		ssmENIIDPath(name):      v.ENIID,
+		ssmSGIDPath(name):       v.SecurityGroupID,
+	}
+	// A bare instance has no browser entry path, and SSM rejects empty
+	// parameter values, so those keys are simply absent (Issue #52).
+	for path, value := range map[string]string{
 		ssmVPCOriginIDPath(name):        v.VPCOriginID,
 		ssmDistributionIDPath(name):     v.DistributionID,
 		ssmDistributionDomainPath(name): v.DistributionDomain,
+	} {
+		if value != "" {
+			m[path] = value
+		}
+	}
+	if v.Bare {
+		m[ssmKindPath(name)] = instanceKindBare
 	}
 	if v.IAMRole != "" {
 		m[ssmIAMRolePath(name)] = v.IAMRole

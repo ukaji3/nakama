@@ -19,6 +19,7 @@ type createFlags struct {
 	setupScript       string
 	dotfiles          string
 	preset            string
+	bare              bool
 }
 
 // createInputFromFlags maps the parsed CLI flags to the service-layer
@@ -32,6 +33,7 @@ func createInputFromFlags(f *createFlags) service.CreateInstanceInput {
 		CodeServerVersion: f.codeServerVersion,
 		WithAdmin:         f.withAdmin,
 		WithRole:          f.withRole,
+		Bare:              f.bare,
 		Provision: service.ProvisionSpec{
 			SetupScript: f.setupScript,
 			Dotfiles:    f.dotfiles,
@@ -90,9 +92,14 @@ resource when the permissions are insufficient.`,
 			}
 			fallback := "instance created\n" +
 				"  name              : " + out.Name + "\n" +
-				"  instance_id       : " + out.InstanceID + "\n" +
-				"  url               : " + out.URL + "\n" +
-				passwordLine
+				"  instance_id       : " + out.InstanceID + "\n"
+			if out.Bare {
+				// No code-server, so no URL and no password exist.
+				fallback += "  kind              : bare (no code-server / CloudFront)\n" +
+					"  access            : nakama aws ssh setup " + out.Name + "  |  nakama aws connect " + out.Name
+			} else {
+				fallback += "  url               : " + out.URL + "\n" + passwordLine
+			}
 			if out.IAMRole != "" {
 				fallback += "\n  iam_role          : " + out.IAMRole
 			}
@@ -121,6 +128,8 @@ resource when the permissions are insufficient.`,
 		"Shell script to run after create (local path or https URL), executed as ubuntu")
 	cmd.Flags().StringVar(&f.dotfiles, "dotfiles", "",
 		"Dotfiles repository to clone into ~/.dotfiles and apply (install.sh/setup.sh/bootstrap.sh, else symlinks)")
+	cmd.Flags().BoolVar(&f.bare, "bare", false,
+		"Create a lightweight box without code-server, CloudFront or a password (use connect/ssh/tunnel)")
 	cmd.Flags().StringVar(&f.preset, "preset", "",
 		"Bundled provisioning recipe to apply ("+strings.Join(service.ProvisionPresetNames(), ", ")+")")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")
