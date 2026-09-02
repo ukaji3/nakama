@@ -44,6 +44,7 @@
 | アクセス制御 | `nakama aws acl list` | IP set の内容を一覧 |
 | アクセス制御 | `nakama aws acl delete <IP\|CIDR>` | IP set からエントリ削除 |
 | インスタンス | `nakama aws create --name <n> --instance-type <t> [--with-admin\|--with-role <role>]` | EC2 (Ubuntu 26.04, EBS 20 GiB) を private subnet に作成、code-server を導入、CloudFront distribution を VPC Origin 経由で作成、パスワードを Parameter Store に保存。インスタンスタイプの CPU アーキ (x86_64 / arm64=Graviton) を自動判定し対応する Ubuntu AMI を選択。`--with-admin` は AdministratorAccess を持つ共有ロール `nakama-instance-role-admin` を、`--with-role <role>` は既存の任意 IAM ロールをインスタンスに付与 (両者は排他)。いずれの場合も**リソース作成前**に `iam:SimulatePrincipalPolicy` で呼び出し元の権限をプリフライトし、権限不足なら何も作らずエラー (ADR 0010) |
+| インスタンス | `nakama aws create ... --bare` | code-server / CloudFront distribution / VPC Origin / パスワードを作らず EC2 + ENI + instance role + SSM メタデータのみを用意する軽量モード。`/nakama/<n>/meta/kind=bare` で種別を記録 (未記録は従来の code-server インスタンス)。`list` の TYPE 列は BARE。`open` は `ssh setup` / `connect` を案内してエラー。`update` は OS 更新のみ。`connect` / `ssh` / `tunnel` / `backup` / `restore` / `edit` / `start` / `stop` / `delete` は通常どおり動作する |
 | インスタンス | `nakama aws create ... [--setup <path\|https URL>] [--dotfiles <git URL>] [--preset <name>]` | 作成完了後にプロビジョニングを実行する (SSM Run Command、ubuntu ユーザー)。順序は preset → dotfiles → setup で、各ステップは独立に成否を報告する。`--preset` は同梱レシピ (`kiro` = kiro-cli + Kiro Crew + gateway の systemd 登録)。`--dotfiles` は `~/.dotfiles` へ clone し `install.sh`/`setup.sh`/`bootstrap.sh` があれば実行、無ければ `$HOME` へシンボリックリンク。`--setup` はローカルパス (内容を転送) または https URL (curl 取得)。http は拒否。ログはインスタンスの `/var/log/nakama-provision.log`。**プロビジョニング失敗は create を失敗させず**警告 + 再実行案内を表示する。冪等性はスクリプト作成者の責務 |
 | インスタンス | `nakama aws setup rerun <n> [--setup ...] [--dotfiles ...] [--preset ...]` | 既存インスタンスに対して同じプロビジョニングを実行する (create 時の失敗からの復旧、後からの適用)。フラグを 1 つも指定しない場合はエラー |
 | インスタンス | `nakama aws list` | 作成済み code-server インスタンスを一覧 (TYPE 列で VSCODE/NAT 種別を表示)。`--show-nat` で NAT インスタンスの稼働状況も表示 |
@@ -187,6 +188,8 @@
 16. `nakama aws doctor` が 6 項目 (proxy / tls / credentials / waf-allowlist / ssm-permission / tunnels) を表示し、正常環境では fail が 0 で終了コード 0 になる。資格情報が解決できない環境でも proxy / tls の診断結果が表示され、AWS 依存項目は skip 表示になる。プロキシ認証要求・エンドポイント未到達・`ssm:StartSession` 拒否は fail、WAF 未登録・権限検証不能・dead な転送は warn になる。実行によって AWS リソースとローカル設定が一切変更されない
 
 17. `nakama aws create --preset kiro` の完了後、インスタンス上に kiro-cli が導入され Kiro Crew の gateway が systemd で稼働している (Issue #20 の内容)。`--setup ./s.sh` はスクリプトが ubuntu として実行され、`--dotfiles <URL>` はリポジトリが `~/.dotfiles` に配置されて慣例どおり適用される。いずれかのステップが失敗しても create は成功扱いで終了し、警告・ログパス・再実行コマンドが表示される。`nakama aws setup rerun <n>` で同じステップを再実行できる (手動 E2E)
+
+18. `nakama aws create --name <n> --bare` は CloudFront distribution / VPC Origin / パスワードを作らずに完了し (deploy 待ちがないため通常より短時間)、`list` で TYPE=BARE と表示される。`open <n>` は `ssh setup` / `connect` の案内を伴うエラーになる。`connect` / `ssh setup` / `tunnel` / `backup` / `update` (OS のみ) が動作し、`delete <n>` が CloudFront 関連の削除を試みずに完了する (手動 E2E)
 
 ## 9. リスク・オープン事項
 
