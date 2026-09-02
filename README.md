@@ -206,6 +206,17 @@ ssh nakama-dev01                     # Include を追加した後はこれだけ
 - 切断時の再接続は ssh クライアント側の設定 (`ServerAliveInterval` など) に従います。`connect` / `tunnel` の自動再接続 (ADR 0014) は適用されません
 - 必要な IAM 権限は `connect` と同じです
 
+### 環境の自己診断 (`doctor`)
+
+```bash
+nakama aws doctor            # 各項目を ok / warn / fail + 対処案内で表示
+nakama aws doctor -o json    # サポート依頼への添付用
+```
+
+`doctor` は nakama が必要とするものを一括で点検します: プロキシ解決 (環境変数 / Windows の WinHTTP・PAC) と AWS 到達性、TLS インスペクションの有無と OS 証明書ストアでの検証結果、資格情報の解決元 (アカウント・identity・active profile)、自分のグローバル IP が WAF 許可リストに載っているか、`connect` / `tunnel` / `ssh` に必要な権限 (`ssm:StartSession` 等)、ローカルに記録された tunnel の状態。
+
+**完全に読み取り専用**で、AWS リソースもローカル設定も一切変更しません。資格情報・トークン・パスワードは出力しません。fail が 1 つでもあれば終了コードが非 0 になります (資格情報が解決できない場合もプロキシ・TLS のローカル診断は実行されます)。
+
 ## 企業プロキシ環境での利用
 
 nakama の全アウトバウンド通信 (AWS API / `connect` の WebSocket / `login` のサインイン・トークンリフレッシュ / グローバル IP 取得) は、以下の優先順位でプロキシを自動解決します (ADR 0015)。
@@ -259,7 +270,7 @@ egress (private subnet からのアウトバウンド通信) は NAT Gateway で
 
 ## ステータス
 
-主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `ssh` / `update` / `profile` / `cli shell`) は実装済み。
+主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `ssh` / `update` / `profile` / `doctor` / `cli shell`) は実装済み。
 
 ## ドキュメント
 
