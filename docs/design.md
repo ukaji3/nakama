@@ -462,6 +462,14 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 - **各項目の実装**: proxy/tls = ADR 0018 の `cliproxy.Detector` を再利用 (`ProxyAuthError` は方式別の案内に変換) / credentials = `Clients.AccountID`・`CallerARN` + profilestore の active profile / waf-allowlist = `ListACL` + `IPDiscoverer.PublicIPv4` を CIDR 包含判定 / ssm-permission = `SimulatePrincipalPolicy` (ADR 0010 と同機構。`iam:SimulatePrincipalPolicy` 自体が無い場合は warn に留める) / tunnels = 状態ファイル走査 + `GetTunnelStatus`
 - **テスト容易性**: 検出・ACL・IP・tunnel 一覧/状態・profile を `DoctorOptions` の unexported フックで差し替え、ネットワークなしで全分岐を検証する
 
+### 8.16 プロビジョニング宣言 (`create --setup` / `--dotfiles` / `--preset`、Issue #54)
+
+- **適用点**: `CreateInstance` の最終段 (distribution が Deployed になり、メタデータ書き込み済みの後)。**best-effort** — 失敗しても create は成功扱いで `CreateInstanceOutput.Provision` に結果を載せ、CLI が警告 + ログパス + `setup rerun` コマンドを表示する (インスタンスは作成済みで使用可能なため)
+- **事前検証**: CLI が `ValidateProvisionSpec` を **AWS 呼び出し前**に実行し、未知の preset・読めないローカルスクリプト・http URL (経路上での改変を許すため拒否) を即座に弾く
+- **リモートスクリプト**: `runRemoteScript` (§8.14 と共通) で 1 本のスクリプトを実行。全出力を `/var/log/nakama-provision.log` に tee し、各ステップを `NAKAMA_STEP_BEGIN/OK/FAILED` マーカーで囲んでサブシェル実行する (1 ステップの失敗が他を隠さない・中断しない)。ステップ順は preset → dotfiles → setup (後段が前段の成果に依存できる)
+- **各ステップ**: preset = 同梱レシピ (`kiro` は Issue #20 の内容を一般化。`sudo -u ubuntu -H` で実行) / dotfiles = `~/.dotfiles` へ clone (既存なら `pull --ff-only` で再実行可) → `install.sh`/`setup.sh`/`bootstrap.sh` があれば実行、無ければドットファイルを `$HOME` へリンク / setup = https は `curl` 取得、ローカルは**引用付き heredoc** で内容を転送 (外側シェルの展開を防止。マーカー衝突は拒否)
+- **`setup rerun`**: 同じ `Provision` を既存インスタンスに適用する復旧・再適用手段。冪等性はスクリプト作成者の責務であることを docs に明記
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |
