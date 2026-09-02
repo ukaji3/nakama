@@ -62,6 +62,15 @@ func ValidateNewInstanceName(name string) error {
 func ssmPasswordPath(name string) string {
 	return naming.SSMPath(name, "code-server", "password")
 }
+
+// ssmKindPath is the parameter that marks an instance as bare
+// (`nakama aws create --bare`, Issue #52). Absent means a regular
+// code-server instance, so instances created before --bare existed keep
+// their meaning without a migration.
+func ssmKindPath(name string) string {
+	return fmt.Sprintf("/nakama/%s/meta/kind", name)
+}
+
 func ssmVersionPath(name string) string {
 	return naming.SSMPath(name, "code-server", "version")
 }

@@ -21,6 +21,9 @@ import (
 const (
 	instanceKindVSCode = "vscode"
 	instanceKindNAT    = "nat"
+	// instanceKindBare marks instances created with --bare: no
+	// code-server, no CloudFront distribution (Issue #52).
+	instanceKindBare = "bare"
 )
 
 // InstanceSummary is one row of `nakama aws list`.
@@ -76,6 +79,13 @@ func (s *Service) ListInstances(ctx context.Context, showNAT bool) ([]InstanceSu
 					return nil, err
 				}
 				summary.DistributionDomain = dom
+				kind, err := s.ssmGetOptional(ctx, ssmKindPath(name))
+				if err != nil {
+					return nil, err
+				}
+				if kind == instanceKindBare {
+					summary.Type = instanceKindBare
+				}
 			}
 			summaries = append(summaries, summary)
 		}
@@ -114,6 +124,8 @@ type InstanceInfo struct {
 	URL                string `json:"url,omitempty"`
 	CodeServerVersion  string `json:"code_server_version,omitempty"`
 	Password           string `json:"password,omitempty"` // populated only when showPassword=true
+	// Kind is "vscode" (the default) or "bare" (Issue #52).
+	Kind string `json:"kind,omitempty"`
 }
 
 // GetInstanceInfo returns the consolidated state of a nakama instance,
@@ -137,6 +149,7 @@ func (s *Service) GetInstanceInfo(ctx context.Context, name string, showPassword
 		{&info.DistributionID, ssmDistributionIDPath(name)},
 		{&info.DistributionDomain, ssmDistributionDomainPath(name)},
 		{&info.CodeServerVersion, ssmVersionPath(name)},
+		{&info.Kind, ssmKindPath(name)},
 	} {
 		v, err := s.ssmGetOptional(ctx, f.path)
 		if err != nil {
@@ -146,6 +159,9 @@ func (s *Service) GetInstanceInfo(ctx context.Context, name string, showPassword
 	}
 	if info.DistributionDomain != "" {
 		info.URL = "https://" + info.DistributionDomain
+	}
+	if info.Kind == "" {
+		info.Kind = instanceKindVSCode
 	}
 
 	if info.InstanceID == "" {
@@ -159,7 +175,7 @@ func (s *Service) GetInstanceInfo(ctx context.Context, name string, showPassword
 	info.State = st
 	info.InstanceType = itype
 
-	if showPassword {
+	if showPassword && info.Kind != instanceKindBare {
 		pwd, err := s.ssmGetSecure(ctx, ssmPasswordPath(name))
 		if err != nil {
 			return nil, fmt.Errorf("read password: %w", err)

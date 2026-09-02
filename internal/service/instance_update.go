@@ -102,7 +102,13 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 	}
 
 	// 3. Run the update via SSM Run Command.
-	stdout, runErr := s.runUpdateCommand(ctx, instanceID, ssmVersionPath(in.Name))
+	// A bare instance has no code-server to update, so only the OS part
+	// of the script runs (Issue #52).
+	kind, err := s.ssmGetOptional(ctx, ssmKindPath(in.Name))
+	if err != nil {
+		return nil, err
+	}
+	stdout, runErr := s.runUpdateCommand(ctx, instanceID, ssmVersionPath(in.Name), kind == instanceKindBare)
 
 	// 4. Reboot handling (only meaningful on success).
 	if runErr == nil && rebootRequired(stdout) {
@@ -145,6 +151,10 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 		return res, fmt.Errorf("update command: %w", runErr)
 	}
 
+	if kind == instanceKindBare {
+		return res, nil
+	}
+
 	// Display-only read-back after a successful update: keep it
 	// best-effort instead of failing the whole result.
 	if v, err := s.ssmGetOptional(ctx, ssmVersionPath(in.Name)); err == nil {
@@ -159,6 +169,25 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 // reboot is pending (presence of /var/run/reboot-required).
 func rebootRequired(commandStdout string) bool {
 	return strings.Contains(commandStdout, "NAKAMA_REBOOT_REQUIRED=1")
+}
+
+// buildBareUpdateScript renders the update script for a bare instance
+// (Issue #52): the OS part only, with the same reboot marker so the
+// caller's reboot handling is unchanged.
+func buildBareUpdateScript() string {
+	return `#!/bin/bash
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+export HOME="${HOME:-/root}"
+apt-get update -qq
+apt-get dist-upgrade -y -qq
+apt-get autoremove -y -qq
+if [ -f /var/run/reboot-required ]; then
+  echo "NAKAMA_REBOOT_REQUIRED=1"
+else
+  echo "NAKAMA_REBOOT_REQUIRED=0"
+fi
+`
 }
 
 // buildUpdateScript renders the in-instance update shell script.
@@ -206,8 +235,11 @@ fi
 // returns the command's stdout. It retries SendCommand while the SSM
 // agent is not yet registered (InvalidInstanceId), which happens for a
 // short window after a stopped instance is started.
-func (s *Service) runUpdateCommand(ctx context.Context, instanceID, versionParam string) (string, error) {
+func (s *Service) runUpdateCommand(ctx context.Context, instanceID, versionParam string, bare bool) (string, error) {
 	script := buildUpdateScript(config.Region, versionParam)
+	if bare {
+		script = buildBareUpdateScript()
+	}
 
 	var commandID string
 	if err := awshelper.Poll(ctx, awshelper.PollOptions{

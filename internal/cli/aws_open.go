@@ -209,6 +209,10 @@ func runAWSOpen(cmd *cobra.Command, name string, f *openFlags, deps openDeps) er
 
 	// Fatal preflights: without a URL or a running instance there is
 	// nothing meaningful to open.
+	if info.Kind == "bare" {
+		return fmt.Errorf("instance %q was created with --bare: it has no code-server to open in a browser.\n"+
+			"Use `nakama aws ssh setup %s` (desktop VS Code / JetBrains / ssh) or `nakama aws connect %s` instead", name, name, name)
+	}
 	if info.DistributionDomain == "" || info.URL == "" {
 		return fmt.Errorf("instance %q has no CloudFront distribution domain yet; "+
 			"the distribution may still be provisioning — check with `nakama aws info %s`", name, name)
