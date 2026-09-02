@@ -449,7 +449,7 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 
 デスクトップ版 VS Code (Remote-SSH) / JetBrains Gateway / 素の ssh・scp・rsync を、受信ポート開放なしで使えるようにする。
 
-- **`ssh proxy <n>`**: `AWS-StartSSHSession` (`portNumber=22`) でセッションを開き、**自プロセスの stdin/stdout** をデータチャネルに中継する (vendored plugin の `StandardStreamForwarding`)。OpenSSH の `ProxyCommand` から使う。supervisor (§8.11 / ADR 0014) は使わない — ProxyCommand プロセスの寿命と再接続は ssh クライアントの責務。session-runner 子も挟まない (実 stdio を掴む必要があるため)。プラグインの開始バナーは ssh が識別文字列より前の行を読み飛ばす仕様 (RFC 4253 §4.2) により無害
+- **`ssh proxy <n>`**: `AWS-StartSSHSession` (`portNumber=22`) でセッションを開き、**自プロセスの stdin/stdout** をデータチャネルに中継する (vendored plugin の `StandardStreamForwarding`)。OpenSSH の `ProxyCommand` から使う。supervisor (§8.11 / ADR 0014) は使わない — ProxyCommand プロセスの寿命と再接続は ssh クライアントの責務。session-runner 子も挟まない (実 stdio を掴む必要があるため)。恒久切断時に hang しないよう `SSM_PLUGIN_DISCONNECT_EXIT_CODE` をプロセス内で設定し、即終了して ssh に接続断を伝える (Issue #61)。プラグインの開始バナーは ssh が識別文字列より前の行を読み飛ばす仕様 (RFC 4253 §4.2) により無害
 - **`ssh setup <n>`**: 公開鍵 (`~/.ssh/id_ed25519.pub` 等を自動検出、`--identity` で明示) を SSM Run Command で ubuntu の `authorized_keys` に冪等追加し (`grep -qxF` で既存判定)、ssh config スニペットを `~/.config/nakama/ssh/<n>.conf` (0600) に書き出して `Include` 行を案内する。**`~/.ssh/config` は変更しない** (`~/.aws/config` 不変更と同じ思想)。多行入力 (秘密鍵の誤指定) と非 OpenSSH 公開鍵形式は拒否し、エラーに鍵素材を出さない
 - **リモートコマンド実行の共通化**: `runRemoteScript` (SSM Run Command + `InvalidInstanceId` リトライ + stdout 回収) を service 層に用意し、鍵投入で使用する (`update` の既存経路と同型)
 
@@ -466,6 +466,7 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 
 - **適用点**: `CreateInstance` の最終段 (distribution が Deployed になり、メタデータ書き込み済みの後)。**best-effort** — 失敗しても create は成功扱いで `CreateInstanceOutput.Provision` に結果を載せ、CLI が警告 + ログパス + `setup rerun` コマンドを表示する (インスタンスは作成済みで使用可能なため)
 - **事前検証**: CLI が `ValidateProvisionSpec` を **AWS 呼び出し前**に実行し、未知の preset・読めないローカルスクリプト・http URL (経路上での改変を許すため拒否) を即座に弾く
+- **実行シェルの前提**: aws:runShellScript は commands を `_script.sh` に書き出し**ファイルとして** `sh` 起動する (amazon-ssm-agent の runshellscript.go で確認)。つまり shebang が解釈器を決め、shebang の無いスクリプトは /bin/sh (Ubuntu では dash) で動く。bash 構文 (process substitution・pipefail) を使うスクリプトは必ず `#!/bin/bash` で始めること (Issue #61)
 - **リモートスクリプト**: `runRemoteScript` (§8.14 と共通) で 1 本のスクリプトを実行。全出力を `/var/log/nakama-provision.log` に tee し、各ステップを `NAKAMA_STEP_BEGIN/OK/FAILED` マーカーで囲んでサブシェル実行する (1 ステップの失敗が他を隠さない・中断しない)。ステップ順は preset → dotfiles → setup (後段が前段の成果に依存できる)
 - **各ステップ**: preset = 同梱レシピ (`kiro` は Issue #20 の内容を一般化。`sudo -u ubuntu -H` で実行) / dotfiles = `~/.dotfiles` へ clone (既存なら `pull --ff-only` で再実行可) → `install.sh`/`setup.sh`/`bootstrap.sh` があれば実行、無ければドットファイルを `$HOME` へリンク / setup = https は `curl` 取得、ローカルは**引用付き heredoc** で内容を転送 (外側シェルの展開を防止。マーカー衝突は拒否)
 - **`setup rerun`**: 同じ `Provision` を既存インスタンスに適用する復旧・再適用手段。冪等性はスクリプト作成者の責務であることを docs に明記
