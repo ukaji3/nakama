@@ -190,6 +190,22 @@ nakama aws tunnel stop dev01                       # 転送を停止しデーモ
 
 `tunnel` はバックグラウンドに常駐するデーモンがポート転送を維持し、ターミナルを専有しません (ADR 0017)。複数の `-L` を同時に指定できます (転送ごとに SSM セッションを 1 本使用)。切断時は `connect` と同じポリシー (最大 5 回・指数バックオフ・60 秒以上安定していれば試行回数リセット) で自動再接続するため、長時間のトンネルが日をまたいでも維持されます。再接続時のセッション確立失敗 (PC のスリープ復帰直後にネットワークが未復帰のケースなど) も同じ再接続枠で再試行されます。デーモンのログは OS 標準ログ (Linux/macOS: syslog、Windows: イベントログ) に出力され、状態は `~/.config/nakama/tunnels/<name>.json` (0600) にのみ保存されて `tunnel stop` で削除されます。AWS 資格情報が失効した場合、該当転送は `status` で dead と表示されます — `nakama aws login` (または `aws login`) の後に `tunnel restart <name>` で既存設定のまま再接続できます。`start` / `stop` / `status` / `restart` はサブコマンド名と曖昧になるため、インスタンス名としては予約され `create` で拒否されます。
 
+### ローカルの VS Code / JetBrains / ssh から使う (`ssh`)
+
+```bash
+nakama aws ssh setup dev01           # 公開鍵を authorized_keys に登録 + ssh config スニペット生成
+nakama aws ssh setup dev01 --identity ~/.ssh/id_ed25519.pub   # 鍵を明示
+nakama aws ssh setup dev01 --no-key  # スニペットのみ生成 (鍵は自前管理)
+ssh nakama-dev01                     # Include を追加した後はこれだけで接続
+```
+
+`ssh` は SSM Session Manager 上に ssh を通す仕組みです (ADR 0019)。`setup` が生成するスニペットを `~/.ssh/config` から `Include` すると、**デスクトップ版 VS Code の Remote-SSH、JetBrains Gateway、素の `ssh` / `scp` / `rsync` / git over ssh** がそのまま使えます。受信ポートの開放も public IP も不要で、鍵は公開鍵だけがインスタンスに渡ります (秘密鍵はローカルに留まります)。
+
+- **`~/.ssh/config` は変更しません**: スニペットは `~/.config/nakama/ssh/<name>.conf` (0600) に書き出され、表示される `Include` 行を利用者が自分の config に 1 行追加します
+- `ProxyCommand` には nakama 実行ファイルの絶対パスが埋め込まれます (PATH 非依存、Windows の空白入りパスも引用済み)
+- 切断時の再接続は ssh クライアント側の設定 (`ServerAliveInterval` など) に従います。`connect` / `tunnel` の自動再接続 (ADR 0014) は適用されません
+- 必要な IAM 権限は `connect` と同じです
+
 ## 企業プロキシ環境での利用
 
 nakama の全アウトバウンド通信 (AWS API / `connect` の WebSocket / `login` のサインイン・トークンリフレッシュ / グローバル IP 取得) は、以下の優先順位でプロキシを自動解決します (ADR 0015)。
@@ -243,7 +259,7 @@ egress (private subnet からのアウトバウンド通信) は NAT Gateway で
 
 ## ステータス
 
-主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `update` / `profile` / `cli shell`) は実装済み。
+主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `ssh` / `update` / `profile` / `cli shell`) は実装済み。
 
 ## ドキュメント
 

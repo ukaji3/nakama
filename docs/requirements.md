@@ -63,6 +63,8 @@
 | 接続 | `nakama aws tunnel stop <n>` | ポート転送を停止し、常駐デーモンも終了する |
 | 接続 | `nakama aws tunnel status <n>` | 転送ごとの状態 (active / reconnecting / dead) を表示する |
 | 接続 | `nakama aws tunnel restart <n>` | 状態ファイルに記録された転送スペックのまま再接続する (stop → start の合成。資格情報失効などで dead になった転送の復旧手段。ADR 0017) |
+| 接続 | `nakama aws ssh setup <n> [--identity <pub>] [--no-key] [--port <p>]` | 公開鍵を ubuntu の `authorized_keys` に冪等追加し (SSM Run Command 経由、既存なら追加しない)、ssh config スニペットを `~/.config/nakama/ssh/<n>.conf` (0600) に生成して `Include` 行を案内する。`~/.ssh/config` は変更しない。多行入力 (秘密鍵の誤指定) や非 OpenSSH 公開鍵形式は拒否 (ADR 0019) |
+| 接続 | `nakama aws ssh proxy <n> [--port <p>]` | `AWS-StartSSHSession` のセッションを開き自プロセスの stdin/stdout を中継する (OpenSSH の `ProxyCommand` 用)。1 プロセス 1 セッションで、再接続は ssh クライアントの責務。デスクトップ VS Code Remote-SSH / JetBrains Gateway / scp / rsync が利用可能になる (ADR 0019) |
 | 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
 | 認証 | `nakama aws login [--remote] [--name <alias>]` | AWS Management Console のセッションを使いネイティブにサインイン (OAuth 2.0 authorization code + PKCE + DPoP、aws CLI 不要。ADR 0016)。ブラウザ起動 (不可なら URL 表示で待機継続) → 127.0.0.1 のコールバックで認可コード受領 (10 分タイムアウト、state 検証) → AWS CLI 互換キャッシュ (`~/.aws/login/cache/`) へ保存 → STS で識別確認 → nakama profile へ**自動 save & load**。`--remote` は SSH/headless 向けにブラウザの検証コード貼り付けで完了。`~/.aws/config` は変更しない。要 `SignInLocalDevelopmentAccess` ポリシー |
 | CLI 支援 | `nakama aws cli shell [--shell <path>]` | **Windows 専用**。OS のプロキシ設定 (WinHTTP/PAC) を自動解決し、TLS インスペクション検出時は OS ストア検証済みの企業 CA チェーン + Amazon Trust Services ルートを `AWS_CA_BUNDLE` 用 PEM に書き出した上で、`HTTP(S)_PROXY`/`NO_PROXY`/`AWS_CA_BUNDLE` を注入したサブシェル (親シェルと同種を自動判別) を起動する。exit で復帰し、親シェル・レジストリ・`~/.aws/config` に恒久的変更を残さない。NTLM/Negotiate 認証プロキシは検出して回避策を案内。他 OS では Windows 専用である旨を表示してエラー (ADR 0018) |
@@ -176,6 +178,7 @@
 12. `nakama aws edit <n> --instance-type <t>` 後、`nakama aws info <n>` の instance_type が `<t>` になり、変更前に running だったインスタンスは再び running になる。存在しないタイプ指定時はインスタンスを停止せず即時エラー。現インスタンスとアーキの異なるタイプ指定時も停止せず即時エラー
 13. `nakama aws update <n>` 実行で、更新前にバックアップが1件作成され (`backup list` に出現)、code-server が latest へ更新され (`info` の code_server_version が更新)、`apt-get dist-upgrade` が適用される。実行前 stopped のインスタンスは実行後も stopped に戻る。元 running でカーネル更新があった場合のみ reboot される
 14. (手動 E2E) TLS インスペクションを行う企業プロキシ配下の Windows で `nakama aws cli shell` を実行すると、プロキシ・CA・疎通確認のバナーが表示されてサブシェルが開き、その中で `aws s3 ls` が追加設定なしで成功する。`exit` 後、親シェル・レジストリ・`~/.aws/config` に変更が残らない。Windows 以外の OS では Windows 専用オプションである案内を表示して終了する
+15. `nakama aws ssh setup <n>` 実行後、表示された `Include` 行を `~/.ssh/config` に追加すると `ssh nakama-<n>` で ubuntu としてログインでき、デスクトップ版 VS Code の Remote-SSH からも同じ Host 名で接続できる (手動 E2E)。同コマンドの再実行で `authorized_keys` に重複エントリが増えない。`~/.ssh/config` は変更されない。sshd 不在・権限不足時は原因の分かるエラーになる
 
 ## 9. リスク・オープン事項
 
