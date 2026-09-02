@@ -127,6 +127,8 @@ nakama aws create --name dev01 --instance-type t3.medium
 nakama aws create --name arm01 --instance-type t4g.large   # Graviton (ARM64) も指定可 (AMI は arm64 を自動選択)
 nakama aws create --name ops01 --instance-type t3.medium --with-admin        # AdministratorAccess 付きロールを付与 (CDK/CloudFormation 用)
 nakama aws create --name app01 --instance-type t3.medium --with-role my-role # 任意の既存 IAM ロールを付与
+nakama aws create --name dev02 --instance-type t3.medium --preset kiro         # 同梱プリセット (kiro-cli + Kiro Crew) を適用
+nakama aws create --name dev03 --instance-type t3.medium --setup ./setup.sh --dotfiles https://github.com/me/dotfiles.git
 nakama aws list                  # TYPE 列で VSCODE 種別を表示
 nakama aws list --show-nat       # NAT インスタンスの稼働状況 (TYPE=NAT, running/stopped) も表示
 nakama aws info dev01 --show-password
@@ -142,6 +144,24 @@ nakama aws delete dev01
 `create --with-admin` は AdministratorAccess を持つ共有 IAM ロール (`nakama-instance-role-admin`) を、`--with-role <role>` は既存の任意 IAM ロールをインスタンスに付与します (両者は排他)。いずれもリソース作成前に `iam:SimulatePrincipalPolicy` で呼び出し元の権限 (`iam:PassRole` 等) をチェックし、権限不足なら**何もリソースを作らずに**エラー終了します (呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要。ADR 0010)。
 
 > **セキュリティ注意 (`--with-admin`)**: 付与されるのは AdministratorAccess です。CloudFront + WAF の IP allowlist を通過して code-server にログインできる者は、その開発環境を通じて**実質的に AWS アカウントの管理者権限を行使できます**。`acl` の許可 IP は最小限に保ち、パスワードの取り扱いに注意してください。`--with-role` で SSM 権限 (AmazonSSMManagedInstanceCore) のないロールを指定した場合、`connect` / `update` および初期セットアップのパスワード取得が動作しない可能性があるため、実行時に警告が表示されます。
+
+### 環境構築の自動化 (`create --setup` / `--dotfiles` / `--preset`)
+
+```bash
+nakama aws create --name dev01 --instance-type t3.medium --preset kiro
+nakama aws create --name dev02 --instance-type t3.medium --setup ./setup.sh
+nakama aws create --name dev03 --instance-type t3.medium --dotfiles https://github.com/me/dotfiles.git
+nakama aws setup rerun dev01 --setup ./setup.sh    # 後から適用・失敗時の再実行
+```
+
+作成直後のインスタンスに対して、**プリセット → dotfiles → セットアップスクリプト**の順に ubuntu ユーザーで実行します。
+
+- **`--preset <name>`**: 同梱レシピ。現在は `kiro` (kiro-cli + Kiro Crew + gateway の systemd 登録)
+- **`--dotfiles <git-URL>`**: `~/.dotfiles` に clone し、`install.sh` / `setup.sh` / `bootstrap.sh` があれば実行、無ければドットファイルを `$HOME` にシンボリックリンク
+- **`--setup <path|https URL>`**: 任意のシェルスクリプト。ローカルパスは内容がそのまま転送されます (http は拒否 — 経路上で書き換えられ得るため)
+- 実行ログはインスタンス上の `/var/log/nakama-provision.log` に追記されます
+- **プロビジョニングの失敗で create は失敗しません** (インスタンスは作成済みで使用可能)。警告と再実行コマンドが表示されます
+- **冪等性はスクリプト作成者の責務**です。nakama は指定されたステップをそのまま順に実行します
 
 ### ブラウザで開く (`open`)
 
@@ -272,7 +292,7 @@ egress (private subnet からのアウトバウンド通信) は NAT Gateway で
 
 ## ステータス
 
-主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `ssh` / `update` / `profile` / `doctor` / `cli shell`) は実装済み。
+主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `ssh` / `update` / `profile` / `doctor` / `setup` / `cli shell`) は実装済み。
 
 ## ドキュメント
 
