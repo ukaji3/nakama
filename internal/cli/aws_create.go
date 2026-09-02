@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/ukaji3/nakama/internal/awsx"
@@ -14,6 +16,9 @@ type createFlags struct {
 	showPassword      bool
 	withAdmin         bool
 	withRole          string
+	setupScript       string
+	dotfiles          string
+	preset            string
 }
 
 // createInputFromFlags maps the parsed CLI flags to the service-layer
@@ -27,6 +32,11 @@ func createInputFromFlags(f *createFlags) service.CreateInstanceInput {
 		CodeServerVersion: f.codeServerVersion,
 		WithAdmin:         f.withAdmin,
 		WithRole:          f.withRole,
+		Provision: service.ProvisionSpec{
+			SetupScript: f.setupScript,
+			Dotfiles:    f.dotfiles,
+			Preset:      f.preset,
+		},
 	}
 }
 
@@ -55,11 +65,17 @@ resource when the permissions are insufficient.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := withCancel(cmd)
+			in := createInputFromFlags(f)
+			// Fail fast on a bad preset name or an unreadable setup
+			// script, before any resource is created.
+			if err := service.ValidateProvisionSpec(in.Provision); err != nil {
+				return err
+			}
 			clients, err := awsx.NewClients(ctx)
 			if err != nil {
 				return err
 			}
-			out, err := service.NewService(clients).CreateInstance(ctx, createInputFromFlags(f))
+			out, err := service.NewService(clients).CreateInstance(ctx, in)
 			if err != nil {
 				return err
 			}
@@ -83,6 +99,15 @@ resource when the permissions are insufficient.`,
 			if out.InstanceProfile != "" {
 				fallback += "\n  instance_profile  : " + out.InstanceProfile
 			}
+			if p := out.Provision; p != nil {
+				fallback += "\n  provision         : " + strings.Join(p.Steps, ", ")
+				if p.Failed {
+					// The instance is usable; only provisioning failed.
+					fallback += "\n  provision WARNING : " + p.Err +
+						"\n                      log: " + p.LogPath + " on the instance" +
+						"\n                      retry: nakama aws setup rerun " + out.Name + rerunFlags(f)
+				}
+			}
 			return renderOutput(cmd.OutOrStdout(), global.Output, out, fallback)
 		},
 	}
@@ -92,8 +117,30 @@ resource when the permissions are insufficient.`,
 	cmd.Flags().BoolVar(&f.showPassword, "show-password", false, "Print the generated code-server password in plain text")
 	cmd.Flags().BoolVar(&f.withAdmin, "with-admin", false, "Attach a shared nakama-managed IAM role with AdministratorAccess to the instance")
 	cmd.Flags().StringVar(&f.withRole, "with-role", "", "Attach an existing IAM role (by name) to the instance")
+	cmd.Flags().StringVar(&f.setupScript, "setup", "",
+		"Shell script to run after create (local path or https URL), executed as ubuntu")
+	cmd.Flags().StringVar(&f.dotfiles, "dotfiles", "",
+		"Dotfiles repository to clone into ~/.dotfiles and apply (install.sh/setup.sh/bootstrap.sh, else symlinks)")
+	cmd.Flags().StringVar(&f.preset, "preset", "",
+		"Bundled provisioning recipe to apply ("+strings.Join(service.ProvisionPresetNames(), ", ")+")")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("instance-type")
 	return cmd
+}
+
+// rerunFlags renders the provisioning flags of this invocation so the
+// warning can show a copy-pasteable rerun command.
+func rerunFlags(f *createFlags) string {
+	var b strings.Builder
+	if f.preset != "" {
+		b.WriteString(" --preset " + f.preset)
+	}
+	if f.dotfiles != "" {
+		b.WriteString(" --dotfiles " + f.dotfiles)
+	}
+	if f.setupScript != "" {
+		b.WriteString(" --setup " + f.setupScript)
+	}
+	return b.String()
 }

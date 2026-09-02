@@ -37,6 +37,10 @@ type CreateInstanceInput struct {
 	// WithRole attaches an existing, user-supplied IAM role (by name)
 	// to the instance. Mutually exclusive with WithAdmin (ADR 0010).
 	WithRole string
+
+	// Provision declares post-create provisioning (setup script,
+	// dotfiles, preset). The zero value provisions nothing (Issue #54).
+	Provision ProvisionSpec
 }
 
 // CreateInstanceOutput is what the CLI ultimately renders to the
@@ -54,6 +58,12 @@ type CreateInstanceOutput struct {
 	Password           string `json:"password,omitempty"` // cleared by the CLI unless --show-password
 	IAMRole            string `json:"iam_role,omitempty"`
 	InstanceProfile    string `json:"instance_profile,omitempty"`
+
+	// Provision reports the post-create provisioning outcome when
+	// --setup / --dotfiles / --preset were used (Issue #54). A failed
+	// provisioning does not fail the create: the instance exists and is
+	// usable, so the CLI warns and points at the rerun command.
+	Provision *ProvisionResult `json:"provision,omitempty"`
 }
 
 // CreateInstance provisions everything needed to expose a new
@@ -232,6 +242,26 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		"distribution_id", distID,
 		"url", out.URL,
 	)
+
+	// Provisioning runs last, on the finished instance, and is
+	// best-effort: the instance and all its resources exist by now, so a
+	// failing user script must not fail the create (Issue #54). The
+	// outcome travels back in the result for the CLI to surface.
+	if !in.Provision.IsZero() {
+		slog.Info("create: provisioning", "name", in.Name, "steps", provisionStepNames(in.Provision))
+		pres, err := s.Provision(ctx, in.Name, in.Provision)
+		if pres == nil {
+			pres = &ProvisionResult{Name: in.Name, Steps: provisionStepNames(in.Provision), LogPath: ProvisionLogPath}
+		}
+		if err != nil {
+			pres.Failed = true
+			if pres.Err == "" {
+				pres.Err = err.Error()
+			}
+			slog.Warn("create: provisioning failed", "name", in.Name, "error", err)
+		}
+		out.Provision = pres
+	}
 	return out, nil
 }
 
