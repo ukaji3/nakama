@@ -43,6 +43,7 @@ var reservedInstanceNames = map[string]bool{
 	"stop":    true,
 	"status":  true,
 	"restart": true,
+	"suggest": true,
 }
 
 // ValidateNewInstanceName validates a name for instances about to be
