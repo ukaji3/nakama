@@ -184,11 +184,13 @@ nakama aws connect --tty dev01 top             # 対話 (PTY) でコマンド実
 nakama aws tunnel dev01 -L 8080:8080               # localhost:8080 -> instance:8080 (start は省略可)
 nakama aws tunnel start dev01 -L 8080:8080 -L 5432:db.internal:5432  # 複数ポート・別ホスト経由も可
 nakama aws tunnel status dev01                     # 転送ごとの状態を表示 (active / reconnecting / dead)
+nakama aws tunnel status                           # 全インスタンスの転送を一覧 (NAME 列付き)
+nakama aws tunnel suggest dev01                    # インスタンスで listen 中のポートと -L 案を表示
 nakama aws tunnel restart dev01                    # 既存設定のまま再接続 (login し直し後の復旧に)
 nakama aws tunnel stop dev01                       # 転送を停止しデーモンも終了
 ```
 
-`tunnel` はバックグラウンドに常駐するデーモンがポート転送を維持し、ターミナルを専有しません (ADR 0017)。複数の `-L` を同時に指定できます (転送ごとに SSM セッションを 1 本使用)。切断時は `connect` と同じポリシー (最大 5 回・指数バックオフ・60 秒以上安定していれば試行回数リセット) で自動再接続するため、長時間のトンネルが日をまたいでも維持されます。再接続時のセッション確立失敗 (PC のスリープ復帰直後にネットワークが未復帰のケースなど) も同じ再接続枠で再試行されます。デーモンのログは OS 標準ログ (Linux/macOS: syslog、Windows: イベントログ) に出力され、状態は `~/.config/nakama/tunnels/<name>.json` (0600) にのみ保存されて `tunnel stop` で削除されます。AWS 資格情報が失効した場合、該当転送は `status` で dead と表示されます — `nakama aws login` (または `aws login`) の後に `tunnel restart <name>` で既存設定のまま再接続できます。`start` / `stop` / `status` / `restart` はサブコマンド名と曖昧になるため、インスタンス名としては予約され `create` で拒否されます。
+`tunnel` はバックグラウンドに常駐するデーモンがポート転送を維持し、ターミナルを専有しません (ADR 0017)。複数の `-L` を同時に指定できます (転送ごとに SSM セッションを 1 本使用)。切断時は `connect` と同じポリシー (最大 5 回・指数バックオフ・60 秒以上安定していれば試行回数リセット) で自動再接続するため、長時間のトンネルが日をまたいでも維持されます。再接続時のセッション確立失敗 (PC のスリープ復帰直後にネットワークが未復帰のケースなど) も同じ再接続枠で再試行されます。デーモンのログは OS 標準ログ (Linux/macOS: syslog、Windows: イベントログ) に出力され、状態は `~/.config/nakama/tunnels/<name>.json` (0600) にのみ保存されて `tunnel stop` で削除されます。AWS 資格情報が失効した場合、該当転送は `status` で dead と表示されます — `nakama aws login` (または `aws login`) の後に `tunnel restart <name>` で既存設定のまま再接続できます。`tunnel status` は名前を省略するとこのマシンに記録された全インスタンスの転送を一覧します (デーモンが応答しないものは stale として表示し、残骸の状態ファイルを掃除します)。`tunnel suggest <name>` はインスタンス上で listen しているポートを調べて `-L` の案とそのまま実行できるコマンドを表示します (読み取り専用で、自動では転送しません)。`start` / `stop` / `status` / `restart` / `suggest` はサブコマンド名と曖昧になるため、インスタンス名としては予約され `create` で拒否されます。
 
 ### ローカルの VS Code / JetBrains / ssh から使う (`ssh`)
 
