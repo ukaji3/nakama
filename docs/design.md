@@ -452,6 +452,15 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 - **`ssh setup <n>`**: 公開鍵 (`~/.ssh/id_ed25519.pub` 等を自動検出、`--identity` で明示) を SSM Run Command で ubuntu の `authorized_keys` に冪等追加し (`grep -qxF` で既存判定)、ssh config スニペットを `~/.config/nakama/ssh/<n>.conf` (0600) に書き出して `Include` 行を案内する。**`~/.ssh/config` は変更しない** (`~/.aws/config` 不変更と同じ思想)。多行入力 (秘密鍵の誤指定) と非 OpenSSH 公開鍵形式は拒否し、エラーに鍵素材を出さない
 - **リモートコマンド実行の共通化**: `runRemoteScript` (SSM Run Command + `InvalidInstanceId` リトライ + stdout 回収) を service 層に用意し、鍵投入で使用する (`update` の既存経路と同型)
 
+### 8.15 `nakama aws doctor` — 環境自己診断 (Issue #53)
+
+企業環境での「動かない」の一次切り分けを 1 コマンドに集約する。**読み取り専用**が不変条件 (AWS リソース・ローカル設定を一切変更しない)。
+
+- **構成**: `service.Diagnose(ctx, DoctorOptions)` が `DoctorReport{Checks[], OKs/Warns/Fails/Skips}` を返し、CLI が表形式または `-o json` で描画して fail>0 なら `ExitCodeError{1}`
+- **資格情報未解決でも動く**: CLI は `awsx.NewClients` の失敗を診断結果 (credentials=fail) として扱い、ローカル診断 (proxy / tls) を継続する。AWS 依存項目は skip (終了コードに影響しない)
+- **各項目の実装**: proxy/tls = ADR 0018 の `cliproxy.Detector` を再利用 (`ProxyAuthError` は方式別の案内に変換) / credentials = `Clients.AccountID`・`CallerARN` + profilestore の active profile / waf-allowlist = `ListACL` + `IPDiscoverer.PublicIPv4` を CIDR 包含判定 / ssm-permission = `SimulatePrincipalPolicy` (ADR 0010 と同機構。`iam:SimulatePrincipalPolicy` 自体が無い場合は warn に留める) / tunnels = 状態ファイル走査 + `GetTunnelStatus`
+- **テスト容易性**: 検出・ACL・IP・tunnel 一覧/状態・profile を `DoctorOptions` の unexported フックで差し替え、ネットワークなしで全分岐を検証する
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |
