@@ -127,6 +127,7 @@ nakama aws create --name dev01 --instance-type t3.medium
 nakama aws create --name arm01 --instance-type t4g.large   # Graviton (ARM64) も指定可 (AMI は arm64 を自動選択)
 nakama aws create --name ops01 --instance-type t3.medium --with-admin        # AdministratorAccess 付きロールを付与 (CDK/CloudFormation 用)
 nakama aws create --name app01 --instance-type t3.medium --with-role my-role # 任意の既存 IAM ロールを付与
+nakama aws create --name box01 --instance-type t3.medium --bare               # code-server なしの軽量ボックス (ssh/connect で使う)
 nakama aws create --name dev02 --instance-type t3.medium --preset kiro         # 同梱プリセット (kiro-cli + Kiro Crew) を適用
 nakama aws create --name dev03 --instance-type t3.medium --setup ./setup.sh --dotfiles https://github.com/me/dotfiles.git
 nakama aws list                  # TYPE 列で VSCODE 種別を表示
@@ -144,6 +145,21 @@ nakama aws delete dev01
 `create --with-admin` は AdministratorAccess を持つ共有 IAM ロール (`nakama-instance-role-admin`) を、`--with-role <role>` は既存の任意 IAM ロールをインスタンスに付与します (両者は排他)。いずれもリソース作成前に `iam:SimulatePrincipalPolicy` で呼び出し元の権限 (`iam:PassRole` 等) をチェックし、権限不足なら**何もリソースを作らずに**エラー終了します (呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要。ADR 0010)。
 
 > **セキュリティ注意 (`--with-admin`)**: 付与されるのは AdministratorAccess です。CloudFront + WAF の IP allowlist を通過して code-server にログインできる者は、その開発環境を通じて**実質的に AWS アカウントの管理者権限を行使できます**。`acl` の許可 IP は最小限に保ち、パスワードの取り扱いに注意してください。`--with-role` で SSM 権限 (AmazonSSMManagedInstanceCore) のないロールを指定した場合、`connect` / `update` および初期セットアップのパスワード取得が動作しない可能性があるため、実行時に警告が表示されます。
+
+### code-server なしの軽量ボックス (`create --bare`)
+
+```bash
+nakama aws create --name box01 --instance-type t3.medium --bare
+nakama aws ssh setup box01     # デスクトップ VS Code / JetBrains / ssh から使う
+nakama aws connect box01       # シェルだけで良い場合
+```
+
+デスクトップエディタや CLI だけで開発する場合、code-server・CloudFront distribution・VPC Origin・パスワードは不要です。`--bare` はそれらを作らず **EC2 + SSM のみ**を用意します。
+
+- **作成が速い**: CloudFront の deploy 待ち (最大 15 分) が発生しません。CloudFront/WAF のリソースも作られないため `delete` の対象にもなりません
+- **使えるコマンド**: `connect` / `ssh` / `tunnel` / `backup` / `restore` / `edit` / `update` (OS 更新のみ) / `start` / `stop` / `delete`。`list` の TYPE 列は BARE と表示されます
+- **`open` は使えません**: 実行すると `ssh setup` / `connect` を案内してエラーになります
+- NAT インスタンスの電源連動は通常インスタンスと同じです (apt などの egress に必要なため)
 
 ### 環境構築の自動化 (`create --setup` / `--dotfiles` / `--preset`)
 

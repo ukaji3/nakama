@@ -470,6 +470,15 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 - **各ステップ**: preset = 同梱レシピ (`kiro` は Issue #20 の内容を一般化。`sudo -u ubuntu -H` で実行) / dotfiles = `~/.dotfiles` へ clone (既存なら `pull --ff-only` で再実行可) → `install.sh`/`setup.sh`/`bootstrap.sh` があれば実行、無ければドットファイルを `$HOME` へリンク / setup = https は `curl` 取得、ローカルは**引用付き heredoc** で内容を転送 (外側シェルの展開を防止。マーカー衝突は拒否)
 - **`setup rerun`**: 同じ `Provision` を既存インスタンスに適用する復旧・再適用手段。冪等性はスクリプト作成者の責務であることを docs に明記
 
+### 8.17 `nakama aws create --bare` — 軽量開発ボックス (Issue #52)
+
+§8.14 の ssh 経路が入ったことで、ブラウザ IDE を使わない構成が実用になった。`--bare` は code-server 一式を作らない。
+
+- **作らないもの**: パスワード (生成も SSM 保存もしない)、code-server の user-data、private DNS 解決、VPC Origin、CloudFront distribution とその Deployed 待ち。**作成時間の短縮はこの待ちの省略による**
+- **user-data**: `internal/userdata/bare.tmpl.sh` (SSM エージェントの起動確認・sshd 有効化・aws CLI と基本ツールの導入のみ)。`connect` / `ssh` / `tunnel` が成立する最小構成
+- **種別の記録**: `/nakama/<name>/meta/kind = bare`。**未記録は従来の code-server インスタンス**として扱うため、既存インスタンスへの移行処理は不要。空値の PutParameter は SSM が拒否するため、bare では distribution 系のメタキー自体を書かない
+- **各コマンドの対応**: `list` は kind を読んで TYPE=BARE 表示 / `info` は Kind を返し bare ではパスワードを読まない / `open` は bare を検出して `ssh setup`・`connect` を案内するエラー / `update` は OS 更新のみのスクリプト (reboot マーカーは共通) / `delete` は空の distribution・VPC Origin メタを既にスキップする構造だったためそのまま動作 / NAT 電源連動は通常インスタンスと同一 (egress が必要)
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |
