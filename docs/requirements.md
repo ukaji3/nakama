@@ -61,7 +61,8 @@
 | 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY) |
 | 接続 | `nakama aws tunnel [start] <n> -L <spec> [-L <spec>...]` | バックグラウンドに常駐してポート転送 (ADR 0017)。`start` は省略可。複数 `-L` 可 (転送ごとに SSM セッション)。既に転送中なら転送一覧を表示して exit 1 |
 | 接続 | `nakama aws tunnel stop <n>` | ポート転送を停止し、常駐デーモンも終了する |
-| 接続 | `nakama aws tunnel status <n>` | 転送ごとの状態 (active / reconnecting / dead) を表示する |
+| 接続 | `nakama aws tunnel status [<n>]` | 転送ごとの状態 (active / reconnecting / dead) を表示する。名前を省略するとこのマシンに記録された全インスタンスの転送を NAME 列付きで一覧し、デーモン不応答のものは stale として表示して残骸の状態ファイルを掃除する |
+| 接続 | `nakama aws tunnel suggest <n>` | インスタンス上で listen 中の TCP ポートを SSM Run Command (`ss`/`netstat`) で列挙し、`-L` スペック案とそのまま実行できる tunnel コマンドを表示する。読み取り専用で自動転送はしない。22 番は `nakama aws ssh` を案内し提案から除外する |
 | 接続 | `nakama aws tunnel restart <n>` | 状態ファイルに記録された転送スペックのまま再接続する (stop → start の合成。資格情報失効などで dead になった転送の復旧手段。ADR 0017) |
 | 接続 | `nakama aws ssh setup <n> [--identity <pub>] [--no-key] [--port <p>]` | 公開鍵を ubuntu の `authorized_keys` に冪等追加し (SSM Run Command 経由、既存なら追加しない)、ssh config スニペットを `~/.config/nakama/ssh/<n>.conf` (0600) に生成して `Include` 行を案内する。`~/.ssh/config` は変更しない。多行入力 (秘密鍵の誤指定) や非 OpenSSH 公開鍵形式は拒否 (ADR 0019) |
 | 接続 | `nakama aws ssh proxy <n> [--port <p>]` | `AWS-StartSSHSession` のセッションを開き自プロセスの stdin/stdout を中継する (OpenSSH の `ProxyCommand` 用)。1 プロセス 1 セッションで、再接続は ssh クライアントの責務。デスクトップ VS Code Remote-SSH / JetBrains Gateway / scp / rsync が利用可能になる (ADR 0019) |
@@ -175,7 +176,7 @@
 8. `nakama aws restore <n> --yes` 後、インスタンスを start すると最新バックアップ取得時点のファイルが復元されている (snapshot-id を一切指定していない)
 9. `nakama aws connect <n>` で対話シェルのプロンプトが表示され、コマンドが実行できる
 10. `nakama aws connect <n> ls` でリモートの実行結果が表示され、セッションが終了する
-11. `nakama aws tunnel <n> -L 8080:8080 -L 5432:db.internal:5432` 実行後プロンプトが即返り、`localhost:8080` / `localhost:5432` への接続がそれぞれの宛先に到達する。同じ `<n>` への再実行は「既に転送中」+ 転送一覧を表示して exit 1。`tunnel status <n>` が転送ごとの状態を表示し、`tunnel restart <n>` が記録済みの転送スペックのまま再接続し (状態ファイルが無ければエラー)、`tunnel stop <n>` でデーモンと全転送が終了して状態ファイルが消える。一時的なセッション確立失敗 (session-runner の一般エラー終了) は再接続枠内で自動再試行され、枠の枯渇時のみ dead になる (Detail に exit code と枯渇を明記)
+11. `nakama aws tunnel <n> -L 8080:8080 -L 5432:db.internal:5432` 実行後プロンプトが即返り、`localhost:8080` / `localhost:5432` への接続がそれぞれの宛先に到達する。同じ `<n>` への再実行は「既に転送中」+ 転送一覧を表示して exit 1。`tunnel status <n>` が転送ごとの状態を表示し、`tunnel restart <n>` が記録済みの転送スペックのまま再接続し (状態ファイルが無ければエラー)、`tunnel stop <n>` でデーモンと全転送が終了して状態ファイルが消える。`tunnel status` (名前省略) は全インスタンスの転送を NAME 列付きで一覧し、転送が無ければ「転送なし」を表示して終了コード 0。`tunnel suggest <n>` は listen 中ポートと `-L` 案を表示する (8080=code-server が含まれる)。一時的なセッション確立失敗 (session-runner の一般エラー終了) は再接続枠内で自動再試行され、枠の枯渇時のみ dead になる (Detail に exit code と枯渇を明記)
 12. `nakama aws edit <n> --instance-type <t>` 後、`nakama aws info <n>` の instance_type が `<t>` になり、変更前に running だったインスタンスは再び running になる。存在しないタイプ指定時はインスタンスを停止せず即時エラー。現インスタンスとアーキの異なるタイプ指定時も停止せず即時エラー
 13. `nakama aws update <n>` 実行で、更新前にバックアップが1件作成され (`backup list` に出現)、code-server が latest へ更新され (`info` の code_server_version が更新)、`apt-get dist-upgrade` が適用される。実行前 stopped のインスタンスは実行後も stopped に戻る。元 running でカーネル更新があった場合のみ reboot される
 14. (手動 E2E) TLS インスペクションを行う企業プロキシ配下の Windows で `nakama aws cli shell` を実行すると、プロキシ・CA・疎通確認のバナーが表示されてサブシェルが開き、その中で `aws s3 ls` が追加設定なしで成功する。`exit` 後、親シェル・レジストリ・`~/.aws/config` に変更が残らない。Windows 以外の OS では Windows 専用オプションである案内を表示して終了する
