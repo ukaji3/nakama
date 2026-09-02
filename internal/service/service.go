@@ -27,6 +27,10 @@ type Service struct {
 	// tunnel` orchestration (ADR 0017). nil selects the production
 	// defaults; tests inject fakes. See tunnel_start.go.
 	tunnel *tunnelHooks
+
+	// ssh holds the session hook used by SSHProxy (ADR 0019). nil runs
+	// the relay session in this process; tests inject fakes.
+	ssh *sshHooks
 }
 
 // NewService returns a Service backed by the given AWS clients.
