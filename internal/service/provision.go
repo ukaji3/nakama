@@ -172,6 +172,13 @@ func provisionStepNames(p ProvisionSpec) []string {
 // failure into a warning (the instance itself stays usable).
 func buildProvisionScript(p ProvisionSpec) (string, error) {
 	var b strings.Builder
+	// The SSM agent's aws:runShellScript writes the commands to
+	// _script.sh and executes the FILE with `sh -c` (see
+	// agent/plugins/runscript/runshellscript.go in amazon-ssm-agent), so
+	// the shebang selects the interpreter and a script without one runs
+	// under /bin/sh (dash on Ubuntu). This script needs bash: the
+	// process substitution below is not POSIX (Issue #61).
+	b.WriteString("#!/bin/bash\n")
 	b.WriteString("set -u\n")
 	b.WriteString("exec > >(tee -a " + ProvisionLogPath + ") 2>&1\n")
 	b.WriteString(`echo "nakama: provisioning started at $(date -Is)"` + "\n")
@@ -245,10 +252,14 @@ done
 // in the script is expanded by the outer shell).
 func setupBody(src string) (string, error) {
 	if isHTTPSURL(src) {
+		// mktemp creates the file 0600 root-owned; without the chown the
+		// script would be unreadable for the ubuntu user it runs as
+		// (Issue #61).
 		return fmt.Sprintf(`set -e
 tmp=$(mktemp)
 curl -fsSL %q -o "$tmp"
-chmod +x "$tmp"
+chmod 0700 "$tmp"
+chown ubuntu:ubuntu "$tmp"
 sudo -u ubuntu -H bash -lc "$tmp"
 rm -f "$tmp"
 `, src), nil
@@ -266,7 +277,7 @@ tmp=$(mktemp)
 cat > "$tmp" <<'NAKAMA_SETUP_EOF'
 %s
 NAKAMA_SETUP_EOF
-chmod +x "$tmp"
+chmod 0700 "$tmp"
 chown ubuntu:ubuntu "$tmp"
 sudo -u ubuntu -H bash -lc "$tmp"
 rm -f "$tmp"

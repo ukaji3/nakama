@@ -203,3 +203,43 @@ func TestProvisionRejectsBadNameAndPreset(t *testing.T) {
 		t.Error("an unknown preset must be rejected")
 	}
 }
+
+func TestBuildProvisionScriptStartsWithBashShebang(t *testing.T) {
+	// aws:runShellScript executes the commands as a FILE via `sh`
+	// (amazon-ssm-agent runshellscript.go), so without this shebang the
+	// script runs under dash, where the process substitution used for
+	// logging is a syntax error (Issue #61).
+	got, err := buildProvisionScript(ProvisionSpec{Preset: "kiro"})
+	if err != nil {
+		t.Fatalf("buildProvisionScript: %v", err)
+	}
+	if !strings.HasPrefix(got, "#!/bin/bash\n") {
+		t.Errorf("the provision script must start with a bash shebang:\n%.80s", got)
+	}
+}
+
+func TestSetupBodyMakesTempReadableForUbuntu(t *testing.T) {
+	// Both delivery paths run the script as ubuntu via sudo; a
+	// root-owned 0600/0711 temp file would be unreadable (Issue #61).
+	remote, err := setupBody("https://example.com/s.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	local := filepath.Join(dir, "s.sh")
+	if err := os.WriteFile(local, []byte("echo hi\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localBody, err := setupBody(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"https": remote, "local": localBody} {
+		if !strings.Contains(body, `chown ubuntu:ubuntu "$tmp"`) {
+			t.Errorf("%s branch must chown the temp script to ubuntu:\n%s", name, body)
+		}
+		if strings.Contains(body, "chmod +x") {
+			t.Errorf("%s branch must use an explicit mode, not chmod +x (0711 keeps the file unreadable):\n%s", name, body)
+		}
+	}
+}

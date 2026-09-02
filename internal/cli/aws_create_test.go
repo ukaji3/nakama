@@ -54,3 +54,17 @@ func TestCreateCommand_WithAdminAndWithRoleMutuallyExclusive(t *testing.T) {
 		t.Fatal("expected cobra mutual-exclusion error, got nil")
 	}
 }
+
+func TestCreateCommand_BareAndCodeServerVersionMutuallyExclusive(t *testing.T) {
+	// A bare instance has no code-server, so a pinned version would be
+	// silently meaningless (Issue #61).
+	t.Parallel()
+	cmd := newAWSCreateCommand()
+	cmd.SetArgs([]string{
+		"--name", "dev01", "--instance-type", "t3.medium",
+		"--bare", "--code-server-version", "4.96.4",
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected cobra mutual-exclusion error for --bare with --code-server-version, got nil")
+	}
+}

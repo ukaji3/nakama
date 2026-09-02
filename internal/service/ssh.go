@@ -88,6 +88,15 @@ func (s *Service) SSHProxy(ctx context.Context, in SSHProxyInput) error {
 	if err != nil {
 		return fmt.Errorf("encode session payload: %w", err)
 	}
+	// Without the disconnect gate a permanent disconnect (server-side
+	// session gone, websocket retries exhausted) leaves the vendored
+	// plugin hanging, and a hanging ProxyCommand stalls the ssh client
+	// until its own keepalives fire. With the gate the process exits
+	// promptly and ssh sees the connection drop (Issue #61). The env
+	// mutation is confined to this disposable proxy process, the same
+	// pattern as RunSessionRunner's dialer/config hooks.
+	_ = os.Setenv(disconnectExitCodeEnv, fmt.Sprint(DisconnectExitCode))
+	defer func() { _ = os.Unsetenv(disconnectExitCodeEnv) }()
 	return s.runSSHSession(ctx, payload)
 }
 
