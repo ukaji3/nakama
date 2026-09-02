@@ -106,16 +106,31 @@ settings. To change the forwards instead, use stop and start.`,
 	}
 
 	status := &cobra.Command{
-		Use:   "status <name>",
-		Short: "Show the state of each port forward",
-		Args:  cobra.ExactArgs(1),
+		Use:   "status [name]",
+		Short: "Show the state of each port forward (all instances when name is omitted)",
+		Long: `Show every port forward and its state (active / reconnecting / dead).
+
+With no name, list the tunnels of all instances recorded on this machine
+(same convention as ` + "`nakama aws backup list`" + `), adding a NAME column.
+Instances whose daemon no longer answers are reported as stale and their
+leftover state file is cleaned up.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := withCancel(cmd)
-			clients, err := awsx.NewClients(ctx)
-			if err != nil {
-				return err
+			// Status needs no AWS credentials: it reads the local state
+			// files and asks each daemon over its loopback control
+			// channel. That matters exactly when credentials have
+			// expired and the user wants to see which forwards died.
+			svc := service.NewService(nil)
+			if len(args) == 0 {
+				items, err := svc.ListTunnelStatus(ctx)
+				if err != nil {
+					return err
+				}
+				return renderOutput(cmd.OutOrStdout(), global.Output, items,
+					formatTunnelOverview(items, time.Now()))
 			}
-			st, err := service.NewService(clients).GetTunnelStatus(ctx, args[0])
+			st, err := svc.GetTunnelStatus(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -124,7 +139,29 @@ settings. To change the forwards instead, use stop and start.`,
 		},
 	}
 
-	cmd.AddCommand(start, restart, stop, status)
+	suggest := &cobra.Command{
+		Use:   "suggest <name>",
+		Short: "List the ports listening on the instance and the -L specs for them",
+		Long: `Inspect which TCP ports are listening on the instance (read-only: it
+runs ss/netstat over SSM Run Command) and print the ` + "`-L`" + ` specs that
+would forward them, plus one ready-to-run tunnel command. Nothing is
+forwarded automatically.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := withCancel(cmd)
+			clients, err := awsx.NewClients(ctx)
+			if err != nil {
+				return err
+			}
+			sug, err := service.NewService(clients).SuggestTunnel(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			return renderOutput(cmd.OutOrStdout(), global.Output, sug, formatTunnelSuggestion(sug))
+		},
+	}
+
+	cmd.AddCommand(start, restart, stop, status, suggest)
 	return cmd
 }
 
@@ -181,4 +218,65 @@ func formatTunnelStatus(st *service.TunnelStatus, now time.Time) string {
 		fmt.Fprintf(&b, "%-24s  %-12s  %-10s  %s\n", f.Spec, string(f.State), since, f.Detail)
 	}
 	return b.String()
+}
+
+// formatTunnelOverview renders the cross-instance listing (NAME column,
+// same shape as `backup list` without a name).
+func formatTunnelOverview(items []service.TunnelOverview, now time.Time) string {
+	var rows int
+	for _, it := range items {
+		if it.Status != nil {
+			rows += len(it.Status.Forwards)
+		} else {
+			rows++
+		}
+	}
+	if rows == 0 {
+		return "no tunnels\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-16s  %-24s  %-12s  %-10s  %s\n", "NAME", "FORWARD", "STATE", "SINCE", "DETAIL")
+	for _, it := range items {
+		switch {
+		case it.Status != nil:
+			for _, f := range it.Status.Forwards {
+				since := "-"
+				if !f.Since.IsZero() {
+					since = now.Sub(f.Since).Round(time.Second).String()
+				}
+				fmt.Fprintf(&b, "%-16s  %-24s  %-12s  %-10s  %s\n", it.Name, f.Spec, string(f.State), since, f.Detail)
+			}
+		case it.Stale:
+			fmt.Fprintf(&b, "%-16s  %-24s  %-12s  %-10s  %s\n", it.Name, "-", "stale", "-",
+				"the daemon does not answer; leftover state removed")
+		default:
+			fmt.Fprintf(&b, "%-16s  %-24s  %-12s  %-10s  %s\n", it.Name, "-", "error", "-", it.Err)
+		}
+	}
+	return b.String()
+}
+
+// formatTunnelSuggestion renders the listening ports and the ready-made
+// tunnel command.
+func formatTunnelSuggestion(s *service.TunnelSuggestion) string {
+	if len(s.Ports) == 0 {
+		return "no listening TCP ports found on " + s.Name + "\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-8s  %-22s  %-14s  %-12s  %s\n", "PORT", "ADDRESS", "PROCESS", "SPEC", "NOTE")
+	for _, p := range s.Ports {
+		fmt.Fprintf(&b, "%-8d  %-22s  %-14s  %-12s  %s\n", p.Port, p.Address, dashIfEmpty(p.Process), p.Spec, p.Label)
+	}
+	if s.Command != "" {
+		fmt.Fprintf(&b, "\nForward all of them:\n    %s\n", s.Command)
+	}
+	return b.String()
+}
+
+// dashIfEmpty keeps table columns aligned for missing values.
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
