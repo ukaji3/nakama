@@ -25,6 +25,7 @@ func newAWSCommand() *cobra.Command {
 		newAWSConnectCommand(),
 		newAWSTunnelCommand(),
 		newAWSSSHCommand(),
+		newAWSDoctorCommand(),
 		newAWSSessionRunnerCommand(),
 		newAWSTunnelDaemonCommand(),
 		newAWSUpdateCommand(),
