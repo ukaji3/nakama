@@ -133,6 +133,9 @@ resource when the permissions are insufficient.`,
 	cmd.Flags().StringVar(&f.preset, "preset", "",
 		"Bundled provisioning recipe to apply ("+strings.Join(service.ProvisionPresetNames(), ", ")+")")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")
+	// A bare instance has no code-server, so pinning its version would
+	// be silently meaningless (Issue #61).
+	cmd.MarkFlagsMutuallyExclusive("bare", "code-server-version")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("instance-type")
 	return cmd

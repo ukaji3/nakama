@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -247,5 +248,26 @@ func TestSSHProxyAuthErrorAdvisesLogin(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "StartSession") {
 		t.Errorf("err = %v, want it to mention StartSession", err)
+	}
+}
+
+func TestSSHProxySetsDisconnectGate(t *testing.T) {
+	// A hanging ProxyCommand stalls ssh; the disconnect gate makes a
+	// permanent disconnect end the process promptly (Issue #61).
+	fake := &fakeSSHSSM{instanceID: "i-0123456789abcdef0"}
+	svc := NewService(&awsx.Clients{SSM: fake, Region: "ap-northeast-1"})
+	var gateDuringRun string
+	svc.ssh = &sshHooks{runSession: func(context.Context, []byte) error {
+		gateDuringRun = os.Getenv(disconnectExitCodeEnv)
+		return nil
+	}}
+	if err := svc.SSHProxy(context.Background(), SSHProxyInput{Name: "dev01"}); err != nil {
+		t.Fatalf("SSHProxy: %v", err)
+	}
+	if want := fmt.Sprint(DisconnectExitCode); gateDuringRun != want {
+		t.Errorf("disconnect gate during the session = %q, want %q", gateDuringRun, want)
+	}
+	if got := os.Getenv(disconnectExitCodeEnv); got != "" {
+		t.Errorf("the gate must be unset after the session, got %q", got)
 	}
 }
