@@ -444,6 +444,14 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 - **サブシェル**: 親プロセスの実体 (`QueryFullProcessImageName`) が powershell.exe / pwsh.exe / cmd.exe ならそれを、不明なら `ComSpec` を起動 (`--shell` で明示指定可)。stdio 継承で同一ウィンドウ内、シェルの exit code は伝搬。親シェル・レジストリ・ユーザー環境変数・`~/.aws/config` (ADR 0011/0016 の不変条件) には一切変更を残さない
 - **プロキシ認証の診断**: CONNECT が 407 を返す場合は `Proxy-Authenticate` のスキームを読み、Basic あり → プロキシ URL への資格情報埋め込みを案内 / NTLM・Negotiate のみ → ローカル認証リレー (px / Cntlm) を案内してエラー終了 (aws CLI は Basic のみ対応のため)
 
+### 8.14 `nakama aws ssh` — ssh over Session Manager (ADR 0019)
+
+デスクトップ版 VS Code (Remote-SSH) / JetBrains Gateway / 素の ssh・scp・rsync を、受信ポート開放なしで使えるようにする。
+
+- **`ssh proxy <n>`**: `AWS-StartSSHSession` (`portNumber=22`) でセッションを開き、**自プロセスの stdin/stdout** をデータチャネルに中継する (vendored plugin の `StandardStreamForwarding`)。OpenSSH の `ProxyCommand` から使う。supervisor (§8.11 / ADR 0014) は使わない — ProxyCommand プロセスの寿命と再接続は ssh クライアントの責務。session-runner 子も挟まない (実 stdio を掴む必要があるため)。プラグインの開始バナーは ssh が識別文字列より前の行を読み飛ばす仕様 (RFC 4253 §4.2) により無害
+- **`ssh setup <n>`**: 公開鍵 (`~/.ssh/id_ed25519.pub` 等を自動検出、`--identity` で明示) を SSM Run Command で ubuntu の `authorized_keys` に冪等追加し (`grep -qxF` で既存判定)、ssh config スニペットを `~/.config/nakama/ssh/<n>.conf` (0600) に書き出して `Include` 行を案内する。**`~/.ssh/config` は変更しない** (`~/.aws/config` 不変更と同じ思想)。多行入力 (秘密鍵の誤指定) と非 OpenSSH 公開鍵形式は拒否し、エラーに鍵素材を出さない
+- **リモートコマンド実行の共通化**: `runRemoteScript` (SSM Run Command + `InvalidInstanceId` リトライ + stdout 回収) を service 層に用意し、鍵投入で使用する (`update` の既存経路と同型)
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |
