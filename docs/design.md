@@ -459,7 +459,9 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 
 - **構成**: `service.Diagnose(ctx, DoctorOptions)` が `DoctorReport{Checks[], OKs/Warns/Fails/Skips}` を返し、CLI が表形式または `-o json` で描画して fail>0 なら `ExitCodeError{1}`
 - **資格情報未解決でも動く**: CLI は `awsx.NewClients` の失敗を診断結果 (credentials=fail) として扱い、ローカル診断 (proxy / tls) を継続する。AWS 依存項目は skip (終了コードに影響しない)
-- **各項目の実装**: proxy/tls = ADR 0018 の `cliproxy.Detector` を再利用 (`ProxyAuthError` は方式別の案内に変換) / credentials = `Clients.AccountID`・`CallerARN` + profilestore の active profile / waf-allowlist = `ListACL` + `IPDiscoverer.PublicIPv4` を CIDR 包含判定 / ssm-permission = `SimulatePrincipalPolicy` (ADR 0010 と同機構。`iam:SimulatePrincipalPolicy` 自体が無い場合は warn に留める) / tunnels = 状態ファイル走査 + `GetTunnelStatus`
+- **各項目の実装**: proxy/tls = ADR 0018 の `cliproxy.Detector` を再利用 (`ProxyAuthError` は方式別の案内に変換) / credentials = `Clients.AccountID`・`CallerARN` + profilestore の active profile / waf-allowlist = `ListACL` + `IPDiscoverer.PublicIPv4` を CIDR 包含判定 / capability = 後述の権限マトリクス / tunnels = 状態ファイル走査 + `GetTunnelStatus`
+- **機能別 capability 判定 (Issue #63)**: `internal/service/permissions.go` の `featurePermissionMatrix` が「機能 → 必要 IAM アクション」の唯一の情報源。doctor は Simulate 対象行のアクション和集合を `SimulatePrincipalPolicy` にチャンク (50) + Marker ページネーションで問い合わせ、機能ごとに ok / warn (不足アクション列挙) を 1 行ずつ表示する。不足は warn であり fail ではない (意図して権限を絞ったプリンシパルは「壊れた環境」ではない。fail は環境異常に予約)。判定は Resource `*` 評価のためリソース限定ポリシーで偽陰性があり得る旨を Advice に含める
+- **マトリクスの鮮度保証**: 双方向の乖離検出テスト (permissions_test.go)。順方向 = パッケージソースから `.clients.<SVC>.<Method>(` を抽出し、対応アクションが表に無ければ失敗。逆方向 = 表のアクションが抽出されず `implicitActions` (ResumeSession = vendored plugin 内部 / PassRole = EC2 が要求 / GetCallerIdentity = awsx 直呼び) にも無ければ失敗。暗黙宣言自体も「抽出されるようになったら失敗」で陳腐化を検出。requirements.md 付録 A は生成ブロックで、表とドキュメントの不一致も CI が検出する (`NAKAMA_UPDATE_PERMISSIONS_DOCS=1` で再生成)
 - **テスト容易性**: 検出・ACL・IP・tunnel 一覧/状態・profile を `DoctorOptions` の unexported フックで差し替え、ネットワークなしで全分岐を検証する
 
 ### 8.16 プロビジョニング宣言 (`create --setup` / `--dotfiles` / `--preset`、Issue #54)

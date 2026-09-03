@@ -26,7 +26,7 @@
 - 利用 AZ: `ap-northeast-1a` / `ap-northeast-1c` (`apne1-az3` は CloudFront VPC Origins 非対応のため除外)
 - 認証: `nakama aws login` (ネイティブ sign-in、aws CLI 不要。ADR 0016)、または AWS SSO / Profile / 環境変数など STS GetCallerIdentity が通る任意の資格情報。既存の `aws login` セッション (`~/.aws/config` の login_session + `~/.aws/login/cache/`) もネイティブに解決・リフレッシュされる
 - `nakama aws login` 利用時の追加 IAM 要件 (**呼び出し側プリンシパル**): IAM ユーザー/ロールには AWS 管理ポリシー `SignInLocalDevelopmentAccess` が必要 (アカウント root は不要)
-- 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用), Resource Groups Tagging API
+- 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用), Resource Groups Tagging API。機能別のアクション粒度の一覧は [付録 A. 機能別 IAM 権限マトリクス](#付録-a-機能別-iam-権限マトリクス) を参照 (現在の資格情報での可否は `nakama aws doctor` が表示する)
 - `connect` 利用時の追加 IAM 権限 (**呼び出し側プリンシパル**): `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession`。接続先 EC2 の instance role 側は既存 `AmazonSSMManagedInstanceCore` で充足
 - `connect` 利用時のクライアント前提: 追加バイナリ不要 (plugin を nakama 本体に取り込むため。詳細は design.md §12)
 - ビルド環境: Go 1.23+
@@ -71,7 +71,7 @@
 | 接続 | `nakama aws ssh proxy <n> [--port <p>]` | `AWS-StartSSHSession` のセッションを開き自プロセスの stdin/stdout を中継する (OpenSSH の `ProxyCommand` 用)。1 プロセス 1 セッションで、再接続は ssh クライアントの責務。デスクトップ VS Code Remote-SSH / JetBrains Gateway / scp / rsync が利用可能になる (ADR 0019) |
 | 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
 | 認証 | `nakama aws login [--remote] [--name <alias>]` | AWS Management Console のセッションを使いネイティブにサインイン (OAuth 2.0 authorization code + PKCE + DPoP、aws CLI 不要。ADR 0016)。ブラウザ起動 (不可なら URL 表示で待機継続) → 127.0.0.1 のコールバックで認可コード受領 (10 分タイムアウト、state 検証) → AWS CLI 互換キャッシュ (`~/.aws/login/cache/`) へ保存 → STS で識別確認 → nakama profile へ**自動 save & load**。`--remote` は SSH/headless 向けにブラウザの検証コード貼り付けで完了。`~/.aws/config` は変更しない。要 `SignInLocalDevelopmentAccess` ポリシー |
-| 診断 | `nakama aws doctor [-o json]` | 環境を読み取り専用で一括診断し、各項目を ok / warn / fail + 対処案内で表示する: プロキシ解決 (ADR 0015 の解決器) と AWS 到達性、TLS インスペクション検出 (ADR 0018 の検出エンジン再利用)、資格情報の解決元 (アカウント / identity / active profile)、自 IP の WAF 許可リスト登録、`ssm:StartSession` 等の権限 (SimulatePrincipalPolicy)、ローカル tunnel 状態。fail があれば終了コード非 0。資格情報未解決でもローカル診断は継続。機微情報は出力しない |
+| 診断 | `nakama aws doctor [-o json]` | 環境を読み取り専用で一括診断し、各項目を ok / warn / fail + 対処案内で表示する: プロキシ解決 (ADR 0015 の解決器) と AWS 到達性、TLS インスペクション検出 (ADR 0018 の検出エンジン再利用)、資格情報の解決元 (アカウント / identity / active profile)、自 IP の WAF 許可リスト登録、機能別の IAM 権限充足 (付録 A のマトリクスを SimulatePrincipalPolicy で判定し、機能ごとに ok / 不足アクションを表示)、ローカル tunnel 状態。fail があれば終了コード非 0。資格情報未解決でもローカル診断は継続。機微情報は出力しない |
 | CLI 支援 | `nakama aws cli shell [--shell <path>]` | **Windows 専用**。OS のプロキシ設定 (WinHTTP/PAC) を自動解決し、TLS インスペクション検出時は OS ストア検証済みの企業 CA チェーン + Amazon Trust Services ルートを `AWS_CA_BUNDLE` 用 PEM に書き出した上で、`HTTP(S)_PROXY`/`NO_PROXY`/`AWS_CA_BUNDLE` を注入したサブシェル (親シェルと同種を自動判別) を起動する。exit で復帰し、親シェル・レジストリ・`~/.aws/config` に恒久的変更を残さない。NTLM/Negotiate 認証プロキシは検出して回避策を案内。他 OS では Windows 専用である旨を表示してエラー (ADR 0018) |
 | プロファイル | `nakama aws profile save [--name <alias>]` | 現在の `aws login` セッション (login_session 識別子 + STS identity) をアカウント ID キーで nakama のレジストリ (`~/.config/nakama`) に保存。active profile は無視して「今 login しているもの」を保存し、同一アカウントの再 save は上書き。alias 省略時はアカウント ID。login_session が無い資格情報 (SSO・アクセスキー等) はエラー (ADR 0011) |
 | プロファイル | `nakama aws profile list` | 保存済みプロファイルを一覧 (ACTIVE / ACCOUNT / ALIAS / IDENTITY / SAVED / STATUS)。STATUS はネイティブのトークンキャッシュ読取り+リフレッシュ (internal/signin) の成否による best-effort 判定 (valid / expired / unknown) |
@@ -185,11 +185,45 @@
 14. (手動 E2E) TLS インスペクションを行う企業プロキシ配下の Windows で `nakama aws cli shell` を実行すると、プロキシ・CA・疎通確認のバナーが表示されてサブシェルが開き、その中で `aws s3 ls` が追加設定なしで成功する。`exit` 後、親シェル・レジストリ・`~/.aws/config` に変更が残らない。Windows 以外の OS では Windows 専用オプションである案内を表示して終了する
 15. `nakama aws ssh setup <n>` 実行後、表示された `Include` 行を `~/.ssh/config` に追加すると `ssh nakama-<n>` で ubuntu としてログインでき、デスクトップ版 VS Code の Remote-SSH からも同じ Host 名で接続できる (手動 E2E)。同コマンドの再実行で `authorized_keys` に重複エントリが増えない。`~/.ssh/config` は変更されない。sshd 不在・権限不足時は原因の分かるエラーになる
 
-16. `nakama aws doctor` が 6 項目 (proxy / tls / credentials / waf-allowlist / ssm-permission / tunnels) を表示し、正常環境では fail が 0 で終了コード 0 になる。資格情報が解決できない環境でも proxy / tls の診断結果が表示され、AWS 依存項目は skip 表示になる。プロキシ認証要求・エンドポイント未到達・`ssm:StartSession` 拒否は fail、WAF 未登録・権限検証不能・dead な転送は warn になる。実行によって AWS リソースとローカル設定が一切変更されない
+16. `nakama aws doctor` が固定項目 (proxy / tls / credentials / waf-allowlist / tunnels) に加えて機能別の capability 行 (付録 A の Simulate 対象機能ごとに 1 行) を表示し、全権限がある環境では fail が 0 で終了コード 0 になる。資格情報が解決できない環境でも proxy / tls の診断結果が表示され、AWS 依存項目は skip 表示になる。プロキシ認証要求・エンドポイント未到達は fail、機能に必要なアクションの不足 (不足分を detail に列挙)・WAF 未登録・権限検証不能 (`iam:SimulatePrincipalPolicy` なし)・dead な転送は warn になる。判定は Resource `*` でのシミュレーションのためリソース限定ポリシーでは偽陰性があり得る (その旨を対処案内に含める)。実行によって AWS リソースとローカル設定が一切変更されない
 
 17. `nakama aws create --preset kiro` の完了後、インスタンス上に kiro-cli が導入され Kiro Crew の gateway が systemd で稼働している (Issue #20 の内容)。`--setup ./s.sh` はスクリプトが ubuntu として実行され、`--dotfiles <URL>` はリポジトリが `~/.dotfiles` に配置されて慣例どおり適用される。いずれかのステップが失敗しても create は成功扱いで終了し、警告・ログパス・再実行コマンドが表示される。`nakama aws setup rerun <n>` で同じステップを再実行できる (手動 E2E)
 
 18. `nakama aws create --name <n> --bare` は CloudFront distribution / VPC Origin / パスワードを作らずに完了し (deploy 待ちがないため通常より短時間)、`list` で TYPE=BARE と表示される。`open <n>` は `ssh setup` / `connect` の案内を伴うエラーになる。`connect` / `ssh setup` / `tunnel` / `backup` / `update` (OS のみ) が動作し、`delete <n>` が CloudFront 関連の削除を試みずに完了する (手動 E2E)
+
+19. 付録 A の権限マトリクスは `internal/service/permissions.go` を唯一の情報源とし、実装との乖離が双方向のテストで検出される: 実装が呼ぶ AWS API のアクションが表に無ければ失敗し、表にあるが実装から抽出されず暗黙宣言にも無いアクションも失敗する。docs の表は生成ブロックであり、コードと不一致なら CI が失敗する
+
+## 付録 A. 機能別 IAM 権限マトリクス
+
+呼び出し側プリンシパルに必要な IAM アクションの機能別一覧。`internal/service/permissions.go` の表から生成される (受け入れ基準 19)。現在の資格情報でどの機能が使えるかは `nakama aws doctor` が同じ表に基づいて判定・表示する。
+
+- インスタンス側 (instance role) の権限はこの表の対象外: `init` が付与する `AmazonSSMManagedInstanceCore` で充足する
+- doctor の判定は Resource `*` でのポリシーシミュレーションであり、リソース ARN を限定した allow ポリシーは「不足」と表示され得る (偽陰性)
+
+<!-- BEGIN GENERATED: permissions-matrix -->
+<!-- このブロックは internal/service/permissions.go から生成されます。直接編集せず、
+     NAKAMA_UPDATE_PERMISSIONS_DOCS=1 go test ./internal/service/ -run TestPermissionsDocsSection
+     で再生成してください。 -->
+| 機能 | コマンド | 必要な IAM アクション | 備考 |
+|---|---|---|---|
+| all commands | 資格情報を使う全コマンド | `sts:GetCallerIdentity` | 資格情報の疎通確認。IAM ポリシーで拒否できない操作のため doctor のシミュレーション対象外 |
+| init | nakama aws init | `ec2:AssociateRouteTable`, `ec2:AttachInternetGateway`, `ec2:CreateInternetGateway`, `ec2:CreateRoute`, `ec2:CreateRouteTable`, `ec2:CreateSubnet`, `ec2:CreateTags`, `ec2:CreateVpc`, `ec2:DeleteNatGateway`, `ec2:DescribeAddresses`, `ec2:DescribeAvailabilityZones`, `ec2:DescribeInternetGateways`, `ec2:DescribeNatGateways`, `ec2:DescribeRouteTables`, `ec2:DescribeSubnets`, `ec2:DescribeVpcs`, `ec2:ModifySubnetAttribute`, `ec2:ModifyVpcAttribute`, `ec2:ReleaseAddress`, `ec2:ReplaceRoute`, `iam:AddRoleToInstanceProfile`, `iam:AttachRolePolicy`, `iam:CreateInstanceProfile`, `iam:CreateRole`, `iam:GetInstanceProfile`, `iam:GetRole`, `iam:PutRolePolicy`, `ssm:PutParameter`, `wafv2:CreateIPSet`, `wafv2:CreateWebACL`, `wafv2:ListIPSets`, `wafv2:ListWebACLs` | 冪等。既存 NAT Gateway の削除と EIP 解放を含む |
+| acl | nakama aws acl add / list / delete | `ssm:DeleteParameter`, `ssm:GetParametersByPath`, `ssm:PutParameter`, `wafv2:GetIPSet`, `wafv2:UpdateIPSet` |  |
+| create | nakama aws create | `cloudfront:CreateDistribution`, `cloudfront:CreateVpcOrigin`, `cloudfront:GetDistribution`, `cloudfront:GetVpcOrigin`, `cloudfront:TagResource`, `ec2:AuthorizeSecurityGroupIngress`, `ec2:CreateNetworkInterface`, `ec2:CreateSecurityGroup`, `ec2:CreateTags`, `ec2:DescribeInstanceTypes`, `ec2:DescribeInstances`, `ec2:DescribeManagedPrefixLists`, `ec2:DescribeNetworkInterfaces`, `ec2:DescribeSecurityGroups`, `ec2:DescribeSubnets`, `ec2:ModifyInstanceAttribute`, `ec2:RunInstances`, `ec2:StartInstances`, `ec2:StopInstances`, `iam:PassRole`, `ssm:GetCommandInvocation`, `ssm:GetParameter`, `ssm:PutParameter`, `ssm:SendCommand` | --bare は cloudfront:* を使わない。NAT インスタンスの初回作成を含む |
+| create --with-admin / --with-role | nakama aws create --with-admin / --with-role | `iam:AddRoleToInstanceProfile`, `iam:AttachRolePolicy`, `iam:CreateInstanceProfile`, `iam:CreateRole`, `iam:GetInstanceProfile`, `iam:GetRole`, `iam:ListAttachedRolePolicies`, `iam:ListInstanceProfilesForRole`, `iam:SimulatePrincipalPolicy` | create 本体の権限に追加で必要 (ADR 0010 の事前検証を含む) |
+| list / info | nakama aws list / info | `ec2:DescribeInstances`, `ssm:GetParameter` |  |
+| open | nakama aws open | `ec2:DescribeInstances`, `ssm:GetParameter`, `ssm:GetParametersByPath`, `wafv2:GetIPSet` | wafv2:GetIPSet と ssm:GetParametersByPath は許可リスト未登録の 警告表示のためだけに使い、読めない場合は警告を出さずに続行する |
+| connect | nakama aws connect | `ec2:DescribeInstances`, `ssm:GetParameter`, `ssm:ResumeSession`, `ssm:StartSession`, `ssm:TerminateSession` |  |
+| ssh | nakama aws ssh setup / proxy | `ec2:DescribeInstances`, `ssm:GetCommandInvocation`, `ssm:GetParameter`, `ssm:ResumeSession`, `ssm:SendCommand`, `ssm:StartSession`, `ssm:TerminateSession` | setup の公開鍵投入に SendCommand を使う |
+| tunnel | nakama aws tunnel | `ec2:DescribeInstances`, `ssm:GetCommandInvocation`, `ssm:GetParameter`, `ssm:ResumeSession`, `ssm:SendCommand`, `ssm:StartSession`, `ssm:TerminateSession` | suggest の listen ポート調査に SendCommand を使う。status は資格情報不要 |
+| start / stop | nakama aws start / stop | `ec2:AuthorizeSecurityGroupIngress`, `ec2:CreateSecurityGroup`, `ec2:CreateTags`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ec2:ModifyInstanceAttribute`, `ec2:RunInstances`, `ec2:StartInstances`, `ec2:StopInstances`, `iam:PassRole`, `ssm:GetParameter` | NAT インスタンスの電源連動 (初回は作成) を含む |
+| edit | nakama aws edit | `ec2:AuthorizeSecurityGroupIngress`, `ec2:CreateSecurityGroup`, `ec2:CreateTags`, `ec2:DescribeInstanceTypes`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVolumes`, `ec2:ModifyInstanceAttribute`, `ec2:ModifyVolume`, `ec2:RunInstances`, `ec2:StartInstances`, `ec2:StopInstances`, `iam:PassRole`, `ssm:GetCommandInvocation`, `ssm:GetParameter`, `ssm:SendCommand` |  |
+| update / setup rerun | nakama aws update / setup rerun | `ec2:AuthorizeSecurityGroupIngress`, `ec2:CreateSecurityGroup`, `ec2:CreateSnapshot`, `ec2:CreateTags`, `ec2:DeleteSnapshot`, `ec2:DeleteTags`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ec2:DescribeSnapshots`, `ec2:DescribeVolumes`, `ec2:ModifyInstanceAttribute`, `ec2:RebootInstances`, `ec2:RunInstances`, `ec2:StartInstances`, `ec2:StopInstances`, `iam:PassRole`, `ssm:GetCommandInvocation`, `ssm:GetParameter`, `ssm:SendCommand` | update は更新前の自動バックアップを取得する |
+| backup | nakama aws backup create / list / note / delete | `ec2:CreateSnapshot`, `ec2:CreateTags`, `ec2:DeleteSnapshot`, `ec2:DeleteTags`, `ec2:DescribeInstances`, `ec2:DescribeSnapshots`, `ec2:DescribeVolumes`, `ssm:GetParameter` |  |
+| restore | nakama aws restore | `ec2:AttachVolume`, `ec2:AuthorizeSecurityGroupIngress`, `ec2:CreateSecurityGroup`, `ec2:CreateTags`, `ec2:CreateVolume`, `ec2:DeleteVolume`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ec2:DescribeSnapshots`, `ec2:DescribeVolumes`, `ec2:DetachVolume`, `ec2:ModifyInstanceAttribute`, `ec2:RunInstances`, `ec2:StartInstances`, `ec2:StopInstances`, `iam:PassRole`, `ssm:GetParameter` |  |
+| delete | nakama aws delete | `cloudfront:DeleteDistribution`, `cloudfront:DeleteVpcOrigin`, `cloudfront:GetDistributionConfig`, `cloudfront:GetVpcOrigin`, `cloudfront:UpdateDistribution`, `ec2:AuthorizeSecurityGroupIngress`, `ec2:CreateSecurityGroup`, `ec2:CreateTags`, `ec2:DeleteNetworkInterface`, `ec2:DeleteSecurityGroup`, `ec2:DeleteVolume`, `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVolumes`, `ec2:ModifyInstanceAttribute`, `ec2:RunInstances`, `ec2:StartInstances`, `ec2:StopInstances`, `ec2:TerminateInstances`, `iam:PassRole`, `ssm:DeleteParameters`, `ssm:GetParameter`, `ssm:GetParametersByPath` | --bare で作成したインスタンスは cloudfront:* を使わない |
+| doctor | nakama aws doctor | `iam:SimulatePrincipalPolicy`, `ssm:GetParametersByPath`, `wafv2:GetIPSet` | 読み取り専用。iam:SimulatePrincipalPolicy が無い場合も capability 判定が warn になるだけで他の診断は動く |
+<!-- END GENERATED: permissions-matrix -->
 
 ## 9. リスク・オープン事項
 
