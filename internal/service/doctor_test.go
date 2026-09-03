@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,19 +18,37 @@ import (
 )
 
 // fakeDoctorIAM answers SimulatePrincipalPolicy with a scripted result.
+// pageSize > 0 truncates each response and hands out a Marker, so the
+// pagination loop in diagnoseCapabilities is exercised.
 type fakeDoctorIAM struct {
 	awsx.IAMAPI
 
-	denied []string
-	err    error
+	denied   []string
+	err      error
+	pageSize int
+	calls    int
 }
 
 func (f *fakeDoctorIAM) SimulatePrincipalPolicy(_ context.Context, in *iam.SimulatePrincipalPolicyInput, _ ...func(*iam.Options)) (*iam.SimulatePrincipalPolicyOutput, error) {
+	f.calls++
 	if f.err != nil {
 		return nil, f.err
 	}
+	start := 0
+	if in.Marker != nil {
+		var err error
+		if start, err = strconv.Atoi(*in.Marker); err != nil {
+			return nil, fmt.Errorf("bad marker %q", *in.Marker)
+		}
+	}
+	end := len(in.ActionNames)
 	out := &iam.SimulatePrincipalPolicyOutput{}
-	for _, a := range in.ActionNames {
+	if f.pageSize > 0 && start+f.pageSize < end {
+		end = start + f.pageSize
+		out.IsTruncated = true
+		out.Marker = aws.String(strconv.Itoa(end))
+	}
+	for _, a := range in.ActionNames[start:end] {
 		decision := iamtypes.PolicyEvaluationDecisionTypeAllowed
 		for _, d := range f.denied {
 			if d == a {
@@ -80,7 +100,7 @@ func TestDiagnoseCredentialFailureStillRunsLocalChecks(t *testing.T) {
 	if !strings.Contains(cred.Advice, "nakama aws login") {
 		t.Errorf("credentials advice = %q, want it to point at login", cred.Advice)
 	}
-	for _, name := range []string{"waf-allowlist", "ssm-permission"} {
+	for _, name := range []string{"waf-allowlist", "capabilities"} {
 		if got := checkByName(t, rep, name).Status; got != CheckSkip {
 			t.Errorf("%s status = %q, want skip", name, got)
 		}
@@ -242,25 +262,75 @@ func TestDiagnoseCredentialsReportsIdentityAndProfile(t *testing.T) {
 	}
 }
 
-func TestDiagnoseSSMPermissionDenied(t *testing.T) {
+func TestDiagnoseCapabilityDenied(t *testing.T) {
+	// Denying ssm:StartSession must break exactly the session-based
+	// features and leave the others ok — and as warn, not fail: a
+	// deliberately scoped principal is not a broken environment.
 	opts := doctorAWSOpts(t, nil, "203.0.113.10", nil, &fakeDoctorIAM{denied: []string{"ssm:StartSession"}})
 	rep := Diagnose(context.Background(), opts)
-	c := checkByName(t, rep, "ssm-permission")
-	if c.Status != CheckFail {
-		t.Errorf("status = %q, want fail", c.Status)
+	for _, feature := range []string{"connect", "ssh", "tunnel"} {
+		c := checkByName(t, rep, "capability: "+feature)
+		if c.Status != CheckWarn {
+			t.Errorf("capability %s = %q, want warn", feature, c.Status)
+		}
+		if !strings.Contains(c.Detail, "ssm:StartSession") {
+			t.Errorf("capability %s detail = %q, want the missing action", feature, c.Detail)
+		}
 	}
-	if !strings.Contains(c.Detail, "ssm:StartSession") {
-		t.Errorf("detail = %q, want the denied action", c.Detail)
+	for _, feature := range []string{"list / info", "backup", "acl"} {
+		if c := checkByName(t, rep, "capability: "+feature); c.Status != CheckOK {
+			t.Errorf("capability %s = %q, want ok (unrelated to the denied action)", feature, c.Status)
+		}
 	}
-	if rep.Fails == 0 {
-		t.Error("a denied action must count as a failure (non-zero exit)")
+	if rep.Fails != 0 {
+		t.Errorf("Fails = %d, want 0: missing capabilities are warn, not fail", rep.Fails)
 	}
 }
 
-func TestDiagnoseSSMPermissionUnverifiable(t *testing.T) {
+func TestDiagnoseCapabilitiesAllAllowed(t *testing.T) {
+	opts := doctorAWSOpts(t, nil, "203.0.113.10", nil, &fakeDoctorIAM{})
+	rep := Diagnose(context.Background(), opts)
+	var capabilityRows int
+	for _, c := range rep.Checks {
+		if strings.HasPrefix(c.Name, "capability: ") {
+			capabilityRows++
+			if c.Status != CheckOK {
+				t.Errorf("%s = %q (%s), want ok", c.Name, c.Status, c.Detail)
+			}
+		}
+	}
+	var wantRows int
+	for _, row := range featurePermissionMatrix() {
+		if row.Simulate {
+			wantRows++
+		}
+	}
+	if capabilityRows != wantRows {
+		t.Errorf("report has %d capability rows, want %d (one per simulated feature)", capabilityRows, wantRows)
+	}
+}
+
+func TestDiagnoseCapabilitiesPagination(t *testing.T) {
+	// A tiny page size forces the Marker loop; every action must still
+	// be evaluated (nothing may be reported missing just because it
+	// arrived on a later page).
+	fake := &fakeDoctorIAM{pageSize: 3}
+	opts := doctorAWSOpts(t, nil, "203.0.113.10", nil, fake)
+	rep := Diagnose(context.Background(), opts)
+	for _, c := range rep.Checks {
+		if strings.HasPrefix(c.Name, "capability: ") && c.Status != CheckOK {
+			t.Errorf("%s = %q (%s), want ok across pagination", c.Name, c.Status, c.Detail)
+		}
+	}
+	if fake.calls < 2 {
+		t.Errorf("fake was called %d times; pagination was not exercised", fake.calls)
+	}
+}
+
+func TestDiagnoseCapabilitiesUnverifiable(t *testing.T) {
 	opts := doctorAWSOpts(t, nil, "203.0.113.10", nil, &fakeDoctorIAM{err: errors.New("AccessDenied: iam:SimulatePrincipalPolicy")})
 	rep := Diagnose(context.Background(), opts)
-	c := checkByName(t, rep, "ssm-permission")
+	c := checkByName(t, rep, "capabilities")
 	if c.Status != CheckWarn {
 		t.Errorf("status = %q, want warn (the check itself is optional)", c.Status)
 	}

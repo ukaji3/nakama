@@ -26,7 +26,8 @@ with concrete advice:
                   and whether the OS trust store accepts it
   credentials     which account and identity nakama operates as
   waf-allowlist   whether this machine's public IP may reach code-server
-  ssm-permission  whether the caller may use connect / tunnel / ssh
+  capability: *   one line per feature (create, connect, backup, ...)
+                  stating whether the caller's IAM policies allow it
   tunnels         locally recorded tunnels and dead forwards
 
 The command is strictly read-only: it changes no AWS resource and no
