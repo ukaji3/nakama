@@ -200,7 +200,10 @@ func TestPermissionsDocsSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", permissionsDocPath, err)
 	}
-	doc := string(raw)
+	// Normalize line endings: the Windows CI runner checks the repo out
+	// with CRLF (no .gitattributes pins the docs), which must not fail
+	// the content comparison.
+	doc := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	begin := strings.Index(doc, permissionsDocBegin)
 	end := strings.Index(doc, permissionsDocEnd)
 	if begin < 0 || end < 0 || end < begin {
