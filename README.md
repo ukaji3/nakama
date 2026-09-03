@@ -70,7 +70,7 @@ make build
 
 - リージョン: `ap-northeast-1` (東京) 固定
 - 認証: `nakama aws login` によるネイティブサインイン (**aws CLI 不要**、要 `SignInLocalDevelopmentAccess` 管理ポリシー。ADR 0016)、または SSO / Profile / 環境変数など任意の AWS 資格情報
-- 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用)
+- 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用)。機能別の詳細は [docs/requirements.md の付録 A](docs/requirements.md#付録-a-機能別-iam-権限マトリクス)、現在の資格情報での可否は `nakama aws doctor`
 - `connect` 利用時は呼び出し側プリンシパルに `ssm:StartSession` 等が追加で必要
 - ビルド環境: Go 1.23+ (クロスコンパイル可: linux / darwin / windows)
 - 実行環境 (クライアント OS): Linux / macOS / Windows
@@ -251,7 +251,15 @@ nakama aws doctor            # 各項目を ok / warn / fail + 対処案内で�
 nakama aws doctor -o json    # サポート依頼への添付用
 ```
 
-`doctor` は nakama が必要とするものを一括で点検します: プロキシ解決 (環境変数 / Windows の WinHTTP・PAC) と AWS 到達性、TLS インスペクションの有無と OS 証明書ストアでの検証結果、資格情報の解決元 (アカウント・identity・active profile)、自分のグローバル IP が WAF 許可リストに載っているか、`connect` / `tunnel` / `ssh` に必要な権限 (`ssm:StartSession` 等)、ローカルに記録された tunnel の状態。
+`doctor` は nakama が必要とするものを一括で点検します: プロキシ解決 (環境変数 / Windows の WinHTTP・PAC) と AWS 到達性、TLS インスペクションの有無と OS 証明書ストアでの検証結果、資格情報の解決元 (アカウント・identity・active profile)、自分のグローバル IP が WAF 許可リストに載っているか、**機能別の IAM 権限の充足** (`create` / `connect` / `backup` など機能ごとに 1 行で ok / 不足アクションを表示)、ローカルに記録された tunnel の状態。
+
+```
+capability: list / info        ok      all 2 actions allowed
+capability: connect            ok      all 5 actions allowed
+capability: create             warn    missing: cloudfront:CreateDistribution, ...
+```
+
+機能別に必要なアクションの一覧は [docs/requirements.md の付録 A](docs/requirements.md#付録-a-機能別-iam-権限マトリクス) を参照してください。権限判定には呼び出し元に `iam:SimulatePrincipalPolicy` が必要です (無い場合はその旨が warn で表示され、他の診断はそのまま動きます)。判定は Resource `*` でのシミュレーションのため、リソース限定ポリシーでは実際には使えるのに不足と表示されることがあります。
 
 **完全に読み取り専用**で、AWS リソースもローカル設定も一切変更しません。資格情報・トークン・パスワードは出力しません。fail が 1 つでもあれば終了コードが非 0 になります (資格情報が解決できない場合もプロキシ・TLS のローカル診断は実行されます)。
 
