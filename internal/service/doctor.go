@@ -94,9 +94,10 @@ type DoctorOptions struct {
 // Diagnose runs the read-only environment diagnosis behind
 // `nakama aws doctor`: proxy resolution and TLS interception (reusing
 // the cliproxy detector from ADR 0018), credential resolution, WAF
-// allowlist membership for this machine's public IP, the ssm:StartSession
-// permission, and the local tunnel state. It performs no mutation of any
-// kind and never returns credentials, tokens or passwords in the report.
+// allowlist membership for this machine's public IP, one capability
+// line per feature derived from featurePermissionMatrix (permissions.go),
+// and the local tunnel state. It performs no mutation of any kind and
+// never returns credentials, tokens or passwords in the report.
 func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 	rep := &DoctorReport{}
 	det := diagnoseProxyAndTLS(ctx, opts, rep)
@@ -109,7 +110,7 @@ func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 			Detail: fmt.Sprintf("could not resolve AWS credentials: %v", opts.ClientErr),
 			Advice: "run `nakama aws login` (or `aws login`), or select a saved profile with `nakama aws profile load <name>`",
 		})
-		for _, name := range []string{"waf-allowlist", "ssm-permission"} {
+		for _, name := range []string{"waf-allowlist", "capabilities"} {
 			rep.add(DoctorCheck{Name: name, Status: CheckSkip, Detail: "skipped: no AWS credentials"})
 		}
 		diagnoseTunnels(ctx, opts, rep)
@@ -118,7 +119,7 @@ func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 
 	diagnoseCredentials(opts, rep)
 	diagnoseWAF(ctx, opts, rep)
-	diagnoseSSMPermission(ctx, opts, rep)
+	diagnoseCapabilities(ctx, opts, rep)
 	diagnoseTunnels(ctx, opts, rep)
 	return rep
 }
@@ -274,56 +275,84 @@ func aclEntryCoversIP(cidr, ip string) bool {
 	return addr != nil && network.Contains(addr)
 }
 
-// diagnoseSSMPermission checks ssm:StartSession for the caller with
-// SimulatePrincipalPolicy (the same mechanism as the create preflight,
-// ADR 0010). A missing iam:SimulatePrincipalPolicy permission is a warn,
-// not a failure: the check itself is optional.
-func diagnoseSSMPermission(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
+// simulateChunkSize bounds the ActionNames per SimulatePrincipalPolicy
+// request; results within a request are still paginated via Marker.
+const simulateChunkSize = 50
+
+// diagnoseCapabilities reports one line per nakama feature stating
+// whether the caller's IAM policies allow every action the feature
+// needs. The feature-to-actions table lives in permissions.go (the
+// single source of truth shared with the docs). Missing permissions are
+// warn, not fail: a deliberately scoped principal is a valid setup, and
+// fail stays reserved for a broken environment.
+func diagnoseCapabilities(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 	sourceARN, err := policySourceARNFromCaller(opts.Clients.CallerARN)
 	if err != nil {
 		rep.add(DoctorCheck{
-			Name:   "ssm-permission",
+			Name:   "capabilities",
 			Status: CheckWarn,
 			Detail: fmt.Sprintf("could not derive a policy source from the caller ARN: %v", err),
 		})
 		return
 	}
-	actions := []string{"ssm:StartSession", "ssm:TerminateSession", "ssm:SendCommand"}
-	out, err := opts.Clients.IAM.SimulatePrincipalPolicy(ctx, &iam.SimulatePrincipalPolicyInput{
-		PolicySourceArn: aws.String(sourceARN),
-		ActionNames:     actions,
-		ResourceArns:    []string{"*"},
-	})
-	if err != nil {
-		rep.add(DoctorCheck{
-			Name:   "ssm-permission",
-			Status: CheckWarn,
-			Detail: fmt.Sprintf("could not verify: %v", err),
-			Advice: "the caller needs iam:SimulatePrincipalPolicy for this check only; connect/tunnel/ssh may still work",
-		})
-		return
-	}
-	var denied []string
-	for _, r := range out.EvaluationResults {
-		if r.EvalDecision != iamtypes.PolicyEvaluationDecisionTypeAllowed {
-			denied = append(denied, aws.ToString(r.EvalActionName))
+	union := simulatedActionUnion()
+	allowed := make(map[string]bool, len(union))
+	for start := 0; start < len(union); start += simulateChunkSize {
+		chunk := union[start:min(start+simulateChunkSize, len(union))]
+		var marker *string
+		for {
+			out, err := opts.Clients.IAM.SimulatePrincipalPolicy(ctx, &iam.SimulatePrincipalPolicyInput{
+				PolicySourceArn: aws.String(sourceARN),
+				ActionNames:     chunk,
+				ResourceArns:    []string{"*"},
+				Marker:          marker,
+			})
+			if err != nil {
+				rep.add(DoctorCheck{
+					Name:   "capabilities",
+					Status: CheckWarn,
+					Detail: fmt.Sprintf("could not verify: %v", err),
+					Advice: "the caller needs iam:SimulatePrincipalPolicy for this check only; the features themselves may still work",
+				})
+				return
+			}
+			for _, r := range out.EvaluationResults {
+				if r.EvalDecision == iamtypes.PolicyEvaluationDecisionTypeAllowed {
+					allowed[aws.ToString(r.EvalActionName)] = true
+				}
+			}
+			if !out.IsTruncated {
+				break
+			}
+			marker = out.Marker
 		}
 	}
-	if len(denied) > 0 {
-		sort.Strings(denied)
+	for _, row := range featurePermissionMatrix() {
+		if !row.Simulate {
+			continue
+		}
+		var missing []string
+		for _, a := range row.Actions {
+			if !allowed[a] {
+				missing = append(missing, a)
+			}
+		}
+		name := "capability: " + row.Feature
+		if len(missing) == 0 {
+			rep.add(DoctorCheck{
+				Name:   name,
+				Status: CheckOK,
+				Detail: fmt.Sprintf("all %d actions allowed", len(row.Actions)),
+			})
+			continue
+		}
 		rep.add(DoctorCheck{
-			Name:   "ssm-permission",
-			Status: CheckFail,
-			Detail: "denied for this principal: " + strings.Join(denied, ", "),
-			Advice: "grant these actions to use connect / tunnel / ssh / update (see 前提条件 in the README)",
+			Name:   name,
+			Status: CheckWarn,
+			Detail: "missing: " + strings.Join(missing, ", "),
+			Advice: `grant the listed actions to use this feature (the simulation evaluates Resource "*"; resource-scoped allow policies can be reported as missing even though the real call succeeds)`,
 		})
-		return
 	}
-	rep.add(DoctorCheck{
-		Name:   "ssm-permission",
-		Status: CheckOK,
-		Detail: "allowed: " + strings.Join(actions, ", "),
-	})
 }
 
 // diagnoseTunnels reports locally recorded tunnels and dead forwards.
