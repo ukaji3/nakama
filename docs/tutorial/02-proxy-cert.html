@@ -17,7 +17,7 @@
 
 <div class="layout">
 <nav class="toc" aria-label="章の一覧">
-  <h2>目次</h2>
+  <p class="toc-label" id="toc-chapters">目次</p>
   <ol>
     <li><a href="index.html">はじめに</a></li>
     <li><a href="01-install.html">インストールとサインイン</a></li>
@@ -29,7 +29,7 @@
     <li><a href="07-troubleshoot.html">困ったときは</a></li>
     <li><a href="08-reference.html">コマンド早見表</a></li>
   </ol>
-  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <p class="toc-label" style="margin-top:1.2rem">この章の内容</p>
   <ol>
     <li><a href="#basics">暗号化と証明書のしくみ</a></li>
     <li><a href="#inspection">監査プロキシがあると何が変わるか</a></li>
@@ -44,13 +44,20 @@
 
 <main id="main">
 <h1>第 2 章 会社のプロキシと証明書</h1>
-<p class="lead">会社のネットワークから使うと「証明書エラー」に出会うことがあります。この章では、なぜそれが起きるのかをたとえを使って説明し、nakama での対処を示します。<strong>自宅の回線しか使わない場合は、この章は読み飛ばして<a href="03-init.html">第 3 章</a>へ進んでも構いません。</strong></p>
+<p class="lead">会社のネットワークから使うと「証明書エラー」に出会うことがあります。この章では、なぜそれが起きるのかをたとえを使って説明し、nakama での対処を示します。</p>
+
+<div class="callout note" role="note">
+  <span class="title">自分の環境に「監査プロキシ」があるかを先に調べる</span>
+  <p>次を実行してください (サインイン前でも動きます)。</p>
+  <pre><code>nakama aws doctor</code></pre>
+  <p><code>tls</code> の行が <code>no TLS interception detected</code> なら監査プロキシは無く、この章の 5 節以降は不要です (1〜3 節はしくみの説明なので、読むと後の章が分かりやすくなります)。<code>TLS interception detected</code> と出た場合は、この章をひととおり読んでください。</p>
+</div>
 
 <h2 id="basics">1. 暗号化と証明書のしくみ (たとえで理解する)</h2>
 <p>ウェブの通信 (HTTPS) は、手紙のやりとりにたとえると分かりやすくなります。</p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>たとえ</th><th>実際の用語</th><th>役割</th></tr></thead>
+  <thead><tr><th scope="col">たとえ</th><th scope="col">実際の用語</th><th scope="col">役割</th></tr></thead>
   <tbody>
     <tr><td>中身が読めない封筒</td><td>暗号化 (TLS)</td><td>途中の誰にも中身を読ませない</td></tr>
     <tr><td>相手が提示する身分証</td><td>証明書</td><td>「私は本当に amazonaws.com です」の証明</td></tr>
@@ -62,15 +69,15 @@
 <p>通信するソフトは、相手の身分証 (証明書) を見て、その発行元が<strong>自分の持っている名簿に載っているか</strong>を確かめます。載っていなければ「相手が本物か分からない」と判断して接続を中止します。これが<strong>証明書エラー</strong>です。</p>
 
 <h2 id="inspection">2. 監査プロキシがあると何が変わるか</h2>
-<p>多くの会社では、情報漏えいやウイルスを防ぐために、外部との通信を<strong>いったん開いて中身を検査する</strong>装置を置いています。これを TLS インスペクション (監査プロキシ、MITM プロキシ) と呼びます。</p>
+<p>多くの会社では、情報漏えいやウイルスを防ぐために、外部との通信を<strong>いったん開いて中身を検査する</strong>装置を置いています。これを TLS インスペクション (監査プロキシ、MITM プロキシ) と呼びます (MITM は「通信の途中に立つ」という意味です)。装置は中身を検査したあと、<strong>会社の証明書で封をし直します</strong>。これを「再署名」と言います。</p>
 
 <figure>
-  <img src="img/tls-compare.svg" alt="監査プロキシがない場合は Amazon が発行した証明書をそのまま検証できて OK。監査プロキシがある場合は、プロキシが通信を開封して検査し、会社が発行した証明書で封じ直すため、届く証明書の発行者が会社になる。ブラウザは会社の証明書を信頼済みなので OK だが、aws CLI はエラーになる。">
+  <img width="900" height="500" src="img/tls-compare.svg" alt="監査プロキシがない場合は Amazon が発行した証明書をそのまま検証できて OK。監査プロキシがある場合は、プロキシが通信を開封して検査し、会社が発行した証明書で封じ直すため、届く証明書の発行者が会社になる。ブラウザは会社の証明書を信頼済みなので OK だが、aws CLI はエラーになる。">
   <figcaption><strong>図 2-1: 通常の HTTPS (A) と監査プロキシがある場合 (B) の違い。</strong> B では、あなたのパソコンに届く証明書の発行元が Amazon ではなく<strong>会社</strong>になります。これは会社の正常な運用であり、壊れているわけではありません。</figcaption>
 </figure>
 
 <p>ここで大事なのは次の一点です。</p>
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">要点</span>
   <p>監査プロキシがある環境では、<strong>「会社の発行元 (CA) を信頼リストに持っているソフトかどうか」で結果が変わります</strong>。会社の IT 部門は、Windows の信頼リストに会社の CA を配布済みのことがほとんどです。だから Edge や Chrome は普通に動きます。</p>
 </div>
@@ -79,17 +86,17 @@
 <p>問題は、ソフトによって<strong>見る名簿が違う</strong>ことです。</p>
 
 <figure>
-  <img src="img/cert-store.svg" alt="Windows 証明書ストアには公的な CA と会社の CA が入っており、Edge/Chrome と nakama 本体がそれを読む。aws CLI は自分に同梱された公的な CA のみのリストを読むため、会社の CA が入っておらず証明書エラーになる。nakama aws cli shell が、Windows 証明書ストアで検証できた会社の証明書をファイルに書き出して aws CLI に渡す。">
+  <img width="900" height="455" src="img/cert-store.svg" alt="Windows 証明書ストアには公的な CA と会社の CA が入っており、Edge/Chrome と nakama 本体がそれを読む。aws CLI は自分に同梱された公的な CA のみのリストを読むため、会社の CA が入っておらず証明書エラーになる。nakama aws cli shell が、Windows 証明書ストアで検証できた会社の証明書をファイルに書き出して aws CLI に渡す。">
   <figcaption><strong>図 2-2: ソフトごとに参照する信頼リストが違います。</strong> aws CLI は Windows の証明書ストアを読みません (これは AWS 公式のドキュメントにも記載されている仕様です)。そのため、会社の CA を別途ファイルで渡す必要があります。</figcaption>
 </figure>
 
 <p>aws CLI で証明書エラーが出るときの典型的なメッセージはこれです。</p>
-<pre class="output"><code>aws s3 ls
-[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed</code></pre>
-<p>AWS の公式ドキュメントでも、この状態は「aws CLI がプロキシの証明書を信頼していないために起きる」と説明されており、対処は<strong>会社の証明書ファイル (.pem) の場所を aws CLI に教えること</strong>だとされています。教え方は 3 通りあります。</p>
+<pre><code>aws s3 ls</code></pre>
+<pre class="output"><code>[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed</code></pre>
+<p>AWS の公式ドキュメント (<a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-troubleshooting.html">AWS CLI トラブルシューティング</a>) でも、この状態は「aws CLI がプロキシの証明書を信頼していないために起きる」と説明されており、対処は<strong>会社の証明書ファイル (.pem) の場所を aws CLI に教えること</strong>だとされています。教え方は 3 通りあります。</p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>教え方</th><th>形式</th><th>強さ</th></tr></thead>
+  <thead><tr><th scope="col">教え方</th><th scope="col">形式</th><th scope="col">強さ</th></tr></thead>
   <tbody>
     <tr><td>コマンドのオプション</td><td><code>--ca-bundle &lt;ファイル&gt;</code></td><td>いちばん優先される</td></tr>
     <tr><td>環境変数</td><td><code>AWS_CA_BUNDLE</code></td><td>設定ファイルより優先される</td></tr>
@@ -102,22 +109,26 @@
 <h2 id="nakama-itself">4. nakama 本体は設定不要</h2>
 <p>nakama 自身の通信 (AWS の操作、サインイン、<code>connect</code> など) は、<strong>設定なしで会社のネットワークを通ります</strong>。理由は 2 つあります。</p>
 <ul>
-  <li><strong>プロキシを自動で見つけます。</strong> 環境変数 (<code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code> / <code>NO_PROXY</code>) があればそれを使い、無ければ Windows のプロキシ設定 (インターネット オプション / WinHTTP の設定と PAC スクリプト) を自動で読みます</li>
+  <li><strong>プロキシを自動で見つけます。</strong> 環境変数 (<code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code> / <code>NO_PROXY</code>) があればそれを使い、無ければ Windows のプロキシ設定を自動で読みます (WinHTTP = Windows がプロキシ設定を保持している場所、PAC スクリプト = 接続先ごとにどのプロキシを使うかを決める、会社が配る小さなプログラム)</li>
   <li><strong>証明書は Windows の信頼リストで検証します。</strong> 会社の CA が配布されていれば、そのまま検証が通ります</li>
 </ul>
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">macOS / Linux では環境変数を設定してください</span>
-  <p>OS のプロキシ設定を自動で読む機能は <strong>Windows だけ</strong>です。macOS と Linux では、<code>HTTPS_PROXY</code> などの環境変数を自分で設定してください。証明書については、macOS は OS の信頼リストが使われます。</p>
+  <p>OS のプロキシ設定を自動で読む機能は <strong>Windows だけ</strong>です。macOS と Linux では、<code>HTTPS_PROXY</code> などの環境変数を自分で設定してください。証明書については、macOS は OS の信頼リストが、Linux は OS の証明書ストア (<code>/etc/ssl/certs</code> など) が使われます。会社の CA は、IT 部門の手順で OS に追加しておいてください。</p>
 </div>
 
 <h2 id="cli-shell">5. aws コマンドを使うには cli shell</h2>
+<div class="callout note" role="note">
+  <span class="title">この節は AWS 公式の aws コマンドを使う人向けです</span>
+  <p>nakama を使うだけなら aws コマンドは不要です (第 1 章のとおり、サインインもリソース操作も nakama だけで完結します)。この節は、<strong>別途 aws CLI をインストールして使いたい場合</strong>の話です。必要なければ<a href="03-init.html">第 3 章</a>へ進んでください。</p>
+</div>
 <p>nakama とは別に、<strong>aws コマンド本体</strong>を使いたい場面があります (S3 を触る、CloudFormation を動かすなど)。そのときは次の 1 コマンドで、aws コマンドがそのまま動くシェル (コマンド入力画面) を開けます。</p>
 
 <p class="cmd-caption">PowerShell で実行 (Windows 専用)</p>
 <pre><code>nakama aws cli shell</code></pre>
 
 <figure>
-  <img src="img/cli-shell.svg" alt="cli shell は、会社のプロキシ設定を読み、AWS に試しに接続して実際に届く証明書を観測し、Windows 証明書ストアで検証し、会社の CA と Amazon の公式ルート証明書を含むファイルを作り、環境変数を設定した新しいシェルを起動する。シェル内では HTTP_PROXY、HTTPS_PROXY、NO_PROXY、AWS_CA_BUNDLE が設定される。exit で元に戻り痕跡は残らない。">
+  <img width="900" height="520" src="img/cli-shell.svg" alt="cli shell は、会社のプロキシ設定を読み、AWS に試しに接続して実際に届く証明書を観測し、Windows 証明書ストアで検証し、会社の CA と Amazon の公式ルート証明書を含むファイルを作り、環境変数を設定した新しいシェルを起動する。シェル内では HTTP_PROXY、HTTPS_PROXY、NO_PROXY、AWS_CA_BUNDLE が設定される。exit で元に戻り痕跡は残らない。">
   <figcaption><strong>図 2-3: <code>nakama aws cli shell</code> の動作。</strong> 会社の証明書を「Windows が信頼していると確認できたものだけ」書き出すので、偽の証明書を信頼してしまう事故が起きません。</figcaption>
 </figure>
 
@@ -127,11 +138,12 @@ ca:     TLS interception detected (re-signed by CN=Example Corp Proxy CA,O=Examp
         AWS_CA_BUNDLE=C:\Users\you\.config\nakama\aws-ca-bundle.pem
 check:  AWS endpoint reachable with these settings
 starting a configured shell (type `exit` to return)</code></pre>
+<p>2 行目の <code>CN=</code> は証明書に書かれた発行者の名前、<code>O=</code> は組織名です。<code>.pem</code> は証明書を文字として保存したファイル形式です。</p>
 
 <p>この 3 行の読み方です。</p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>行</th><th>意味</th></tr></thead>
+  <thead><tr><th scope="col">行</th><th scope="col">意味</th></tr></thead>
   <tbody>
     <tr><td><code>proxy:</code></td><td>使うプロキシ。<code>none (direct connection)</code> ならプロキシなし、<code>(from environment variables)</code> なら環境変数の値、<code>(auto-detected ...)</code> なら Windows の設定から見つけたものです</td></tr>
     <tr><td><code>ca:</code></td><td><code>TLS interception detected</code> なら監査プロキシがあり、証明書ファイルを作ったという意味です。かっこ内は「誰が再署名したか」。<code>no TLS interception detected</code> なら aws CLI の標準の証明書リストで足りるので、ファイルは作りません</td></tr>
@@ -145,12 +157,12 @@ starting a configured shell (type `exit` to return)</code></pre>
 aws sts get-caller-identity
 exit          # 元のシェルに戻る</code></pre>
 
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">元の環境は汚れません</span>
   <p><code>cli shell</code> が設定するのは<strong>新しく開いたシェルの中だけ</strong>です。レジストリ、ユーザー環境変数、<code>~/.aws/config</code>、元のシェルには何も残りません。<code>exit</code> で完全に元に戻ります。ディスクに残るのは証明書ファイル 1 つ (<code>C:\Users\&lt;あなた&gt;\.config\nakama\aws-ca-bundle.pem</code>) だけで、これは公開されている証明書のみを含みます。</p>
 </div>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">開くシェルの種類</span>
   <p>元が PowerShell なら PowerShell、コマンドプロンプトならコマンドプロンプトが開きます。明示したい場合は <code>--shell</code> を使います (例: <code>nakama aws cli shell --shell pwsh.exe</code>)。</p>
   <p>Windows 以外の OS では、このコマンドは「Windows 専用です」という案内を出して終了します。macOS / Linux では <code>HTTPS_PROXY</code> と <code>AWS_CA_BUNDLE</code> を自分で設定してください。</p>
@@ -158,22 +170,24 @@ exit          # 元のシェルに戻る</code></pre>
 
 <h2 id="auth-proxy">6. プロキシがパスワードを求める場合</h2>
 <p>会社のプロキシが利用者の認証を要求する設定になっていることがあります。この場合 <code>cli shell</code> は、証明書の話とは別の問題として検出し、案内を出して終了します。</p>
+<p>ここで出てくる<strong>環境変数</strong>とは、プログラムに設定を渡すための「名前と値」の組です。PowerShell では <code>$env:名前 = "値"</code> と打つと、<strong>そのウィンドウの中だけ</strong>で設定され、閉じれば消えます。</p>
+<p>プロキシのホスト名とポート番号は、<code>nakama aws cli shell</code> が最初に表示する <code>proxy:</code> の行で分かります (Windows の 設定 → ネットワークとインターネット → プロキシ でも確認できます)。</p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>プロキシの認証方式</th><th>対処</th></tr></thead>
+  <thead><tr><th scope="col">プロキシの認証方式</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
       <td>Basic 認証が使える場合</td>
-      <td>プロキシの URL に利用者名とパスワードを埋め込んで自分で設定します。<br><code>$env:HTTPS_PROXY = "http://利用者名:パスワード@proxy.example.co.jp:8080"</code><br>を設定してから、もう一度実行してください</td>
+      <td>プロキシの URL に利用者名とパスワードを埋め込んで自分で設定します。<br><code>$env:HTTPS_PROXY = "http://利用者名:パスワード@proxy.example.co.jp:8080"</code><br>を設定してから、もう一度実行してください。パスワードに <code>@</code> <code>:</code> <code>/</code> <code>%</code> などの記号が含まれる場合は、URL エンコード (<code>@</code> なら <code>%40</code>) が必要です</td>
     </tr>
     <tr>
       <td>NTLM / Negotiate (Windows 統合認証) だけの場合</td>
-      <td>aws CLI はこの方式に対応していません。<code>px</code> や <code>Cntlm</code> のような「手元で認証を代行する中継ソフト」を動かし、<code>HTTPS_PROXY</code> をその中継先に向けてください</td>
+      <td>aws CLI はこの方式に対応していないため、<strong>会社の IT 部門に相談するのが現実的です</strong> (「Basic 認証が使えるプロキシ、または <code>*.amazonaws.com</code> への認証不要の例外を設定してほしい」と伝えてください)。自分で対処できる環境なら、<a href="https://github.com/genotrance/px">px</a> や Cntlm のような「手元で認証を代行する中継ソフト」を動かし、<code>HTTPS_PROXY</code> を <code>http://127.0.0.1:3128</code> のようにその中継先へ向けます</td>
     </tr>
   </tbody>
 </table>
 </div>
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">パスワードの取り扱い</span>
   <p>環境変数にパスワードを書くと、その値は画面やログに残ることがあります。スクリプトファイルに直接書き込まず、必要なときだけ設定するようにしてください。</p>
 </div>
@@ -183,7 +197,7 @@ exit          # 元のシェルに戻る</code></pre>
 <ul>
   <li>症状: サインインや <code>list</code> は動くのに、<code>connect</code> だけがつながらない</li>
   <li>対処: プロキシの管理者に「AWS の Session Manager が使う WebSocket 通信を許可してほしい」と依頼してください</li>
-  <li>回避: ブラウザ経由の <code>nakama aws open</code> は WebSocket を CloudFront 経由で使うため、こちらは通る場合があります</li>
+  <li>切り分け: サインインや <code>list</code> は動くのに <code>connect</code> だけが失敗する場合、権限ではなく通信方式の遮断が疑われます (<code>nakama aws doctor</code> の <code>capability: connect</code> が <code>ok</code> なら権限は足りています)</li>
 </ul>
 
 <h2 id="disconnect">8. 切断が多いときの設定</h2>
@@ -193,7 +207,7 @@ exit          # 元のシェルに戻る</code></pre>
 nakama aws connect dev01</code></pre>
 <p>単位は秒で、既定は 300 (5 分) です。短くしすぎると通信量が増えるため、30〜60 程度から試してください。</p>
 
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">この章の内容は doctor でも確認できます</span>
   <p><code>nakama aws doctor</code> を実行すると、<code>proxy</code> と <code>tls</code> の行に「プロキシを見つけられたか」「監査プロキシがあるか」「その証明書で検証できたか」が表示されます。何か変だと感じたら、まず doctor を実行してください (<a href="07-troubleshoot.html#doctor">第 7 章</a>)。</p>
 </div>

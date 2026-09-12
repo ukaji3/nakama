@@ -17,7 +17,7 @@
 
 <div class="layout">
 <nav class="toc" aria-label="章の一覧">
-  <h2>目次</h2>
+  <p class="toc-label" id="toc-chapters">目次</p>
   <ol>
     <li><a href="index.html">はじめに</a></li>
     <li><a href="01-install.html">インストールとサインイン</a></li>
@@ -29,7 +29,7 @@
     <li><a href="07-troubleshoot.html" aria-current="page">困ったときは</a></li>
     <li><a href="08-reference.html">コマンド早見表</a></li>
   </ol>
-  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <p class="toc-label" style="margin-top:1.2rem">この章の内容</p>
   <ol>
     <li><a href="#doctor">まず doctor を実行する</a></li>
     <li><a href="#read">出力の読み方</a></li>
@@ -48,7 +48,7 @@
 <pre><code>nakama aws doctor</code></pre>
 
 <figure>
-  <img src="img/doctor-map.svg" alt="doctor は手元の環境 (proxy、tls、tunnels)、AWS 側 (credentials、waf-allowlist)、機能ごとの権限 (capability: create、connect、backup、delete など) を点検する。結果は ok / warn / fail の 3 種類。完全に読み取り専用で、パスワードや資格情報は表示しない。">
+  <img width="900" height="430" src="img/doctor-map.svg" alt="doctor は手元の環境 (proxy、tls、tunnels)、AWS 側 (credentials、waf-allowlist)、機能ごとの権限 (capability: create、connect、backup、delete など) を点検する。結果は ok / warn / fail の 3 種類。完全に読み取り専用で、パスワードや資格情報は表示しない。">
   <figcaption><strong>図 7-1: doctor が点検する範囲。</strong> AWS のリソースも手元の設定も<strong>一切変更しません</strong>。何度実行しても安全です。</figcaption>
 </figure>
 
@@ -56,6 +56,8 @@
 <pre class="output"><code>[ ok ] proxy           direct connection (no proxy configured)
 [ ok ] tls             no TLS interception detected (public Amazon Trust Services chain)
 [FAIL] credentials     could not resolve AWS credentials: the aws login session has expired
+                       The login session for this account has probably expired.
+                       Recovery: run `nakama aws login` for this account again
                        -&gt; run `nakama aws login` (or `aws login`), or select a saved profile with `nakama aws profile load &lt;name&gt;`
 [skip] waf-allowlist   skipped: no AWS credentials
 [skip] capabilities    skipped: no AWS credentials
@@ -66,7 +68,7 @@
 <h2 id="read">2. 出力の読み方</h2>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>印</th><th>意味</th><th>どうするか</th></tr></thead>
+  <thead><tr><th scope="col">印</th><th scope="col">意味</th><th scope="col">どうするか</th></tr></thead>
   <tbody>
     <tr><td><code>[ ok ]</code></td><td>問題なし</td><td>何もしなくてよい</td></tr>
     <tr><td><code>[warn]</code></td><td>動くが、一部の機能が使えない、または注意が必要</td><td>その行の内容を読む。使いたい機能に関係なければ放置してよい</td></tr>
@@ -75,23 +77,23 @@
   </tbody>
 </table>
 </div>
-<p>最後の行が集計です。<strong><code>fail</code> が 1 つでもあると、コマンドの終了コードが 0 以外になります</strong> (スクリプトで判定できます)。</p>
+<p>最後の行が集計です。<strong><code>fail</code> が 1 つでもあると、コマンドの終了コードが 0 以外になります</strong> (自動化スクリプトを書く人向けの性質です。手で使うだけなら気にしなくて構いません)。</p>
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th>項目</th><th>点検内容</th></tr></thead>
+  <thead><tr><th scope="col">項目</th><th scope="col">点検内容</th></tr></thead>
   <tbody>
     <tr><td><code>proxy</code></td><td>プロキシを見つけられたか、AWS に届くか (<a href="02-proxy-cert.html">第 2 章</a>)</td></tr>
     <tr><td><code>tls</code></td><td>監査プロキシがあるか、OS の証明書リストで検証できたか</td></tr>
     <tr><td><code>credentials</code></td><td>どの AWS アカウント / ユーザーとして動くか、有効期限は切れていないか</td></tr>
     <tr><td><code>waf-allowlist</code></td><td>自分の接続元 IP が許可リストに入っているか (<a href="03-init.html#acl">第 3 章</a>)</td></tr>
     <tr><td><code>capability: ...</code></td><td>機能ごとに、必要な IAM 権限が揃っているか</td></tr>
-    <tr><td><code>tunnels</code></td><td>このパソコンに記録されたポート転送が生きているか (<a href="05-use.html#tunnel">第 5 章</a>)</td></tr>
+    <tr><td><code>tunnels</code></td><td>このパソコンに記録されたポート転送が生きているか (<a href="05-use.html#tunnel">第 5 章「ポート転送」</a>)</td></tr>
   </tbody>
 </table>
 </div>
 
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">機械で処理したいときは JSON で</span>
   <pre><code>nakama aws doctor -o json</code></pre>
   <p>同じ内容が JSON で出ます。ファイルに保存して添付する用途にも使えます。</p>
@@ -100,19 +102,19 @@
 <h2 id="capability">3. 権限が足りないとき</h2>
 <p>サインインできていれば、機能ごとの権限の行が並びます。</p>
 <pre class="output"><code>[ ok ] capability: init all 32 actions allowed
-[ ok ] capability: create all 27 actions allowed
+[ ok ] capability: create all 24 actions allowed
 [ ok ] capability: connect all 5 actions allowed
 [warn] capability: backup missing: ec2:CreateSnapshot, ec2:DeleteSnapshot
                        -&gt; grant the listed actions to use this feature (the simulation evaluates Resource "*"; resource-scoped allow policies can be reported as missing even though the real call succeeds)</code></pre>
 
 <p>読み方は単純です。<strong>使いたい機能の行が <code>ok</code> なら使えます。</strong> <code>warn</code> の行には、足りない IAM アクションがそのまま列挙されるので、その一覧を AWS の管理者に伝えれば権限を追加してもらえます。</p>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">「使わない機能が warn」なら気にしなくてよい</span>
   <p>権限を意図的に絞っている環境では、使わない機能が <code>warn</code> になるのは正常です。だから権限不足は <code>fail</code> ではなく <code>warn</code> です。</p>
 </div>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">「足りない」と出ても実際は使える場合があります</span>
   <p>この点検は AWS のポリシーシミュレーション機能を使い、対象リソースを <code>*</code> (すべて) として評価します。そのため「特定のリソースにだけ許可する」書き方のポリシーでは、<strong>実際には使えるのに不足と表示される</strong>ことがあります。実際にコマンドを実行してみるのが確実です。</p>
   <p>また、この点検自体に <code>iam:SimulatePrincipalPolicy</code> という権限が必要です。無い場合は「確認できなかった」という <code>warn</code> になり、他の点検はそのまま実行されます。</p>
@@ -123,7 +125,7 @@
 <h3>コマンドが動かない</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>症状</th><th>対処</th></tr></thead>
+  <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
       <td><code>用語 'nakama' は ... 認識されません</code></td>
@@ -148,11 +150,11 @@
 <h3>ブラウザで開けない</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>症状</th><th>対処</th></tr></thead>
+  <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
       <td>403 Forbidden になる</td>
-      <td>接続元 IP が許可されていません。<code>nakama aws acl add</code> を実行します。回線を変えた (テザリング、VPN の入切) 場合も IP が変わります</td>
+      <td>接続元 IP が許可されていません。<code>nakama aws acl add</code> を実行します。回線を変えた (テザリング、VPN の入切) 場合も IP が変わります。<br><strong>会社のネットワークでは、nakama とブラウザで外への出口 IP が違うことがあります。</strong>その場合はブラウザで <a href="https://checkip.amazonaws.com">https://checkip.amazonaws.com</a> を開き、表示された IP を <code>nakama aws acl add &lt;その IP&gt;</code> で追加してください</td>
     </tr>
     <tr>
       <td>ページが表示されない / タイムアウトする</td>
@@ -164,7 +166,7 @@
     </tr>
     <tr>
       <td><code>open</code> がエラーで、ssh や connect を案内される</td>
-      <td>その環境は <code>--bare</code> で作られています (<a href="04-create.html#bare">第 4 章</a>)</td>
+      <td>その環境は <code>--bare</code> で作られています (<a href="04-create.html#bare">第 4 章「軽量ボックス」</a>)</td>
     </tr>
   </tbody>
 </table>
@@ -173,11 +175,11 @@
 <h3>ターミナルや ssh でつながらない</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>症状</th><th>対処</th></tr></thead>
+  <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
       <td><code>connect</code> だけがつながらない (他のコマンドは動く)</td>
-      <td>会社のプロキシが WebSocket を遮断している可能性があります (<a href="02-proxy-cert.html#websocket">第 2 章</a>)。プロキシ管理者に許可を依頼してください</td>
+      <td>会社のプロキシが WebSocket を遮断している可能性があります (<a href="02-proxy-cert.html#websocket">第 2 章「WebSocket が遮断されている場合」</a>)。プロキシ管理者に許可を依頼してください</td>
     </tr>
     <tr>
       <td>権限が無いと言われる</td>
@@ -189,7 +191,7 @@
     </tr>
     <tr>
       <td><code>ssh nakama-dev01</code> が <code>Could not resolve hostname</code> になる</td>
-      <td><code>~/.ssh/config</code> への <code>Include</code> 行の追加ができていません。<code>Include</code> は<strong>他の <code>Host</code> 設定より前</strong>に書いてください (<a href="05-use.html#ssh">第 5 章</a>)</td>
+      <td><code>~/.ssh/config</code> への <code>Include</code> 行の追加ができていません。<code>Include</code> は<strong>他の <code>Host</code> 設定より前</strong>に書いてください (<a href="05-use.html#ssh">第 5 章「手元の VS Code から使う」</a>)</td>
     </tr>
     <tr>
       <td>ssh で鍵を拒否される</td>
@@ -197,7 +199,7 @@
     </tr>
     <tr>
       <td>切断が多い</td>
-      <td><code>connect</code> / <code>tunnel</code> は keepalive の間隔を短くできます (<a href="02-proxy-cert.html#disconnect">第 2 章</a>)。<code>ssh</code> の場合は <code>~/.ssh/config</code> に <code>ServerAliveInterval 30</code> を追加します</td>
+      <td><code>connect</code> / <code>tunnel</code> は keepalive の間隔を短くできます (<a href="02-proxy-cert.html#disconnect">第 2 章「切断が多いときの設定」</a>)。<code>ssh</code> の場合は <code>~/.ssh/config</code> に <code>ServerAliveInterval 30</code> を追加します</td>
     </tr>
   </tbody>
 </table>
@@ -206,7 +208,7 @@
 <h3>ポート転送が動かない</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>症状</th><th>対処</th></tr></thead>
+  <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
       <td><code>status</code> が <code>dead</code></td>
@@ -231,7 +233,7 @@
 <h3>作成やセットアップが失敗する</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>症状</th><th>対処</th></tr></thead>
+  <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
       <td><code>create</code> が権限エラーになる</td>
@@ -239,7 +241,7 @@
     </tr>
     <tr>
       <td>名前を拒否される</td>
-      <td>小文字英数とハイフンのみ、2〜32 文字、予約語 (<code>start</code>/<code>stop</code>/<code>status</code>/<code>restart</code>/<code>suggest</code>) は不可 (<a href="04-create.html#name">第 4 章</a>)</td>
+      <td>小文字英数とハイフンのみ、2〜32 文字、予約語 (<code>start</code>/<code>stop</code>/<code>status</code>/<code>restart</code>/<code>suggest</code>) は不可 (<a href="04-create.html#name">第 4 章「名前のルール」</a>)</td>
     </tr>
     <tr>
       <td>セットアップ (<code>--setup</code> など) が失敗した</td>
@@ -257,12 +259,17 @@
 <p>次の 2 つを添えると、状況が正確に伝わります。</p>
 <pre><code>nakama version
 nakama aws doctor -o json</code></pre>
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">doctor の出力はそのまま共有できます</span>
   <p>doctor はパスワード・認証情報・トークンを<strong>出力しません</strong>。安心してそのまま貼り付けられます (アカウント ID とユーザー名は含まれるので、社外に出す場合はその点だけ確認してください)。</p>
 </div>
-<p>より詳しい記録が必要な場合は、どのコマンドでも <code>-v</code> を付けると詳細ログが出ます。</p>
-<pre><code>nakama aws connect dev01 -v</code></pre>
+<p>より詳しい記録が必要な場合は <code>-v</code> を付けると詳細ログが出ます。</p>
+<pre><code>nakama aws -v list
+nakama aws -v connect dev01</code></pre>
+<div class="callout warn" role="note">
+  <span class="title">connect ではフラグを名前より前に置きます</span>
+  <p><code>connect</code> は<strong>インスタンス名より後ろに書いたものをすべて「環境側で実行するコマンド」として送ります</strong>。<code>nakama aws connect dev01 -v</code> と書くと、<code>-v</code> は nakama のオプションではなく環境側で実行されようとして失敗します。<code>nakama aws -v connect dev01</code> のように前に置いてください。<code>--tty</code> や <code>--retry</code> も同じです。</p>
+</div>
 
 <nav class="pager" aria-label="章の移動">
   <a href="06-operate.html">← 前へ: 第 6 章 日々の運用</a>

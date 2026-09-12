@@ -17,7 +17,7 @@
 
 <div class="layout">
 <nav class="toc" aria-label="章の一覧">
-  <h2>目次</h2>
+  <p class="toc-label" id="toc-chapters">目次</p>
   <ol>
     <li><a href="index.html">はじめに</a></li>
     <li><a href="01-install.html">インストールとサインイン</a></li>
@@ -29,7 +29,7 @@
     <li><a href="07-troubleshoot.html">困ったときは</a></li>
     <li><a href="08-reference.html">コマンド早見表</a></li>
   </ol>
-  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <p class="toc-label" style="margin-top:1.2rem">この章の内容</p>
   <ol>
     <li><a href="#choose">4 つの方法の使い分け</a></li>
     <li><a href="#open">ブラウザで開く (open)</a></li>
@@ -45,7 +45,7 @@
 
 <h2 id="choose">1. 4 つの方法の使い分け</h2>
 <figure>
-  <img src="img/access-paths.svg" alt="open はブラウザで VS Code を開き CloudFront 経由で IP 許可が必要。connect はターミナルに入り SSM 経由。ssh は手元の VS Code や scp、git を使うために SSM 経由。tunnel はポートを手元に持ってきて SSM 経由。">
+  <img width="920" height="420" src="img/access-paths.svg" alt="open はブラウザで VS Code を開き CloudFront 経由で IP 許可が必要。connect はターミナルに入り SSM 経由。ssh は手元の VS Code や scp、git を使うために SSM 経由。tunnel はポートを手元に持ってきて SSM 経由。">
   <figcaption><strong>図 5-1: 4 つのアクセス方法。</strong> <code>open</code> だけがインターネット (CloudFront) 経由なので IP の許可が必要です。ほかの 3 つは SSM 経由なので IP 許可は不要です。</figcaption>
 </figure>
 
@@ -54,7 +54,7 @@
 <pre><code>nakama aws open dev01</code></pre>
 <p>ブラウザが開き、パスワードの入力も自動で通過して、VS Code の画面が表示されます。あとは普段の VS Code と同じように使えます。</p>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">パスワードはどう渡されているのか</span>
   <p>nakama は AWS からパスワードを取得し、あなたのパソコンの中だけで動く 1 回限りのページ (ランダムな文字列付きの URL) を作って、そこからログインフォームを自動送信します。<strong>パスワードはディスクに書き込まれません。</strong></p>
 </div>
@@ -62,22 +62,22 @@
 <p>状況に応じて次のオプションが使えます。</p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>オプション</th><th>用途</th></tr></thead>
+  <thead><tr><th scope="col">オプション</th><th scope="col">用途</th></tr></thead>
   <tbody>
     <tr><td><code>--print-url</code></td><td>ブラウザを開かず URL だけ表示します (別の端末で開きたいとき、SSH 経由のとき)</td></tr>
     <tr><td><code>--no-auth</code></td><td>自動ログインをせず、URL を開くだけにします (パスワードは手で入力)</td></tr>
     <tr><td><code>--browser &lt;コマンド&gt;</code></td><td>使うブラウザを指定します (URL が最後の引数として渡されます)</td></tr>
-    <tr><td><code>--timeout &lt;時間&gt;</code></td><td>自動ログイン用ページの待ち時間 (既定 30 秒)</td></tr>
+    <tr><td><code>--timeout &lt;時間&gt;</code></td><td>自動ログイン用ページの待ち時間 (既定 30 秒)。<code>--timeout 60s</code> のように単位を付けて書きます</td></tr>
   </tbody>
 </table>
 </div>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">403 エラーで開けないとき</span>
   <p>あなたの接続元 IP が許可リストに入っていません。<code>nakama aws acl add</code> を実行してください (<a href="03-init.html#acl">第 3 章</a>)。nakama は開く前に IP をチェックし、未登録なら警告を表示します。</p>
 </div>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">--bare で作った環境では使えません</span>
   <p><code>--bare</code> の環境には code-server も CloudFront もないため、<code>open</code> は使えず、代わりの方法を案内するエラーになります。</p>
 </div>
@@ -90,19 +90,28 @@
 nakama aws connect dev01 ls -la           # コマンドを 1 つだけ実行する
 nakama aws connect --tty dev01 top        # 画面が動くコマンドを実行する (フラグは名前より前)</code></pre>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">ログインするユーザーは ubuntu です</span>
   <p>code-server と同じユーザーなので、ファイルの権限で悩まずに済みます。管理者権限が必要なときは <code>sudo</code> を使えます (パスワードは不要です)。</p>
 </div>
 
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">切れても自動でつなぎ直します</span>
   <p>ネットワークが不安定でセッションが切れた場合、対話シェルでは自動で再接続します (既定で最大 5 回)。<strong>再接続後は新しいシェルになる</strong>ため、カレントディレクトリや実行中のプロセスは失われます。長時間の作業は <code>tmux</code> や <code>screen</code> の中で行うと安全です。</p>
   <p>コマンドを 1 つ実行するモードでは、同じコマンドを二重に実行してしまわないよう、既定で再接続しません。<code>--retry &lt;回数&gt;</code> で明示できます (<code>--retry 0</code> で無効)。</p>
+  <p><code>tmux</code> や <code>screen</code> は、接続が切れても環境側で作業を続けられるようにするツールです (<code>sudo apt install tmux</code> で入れて、<code>tmux</code> と打つと始まります)。</p>
 </div>
 
 <h2 id="ssh">4. 手元の VS Code から使う (ssh)</h2>
 <p>ブラウザ版ではなく<strong>デスクトップ版の VS Code</strong> を使いたい、<code>scp</code> でファイルを送りたい、<code>git</code> を ssh 経由で使いたい。そんなときは <code>ssh setup</code> を一度実行します。</p>
+
+<div class="callout warn" role="note">
+  <span class="title">先に ssh の鍵を作ってください</span>
+  <p><code>ssh setup</code> は「あなたの ssh 公開鍵」を環境に登録します。鍵をまだ作っていない場合 (<code>C:\Users\&lt;あなた&gt;\.ssh\id_ed25519.pub</code> が無い場合) は、先にこれを実行します。</p>
+  <p class="cmd-caption">PowerShell で実行</p>
+  <pre><code>ssh-keygen -t ed25519</code></pre>
+  <p>3 回聞かれます。<strong>保存先</strong>はそのまま <kbd>Enter</kbd>、<strong>パスフレーズ</strong>は 2 回聞かれるので、空のまま <kbd>Enter</kbd> でも構いません (設定すると接続のたびに入力を求められます)。これで <code>.ssh</code> フォルダーと鍵の 2 ファイルができます。<strong>末尾が <code>.pub</code> のファイルが公開鍵</strong>で、これだけが環境に渡ります。もう一方 (秘密鍵) は誰にも渡さないでください。</p>
+</div>
 
 <p class="cmd-caption">PowerShell で実行</p>
 <pre><code>nakama aws ssh setup dev01</code></pre>
@@ -114,7 +123,7 @@ snippet:  C:\Users\you\.config\nakama\ssh\dev01.conf
 Host nakama-dev01
     User ubuntu
     HostName nakama-dev01
-    ProxyCommand "C:\Users\you\bin\nakama.exe" aws ssh proxy dev01 --port 22
+    ProxyCommand C:\Users\you\bin\nakama.exe aws ssh proxy dev01 --port 22
     # The proxy carries ssh over SSM Session Manager: no inbound port,
     # no public IP, and host keys are per-instance as usual.
     StrictHostKeyChecking accept-new
@@ -127,39 +136,43 @@ Then: ssh nakama-dev01   |   VS Code: Remote-SSH -> nakama-dev01</code></pre>
 
 <p>ここで表示された <code>Include</code> の行を、自分の <code>~/.ssh/config</code> (Windows では <code>C:\Users\&lt;あなた&gt;\.ssh\config</code>) に<strong>1 行追加</strong>します。</p>
 
-<ol class="steps">
+<ol class="steps" role="list">
   <li>
-    <p><code>.ssh</code> フォルダーと <code>config</code> ファイルを用意します (既にあれば不要)。</p>
+    <p><code>config</code> ファイルがまだ無ければ作ります (<code>.ssh</code> フォルダーは鍵を作ったときにできています)。</p>
     <p class="cmd-caption">PowerShell で実行</p>
-    <pre><code>New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh"
-New-Item -ItemType File -Force "$env:USERPROFILE\.ssh\config"</code></pre>
+    <pre><code>New-Item -ItemType File -Force "$env:USERPROFILE\.ssh\config"</code></pre>
   </li>
   <li>
-    <p>表示された <code>Include</code> 行を追記します。<strong><code>Include</code> は他の <code>Host</code> 設定より前 (ファイルの先頭) に置くのが安全です。</strong></p>
-    <p class="cmd-caption">PowerShell で実行 (末尾に追記する例)</p>
+    <p>表示された <code>Include</code> 行を <code>config</code> に追加します。<strong><code>Include</code> は他の <code>Host</code> 設定より前に書く必要があります</strong> (ssh は最初に見つかった設定を使うため)。状況に応じて次のどちらかを選んでください。</p>
+    <p><strong>config が空 (今作った) 場合</strong>: 次のコマンドで追記すれば、それが先頭になります。</p>
+    <p class="cmd-caption">PowerShell で実行</p>
     <pre><code>Add-Content "$env:USERPROFILE\.ssh\config" "Include $env:USERPROFILE\.config\nakama\ssh\dev01.conf"</code></pre>
-    <p>メモ帳などで開いて手で書いても構いません。</p>
+    <p><strong>すでに他の設定が書かれている場合</strong>: メモ帳で開き、<strong>1 行目</strong>に <code>Include</code> 行を貼り付けて保存してください。</p>
+    <pre><code>notepad "$env:USERPROFILE\.ssh\config"</code></pre>
   </li>
   <li>
     <p>接続します。</p>
     <pre><code>ssh nakama-dev01</code></pre>
+    <p>初回は「本当に接続してよいか」を聞かれることがあります (<code>yes</code> と入力して <kbd>Enter</kbd>)。</p>
   </li>
   <li>
     <p>デスクトップ版 VS Code の場合は、拡張機能「Remote - SSH」を入れてから、コマンドパレット (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>) で <strong>Remote-SSH: Connect to Host</strong> を選び、一覧に出てくる <code>nakama-dev01</code> を選びます。</p>
+    <p>初回は<strong>接続先の OS</strong> を聞かれるので <strong>Linux</strong> を選び、続けて接続を続けるかの確認 (fingerprint) が出たら <strong>Continue</strong> を選びます。VS Code が環境側に必要なものを入れるため、最初の接続だけ 1〜2 分かかります。</p>
   </li>
 </ol>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">鍵と設定について</span>
   <ul>
-    <li>登録されるのは<strong>公開鍵だけ</strong>です。秘密鍵は手元から出ません。鍵が無い場合は先に <code>ssh-keygen -t ed25519</code> で作ってください</li>
+    <li>登録されるのは<strong>公開鍵だけ</strong>です。秘密鍵は手元から出ません</li>
     <li>鍵を明示するときは <code>--identity C:\Users\you\.ssh\id_ed25519.pub</code>、鍵の登録をせず設定ファイルだけ作るときは <code>--no-key</code> を使います</li>
     <li>nakama は<strong>あなたの <code>~/.ssh/config</code> を書き換えません</strong>。生成するのは <code>~/.config/nakama/ssh/&lt;名前&gt;.conf</code> だけで、取り込むかどうかはあなたが決めます</li>
+    <li><code>ProxyCommand</code> には nakama 実行ファイルの絶対パスが埋め込まれます (パスに空白が含まれる場合だけ、自動で引用符が付きます)</li>
     <li>同じ操作を何度実行しても、公開鍵が二重に登録されることはありません</li>
   </ul>
 </div>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">ssh の切断は ssh 側の設定に従います</span>
   <p><code>connect</code> や <code>tunnel</code> のような nakama の自動再接続は、<code>ssh</code> 経由では働きません。切断が気になる場合は、<code>~/.ssh/config</code> に <code>ServerAliveInterval 30</code> のような設定を自分で足してください。</p>
 </div>
@@ -172,12 +185,13 @@ New-Item -ItemType File -Force "$env:USERPROFILE\.ssh\config"</code></pre>
 <pre class="output"><code>tunnel started for dev01 (pid 12345):
 FORWARD                   STATE         SINCE       DETAIL
 3000:3000                 active        0s</code></pre>
+<p><code>pid</code> は裏で動いている常駐プログラムの番号です (覚える必要はありません)。</p>
 
 <p>このコマンドは<strong>すぐに終了します</strong>。転送は裏で常駐するプログラムが維持するので、ターミナルを閉じても続きます。</p>
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th>コマンド</th><th>内容</th></tr></thead>
+  <thead><tr><th scope="col">コマンド</th><th scope="col">内容</th></tr></thead>
   <tbody>
     <tr><td><code>nakama aws tunnel dev01 -L 3000:3000</code></td><td>転送を開始 (<code>start</code> は省略できます)</td></tr>
     <tr><td><code>nakama aws tunnel start dev01 -L 8080:8080 -L 5432:db.internal:5432</code></td><td>複数同時に転送。3 つ組の形式は「手元のポート:相手ホスト:相手のポート」です</td></tr>
@@ -193,23 +207,23 @@ FORWARD                   STATE         SINCE       DETAIL
 <p><code>status</code> の <code>STATE</code> 列の意味です。</p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>表示</th><th>意味</th><th>対処</th></tr></thead>
+  <thead><tr><th scope="col">表示</th><th scope="col">意味</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr><td><code>active</code></td><td>正常に転送中</td><td>—</td></tr>
     <tr><td><code>reconnecting</code></td><td>切断され、再接続を試みている</td><td>しばらく待つ</td></tr>
     <tr><td><code>dead</code></td><td>再接続できずに諦めた (資格情報の期限切れが多い)</td><td><code>nakama aws login</code> のあと <code>tunnel restart &lt;名前&gt;</code></td></tr>
-    <tr><td><code>stale</code></td><td>常駐プログラムが見つからない (記録だけ残っていた)</td><td>表示時に自動で片付けられます。必要なら再度 <code>tunnel start</code></td></tr>
+    <tr><td><code>stale</code></td><td>常駐プログラムが見つからない (記録だけ残っていた)。名前を省略した全件一覧のときに出ます</td><td>表示時に古い記録が片付けられます。必要なら再度 <code>tunnel start</code> (名前を指定した <code>status</code> では、記録を片付けて「転送は動いていない」というエラーになります)</td></tr>
   </tbody>
 </table>
 </div>
 
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">どのポートを転送すればいいか分からないとき</span>
   <pre><code>nakama aws tunnel suggest dev01</code></pre>
-  <p>環境側で待ち受け中のポートを調べて、そのままコピーできる <code>-L</code> 付きのコマンドを提案します。22 番 (ssh) は転送ではなく <code>ssh</code> の使用が適切なので、提案からは除かれます。</p>
+  <p>環境側で待ち受け中のポートを調べて、そのままコピーできる <code>-L</code> 付きのコマンドを提案します。22 番 (ssh) は一覧には出ますが「<code>ssh</code> を使うほうが適切」という注記が付き、まとめて実行するコマンドには含まれません。</p>
 </div>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">常駐プログラムのログと状態ファイル</span>
   <p>ログは OS の標準的な場所に出ます (Windows はイベントログ、macOS / Linux は syslog)。転送の状態は <code>~/.config/nakama/tunnels/&lt;名前&gt;.json</code> に保存され、<code>tunnel stop</code> で削除されます。</p>
 </div>
