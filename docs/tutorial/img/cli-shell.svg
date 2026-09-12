@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="cli-shell-title" aria-describedby="cli-shell-desc" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif">
+  <title id="cli-shell-title">nakama aws cli shell の動作</title>
+  <desc id="cli-shell-desc">プロキシ設定の検出、実際の通信の観測、Windows 証明書ストアでの検証、証明書ファイルの生成、環境変数を設定した新しいシェルの起動、という順で動く。元のシェルや Windows の設定は変更しない。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#374151" /></marker><marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#374151" /></marker><marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c" /></marker></defs>
+  <rect width="900" height="520" fill="#ffffff" />
+  <rect x="40" y="55" width="470" height="62" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2" />
+  <text x="275" y="80" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">① 会社のプロキシ設定を読む</text>
+  <text x="275" y="101" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">Windows の設定 (WinHTTP) と PAC を自動検出</text>
+  <line x1="275" y1="119" x2="275" y2="131" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <rect x="40" y="133" width="470" height="62" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2" />
+  <text x="275" y="158" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">② AWS に試しに接続してみる</text>
+  <text x="275" y="179" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">実際に届く証明書を観測する</text>
+  <line x1="275" y1="197" x2="275" y2="209" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <rect x="40" y="211" width="470" height="62" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2" />
+  <text x="275" y="236" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">③ Windows 証明書ストアで検証</text>
+  <text x="275" y="257" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">OS が信頼していない証明書は採用しない</text>
+  <line x1="275" y1="275" x2="275" y2="287" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <rect x="40" y="289" width="470" height="62" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2" />
+  <text x="275" y="314" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">④ 証明書ファイルを作る</text>
+  <text x="275" y="335" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">会社の CA + Amazon の公式ルート証明書</text>
+  <line x1="275" y1="353" x2="275" y2="365" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <rect x="40" y="367" width="470" height="62" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2" />
+  <text x="275" y="392" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">⑤ 設定済みシェルを開く</text>
+  <text x="275" y="413" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">環境変数を入れた新しいシェルを起動</text>
+  <rect x="560" y="120" width="300" height="190" rx="10" fill="#f3f4f6" stroke="#6b7280" stroke-width="2" />
+  <text x="710" y="159" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">シェルの中で設定される環境変数</text>
+  <text x="710" y="179" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">HTTP_PROXY / HTTPS_PROXY</text>
+  <text x="710" y="199" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">NO_PROXY</text>
+  <text x="710" y="219" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">AWS_CA_BUNDLE (証明書ファイルの場所)</text>
+  <text x="710" y="239" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563"></text>
+  <text x="710" y="259" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">→ この中では aws s3 ls などが</text>
+  <text x="710" y="279" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">   追加設定なしで動きます</text>
+  <line x1="515" y1="400" x2="556" y2="310" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <rect x="40" y="450" width="820" height="55" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="2" />
+  <text x="450" y="472" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">exit と入力すれば元のシェルに戻り、痕跡は残りません</text>
+  <text x="450" y="492" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">レジストリ・ユーザー環境変数・~/.aws/config・元のシェルは一切変更しません</text>
+</svg>

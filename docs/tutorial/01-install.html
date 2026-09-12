@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 章 インストールとサインイン — nakama チュートリアル</title>
+<meta name="description" content="nakama を Windows にインストールし、AWS にサインインする手順。複数アカウントの切り替えも扱います。">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">本文へスキップ</a>
+
+<header class="site">
+  <strong><a href="index.html" style="text-decoration:none">nakama チュートリアル</a></strong>
+  <span class="crumb">第 1 章 インストールとサインイン</span>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="章の一覧">
+  <h2>目次</h2>
+  <ol>
+    <li><a href="index.html">はじめに</a></li>
+    <li><a href="01-install.html" aria-current="page">インストールとサインイン</a></li>
+    <li><a href="02-proxy-cert.html">会社のプロキシと証明書</a></li>
+    <li><a href="03-init.html">土台を用意する</a></li>
+    <li><a href="04-create.html">開発環境を作る</a></li>
+    <li><a href="05-use.html">開発環境を使う</a></li>
+    <li><a href="06-operate.html">日々の運用</a></li>
+    <li><a href="07-troubleshoot.html">困ったときは</a></li>
+    <li><a href="08-reference.html">コマンド早見表</a></li>
+  </ol>
+  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <ol>
+    <li><a href="#install">Windows にインストールする</a></li>
+    <li><a href="#other-os">macOS / Linux の場合</a></li>
+    <li><a href="#login">AWS にサインインする</a></li>
+    <li><a href="#expire">有効期限と再サインイン</a></li>
+    <li><a href="#profile">複数の AWS アカウントを使う</a></li>
+    <li><a href="#trouble1">つまずきやすい点</a></li>
+  </ol>
+</nav>
+
+<main id="main">
+<h1>第 1 章 インストールとサインイン</h1>
+<p class="lead">nakama 本体をパソコンに置き、AWS にサインインするところまでを行います。ここまで済めば、以降の章のコマンドが実行できます。</p>
+
+<h2 id="install">1. Windows にインストールする</h2>
+<p>nakama は <strong>1 つの実行ファイル (nakama.exe) だけ</strong>で動きます。インストーラーはありません。ファイルを好きな場所に置いて、そこを Windows に教えるだけです。</p>
+
+<ol class="steps">
+  <li>
+    <p><strong>ダウンロードする。</strong> <a href="https://github.com/ukaji3/nakama/releases">Releases ページ</a>を開き、最新版の <code>nakama_&lt;バージョン&gt;_windows_amd64.zip</code> をダウンロードします。<code>checksums.txt</code> も一緒にダウンロードしてください。</p>
+    <div class="callout note">
+      <span class="title">amd64 と arm64 のどちらを選ぶか</span>
+      <p>ふつうの Windows パソコンは <strong>amd64</strong> です。Surface Pro X などの ARM 版 Windows を使っている場合だけ <code>arm64</code> を選びます。分からなければ、PowerShell で次を実行してください。<code>AMD64</code> と表示されれば amd64 です。</p>
+      <pre><code>$env:PROCESSOR_ARCHITECTURE</code></pre>
+    </div>
+  </li>
+  <li>
+    <p><strong>ファイルが壊れていないか確認する (任意ですが推奨)。</strong> ダウンロードしたフォルダーで PowerShell を開き、次を実行します。</p>
+    <p class="cmd-caption">PowerShell で実行</p>
+    <pre><code>Get-FileHash .\nakama_0.17.0_windows_amd64.zip -Algorithm SHA256</code></pre>
+    <p>表示された <code>Hash</code> の文字列が、<code>checksums.txt</code> の中に同じファイル名と並んで書かれているものと一致していれば正常です。</p>
+  </li>
+  <li>
+    <p><strong>展開する。</strong> zip ファイルを右クリックして「すべて展開」を選びます。中に <code>nakama.exe</code> が入っています。</p>
+  </li>
+  <li>
+    <p><strong>置き場所を決める。</strong> 例として、自分のユーザーフォルダーの下に <code>bin</code> というフォルダーを作って置きます。管理者権限が要らないので安全です。</p>
+    <p class="cmd-caption">PowerShell で実行 (フォルダーを作って移動する例)</p>
+    <pre><code>New-Item -ItemType Directory -Force "$env:USERPROFILE\bin"
+Move-Item .\nakama.exe "$env:USERPROFILE\bin\nakama.exe"</code></pre>
+  </li>
+  <li>
+    <p><strong>置き場所を Windows に教える (PATH に追加)。</strong> これをしておくと、どのフォルダーからでも <code>nakama</code> と打つだけで実行できます。</p>
+    <p class="cmd-caption">PowerShell で実行 (自分のユーザーにだけ設定します)</p>
+    <pre><code>[Environment]::SetEnvironmentVariable(
+  "Path",
+  [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\bin",
+  "User")</code></pre>
+    <div class="callout warn">
+      <span class="title">設定後は新しいウィンドウを開いてください</span>
+      <p>この設定は<strong>今開いているウィンドウには反映されません</strong>。PowerShell を閉じて、もう一度開いてから次の手順に進みます。</p>
+      <p>画面から設定したい場合は、<kbd>Windows</kbd> キーで「環境変数」と検索 →「環境変数を編集」→ ユーザー環境変数の <code>Path</code> を選んで「編集」→「新規」で <code>C:\Users\&lt;あなたの名前&gt;\bin</code> を追加します。</p>
+    </div>
+  </li>
+  <li>
+    <p><strong>動作を確認する。</strong> 新しい PowerShell で次を実行します。</p>
+    <p class="cmd-caption">PowerShell で実行</p>
+    <pre><code>nakama version</code></pre>
+    <pre class="output"><code>0.17.0 (6c34716, 2026-09-03T17:35:42Z)</code></pre>
+    <p>バージョンが表示されれば成功です。<code>用語 'nakama' は、コマンドレット...として認識されません</code> と出る場合は、PATH の設定か、ウィンドウの開き直しができていません。</p>
+  </li>
+</ol>
+
+<div class="callout tip">
+  <span class="title">どんなコマンドがあるかを見る</span>
+  <p>いつでも <code>--help</code> を付けると、そのコマンドの説明とオプションが表示されます。迷ったらまずこれを見てください。</p>
+  <pre><code>nakama aws --help
+nakama aws create --help</code></pre>
+</div>
+
+<h2 id="other-os">2. macOS / Linux の場合</h2>
+<p>やることは同じです。<code>tar.gz</code> を展開して、PATH の通った場所に置きます。</p>
+<p class="cmd-caption">macOS / Linux のターミナルで実行 (Linux amd64 の例)</p>
+<pre><code>VERSION=0.17.0
+curl -fsSL "https://github.com/ukaji3/nakama/releases/download/v${VERSION}/nakama_${VERSION}_linux_amd64.tar.gz" -o /tmp/nakama.tar.gz
+mkdir -p /tmp/nakama &amp;&amp; tar -xzf /tmp/nakama.tar.gz -C /tmp/nakama
+sudo install -m 0755 /tmp/nakama/nakama /usr/local/bin/nakama
+nakama version</code></pre>
+<p>macOS では <code>linux</code> の代わりに <code>darwin</code>、Apple Silicon なら <code>darwin_arm64</code> (または両対応の <code>darwin_universal</code>) を選びます。</p>
+
+<h2 id="login">3. AWS にサインインする</h2>
+<p>nakama を使うには、まず「どの AWS アカウントとして操作するか」を決めます。<code>nakama aws login</code> を実行すると、ブラウザが開いて AWS のサインイン画面が表示されます。</p>
+
+<p class="cmd-caption">PowerShell で実行</p>
+<pre><code>nakama aws login</code></pre>
+
+<p>次のように進みます。</p>
+<ol class="steps">
+  <li><p>ブラウザが自動で開きます (開かない場合は、画面に表示された URL を自分でブラウザに貼り付けます)。</p></li>
+  <li><p>AWS のサインイン画面が出たら、ふだん使っている AWS のユーザーでログインします。すでにブラウザで AWS コンソールにログイン済みなら、確認画面だけで済みます。</p></li>
+  <li><p>「許可」を選ぶと、PowerShell の側に戻ってサインイン完了と表示されます。</p></li>
+</ol>
+
+<div class="callout note">
+  <span class="title">なぜブラウザを使うのか</span>
+  <p>アクセスキーのような長期間有効な秘密の文字列をパソコンに置かずに済むからです。nakama は AWS 公式の <code>aws login</code> と同じ方式 (OAuth 2.0 + PKCE + DPoP) を自前で実装しているため、<strong>aws コマンドをインストールしなくてもサインインできます</strong>。取得した一時的な認証情報は <code>~/.aws/login/cache/</code> (Windows では <code>C:\Users\&lt;あなた&gt;\.aws\login\cache\</code>) に保存され、あなたの <code>~/.aws/config</code> は書き換えません。</p>
+</div>
+
+<div class="callout warn">
+  <span class="title">サインインできない場合</span>
+  <p>ログインには AWS の管理ポリシー <code>SignInLocalDevelopmentAccess</code> が、あなたの IAM ユーザーまたはロールに付いている必要があります。付いていないと、ブラウザ側で拒否されます。会社のアカウントであれば、AWS の管理者に「この管理ポリシーを付けてほしい」と依頼してください。</p>
+  <p>権限を変えられない場合は、AWS SSO や環境変数など<strong>ふだん使っている別の方法で認証情報を用意しても構いません</strong>。nakama は標準的な AWS の認証情報をそのまま使えます。</p>
+</div>
+
+<h3>サインインできたかを確かめる</h3>
+<p class="cmd-caption">PowerShell で実行</p>
+<pre><code>nakama aws doctor</code></pre>
+<p><code>credentials</code> の行に、どの AWS アカウントとして動いているかが表示されます。<code>ok</code> なら成功です。この画面の読み方は<a href="07-troubleshoot.html#doctor">第 7 章</a>で詳しく説明します。</p>
+
+<h3>SSH 越しやブラウザのない環境では</h3>
+<p>ブラウザを起動できないパソコン (別のサーバーに SSH で入って作業している場合など) では <code>--remote</code> を付けます。表示された URL を手元のブラウザで開き、そこに出る確認コードを貼り付ける方式になります。</p>
+<pre><code>nakama aws login --remote</code></pre>
+
+<h2 id="expire">4. 有効期限と再サインイン</h2>
+<p>サインインの有効期限は<strong>最長 12 時間</strong>です。期限が切れると、コマンドを実行したときに「期限切れなのでもう一度サインインしてほしい」というエラーが出ます。その場合はもう一度実行するだけです。</p>
+<pre><code>nakama aws login</code></pre>
+<div class="callout tip">
+  <span class="title">ポート転送を使っていた場合</span>
+  <p>再サインインしたあとに <code>nakama aws tunnel restart &lt;名前&gt;</code> を実行すると、設定を変えずに転送をつなぎ直せます (<a href="05-use.html#tunnel">第 5 章</a>)。</p>
+</div>
+
+<h2 id="profile">5. 複数の AWS アカウントを使う</h2>
+<p>仕事用と個人用など、複数の AWS アカウントを切り替えて使う場合は <code>profile</code> を使います。サインインしたセッションに名前を付けて保存し、あとから選び直せます。</p>
+
+<p class="cmd-caption">PowerShell で実行 (アカウント A とアカウント B を登録する例)</p>
+<pre><code>nakama aws login                        # アカウント A にサインイン
+nakama aws profile save --name work      # 「work」という名前で保存
+
+nakama aws login                        # アカウント B にサインイン
+nakama aws profile save --name personal  # 「personal」として保存
+
+nakama aws profile list                  # 保存したものを一覧表示
+nakama aws profile load work              # 以降のコマンドは work を使う
+nakama aws profile unload                 # 選択を解除 (既定の認証方法に戻す)
+nakama aws profile delete personal        # 登録を削除</code></pre>
+
+<p><code>profile list</code> は次の列を表示します。</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>列</th><th>意味</th></tr></thead>
+  <tbody>
+    <tr><td><code>ACTIVE</code></td><td><code>*</code> が付いているものが、いま nakama が使うアカウントです</td></tr>
+    <tr><td><code>ACCOUNT</code></td><td>AWS アカウント ID (12 桁の数字)</td></tr>
+    <tr><td><code>ALIAS</code></td><td><code>--name</code> で付けた呼び名</td></tr>
+    <tr><td><code>IDENTITY</code></td><td>どのユーザー / ロールとして動くか</td></tr>
+    <tr><td><code>SAVED</code></td><td>保存した日時</td></tr>
+    <tr><td><code>STATUS</code></td><td>まだ使えるか、期限切れかどうか</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout note">
+  <span class="title">保存されるのは秘密の情報ではありません</span>
+  <p>nakama が保存するのはセッションの<strong>識別子</strong>だけで、パスワードやアクセスキーではありません。実際の一時認証情報は AWS 公式と同じ場所 (<code>~/.aws/login/cache/</code>) にあり、nakama はそれを読み書きします。<code>~/.aws/config</code> には一切手を触れません。</p>
+</div>
+
+<div class="callout warn">
+  <span class="title">意図しないアカウントに作らないための安全策</span>
+  <p><code>profile load</code> したセッションが期限切れなどで使えない場合、nakama は<strong>別のアカウントに勝手に切り替えずエラーで止まります</strong>。「仕事用のつもりで個人用アカウントにサーバーを作ってしまう」ことを防ぐためです。</p>
+</div>
+
+<h2 id="trouble1">6. つまずきやすい点</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>症状</th><th>原因と対処</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>用語 'nakama' は ... 認識されません</code></td>
+      <td>PATH の設定が反映されていません。PowerShell を閉じて開き直してください。それでも駄目なら、置き場所を絶対パスで実行して確認します (例: <code>&amp; "$env:USERPROFILE\bin\nakama.exe" version</code>)</td>
+    </tr>
+    <tr>
+      <td>ブラウザが開かない</td>
+      <td>画面に表示される URL を手でブラウザに貼り付ければ同じことができます。SSH 経由なら <code>--remote</code> を使ってください</td>
+    </tr>
+    <tr>
+      <td>証明書のエラーが出る</td>
+      <td>会社のネットワークが通信を検査している場合に起きることがあります。nakama 本体は Windows の証明書設定を読むので通常は問題ありませんが、詳しくは<a href="02-proxy-cert.html">第 2 章</a>を読んでください</td>
+    </tr>
+    <tr>
+      <td>アカウントが違う</td>
+      <td><code>nakama aws doctor</code> の <code>credentials</code> 行で、いまどのアカウントとして動いているかを確認できます。<code>profile load</code> で切り替えます</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<nav class="pager" aria-label="章の移動">
+  <a href="index.html">← 前へ: はじめに</a>
+  <a href="02-proxy-cert.html">次へ: 第 2 章 会社のプロキシと証明書 →</a>
+</nav>
+</main>
+</div>
+
+<footer class="site-footer">
+  nakama チュートリアル 第 1 章
+</footer>
+</body>
+</html>

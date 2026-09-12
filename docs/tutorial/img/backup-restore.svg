@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 370" role="img" aria-labelledby="backup-restore-title" aria-describedby="backup-restore-desc" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif">
+  <title id="backup-restore-title">バックアップと復元</title>
+  <desc id="backup-restore-desc">backup create でその時点のディスクの複製 (スナップショット) を作り、restore で選んだ世代の内容にディスクを戻す。restore は現在の内容を上書きする。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#374151" /></marker><marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#374151" /></marker><marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c" /></marker></defs>
+  <rect width="900" height="370" fill="#ffffff" />
+  <rect x="20" y="60" width="200" height="70" rx="10" fill="#f0f9ff" stroke="#0369a1" stroke-width="2" />
+  <text x="120" y="89" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">現在のディスク</text>
+  <text x="120" y="110" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">作業中の状態</text>
+  <rect x="320" y="45" width="170" height="65" rx="10" fill="#f3f4f6" stroke="#6b7280" stroke-width="2" />
+  <text x="405" y="72" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">世代 1</text>
+  <text x="405" y="92" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">初期セットアップ後</text>
+  <rect x="515" y="45" width="170" height="65" rx="10" fill="#f3f4f6" stroke="#6b7280" stroke-width="2" />
+  <text x="600" y="72" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">世代 2</text>
+  <text x="600" y="92" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">before-upgrade</text>
+  <rect x="710" y="45" width="170" height="65" rx="10" fill="#f3f4f6" stroke="#6b7280" stroke-width="2" />
+  <text x="795" y="72" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">世代 3</text>
+  <text x="795" y="92" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">最新 (自動取得)</text>
+  <line x1="222" y1="80" x2="316" y2="78" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <text x="269" y="71" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#374151">backup create</text>
+  <text x="320" y="130" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">スナップショット (増えていく) — 世代数は --keep で制限できます</text>
+  <rect x="20" y="200" width="200" height="70" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="2" />
+  <text x="120" y="229" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">ディスクの中身が</text>
+  <text x="120" y="250" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">選んだ世代に戻る</text>
+  <line x1="700" y1="150" x2="232" y2="200" stroke="#b91c1c" stroke-width="2" marker-end="url(#arrow-danger)" />
+  <text x="250" y="155" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#b91c1c">restore --label &lt;世代&gt;</text>
+  <rect x="280" y="200" width="600" height="70" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="2" />
+  <text x="580" y="229" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">restore は現在の内容を上書きします (元に戻せません)</text>
+  <text x="580" y="249" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">念のため restore の前にもう 1 つ backup create しておくと安全です</text>
+  <rect x="20" y="300" width="860" height="50" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2" />
+  <text x="450" y="329" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">update はアップデート前に自動でバックアップを取ります (失敗しても戻せます)</text>
+</svg>

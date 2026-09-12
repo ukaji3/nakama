@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 6 章 日々の運用 — nakama チュートリアル</title>
+<meta name="description" content="起動と停止、バックアップと復元、アップデート、サイズ変更、削除。nakama の運用コマンドを一通り説明します。">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">本文へスキップ</a>
+
+<header class="site">
+  <strong><a href="index.html" style="text-decoration:none">nakama チュートリアル</a></strong>
+  <span class="crumb">第 6 章 日々の運用</span>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="章の一覧">
+  <h2>目次</h2>
+  <ol>
+    <li><a href="index.html">はじめに</a></li>
+    <li><a href="01-install.html">インストールとサインイン</a></li>
+    <li><a href="02-proxy-cert.html">会社のプロキシと証明書</a></li>
+    <li><a href="03-init.html">土台を用意する</a></li>
+    <li><a href="04-create.html">開発環境を作る</a></li>
+    <li><a href="05-use.html">開発環境を使う</a></li>
+    <li><a href="06-operate.html" aria-current="page">日々の運用</a></li>
+    <li><a href="07-troubleshoot.html">困ったときは</a></li>
+    <li><a href="08-reference.html">コマンド早見表</a></li>
+  </ol>
+  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <ol>
+    <li><a href="#daily">起動と停止 (毎日使うもの)</a></li>
+    <li><a href="#backup">バックアップと復元</a></li>
+    <li><a href="#update">アップデート</a></li>
+    <li><a href="#edit">大きさとディスクの変更</a></li>
+    <li><a href="#delete">削除</a></li>
+  </ol>
+</nav>
+
+<main id="main">
+<h1>第 6 章 日々の運用</h1>
+<p class="lead">作った環境を長く使うための操作です。<strong>まず覚えるのは <code>stop</code> だけで十分です</strong> (使い終わったら止める)。</p>
+
+<h2 id="daily">1. 起動と停止 (毎日使うもの)</h2>
+<p class="cmd-caption">PowerShell で実行</p>
+<pre><code>nakama aws list                # いま何があるか、動いているか
+nakama aws stop dev01          # 作業終了。中身は残ります
+nakama aws start dev01         # 翌日また使う</code></pre>
+
+<div class="callout tip">
+  <span class="title">停止しても消えません</span>
+  <p><code>stop</code> は電源を切るだけです。インストールしたツール、書いたコード、設定はすべて残ります。翌日 <code>start</code> すれば同じ状態から再開できます。<strong>止めれば課金の大部分が止まります</strong> (<a href="03-init.html#cost">第 3 章</a>)。</p>
+  <p>外向き通信の中継役 (NAT インスタンス) も、すべての環境が停止すると自動で止まります。手動での操作は不要です。</p>
+</div>
+
+<p><code>list</code> の表示はこうなります。</p>
+<pre class="output"><code>NAME     INSTANCE_ID          STATE    TYPE    INSTANCE_TYPE  DISTRIBUTION_DOMAIN
+dev01    i-0123456789abcdef0  running  VSCODE  t3.medium      d111111abcdef8.cloudfront.net
+box01    i-0abcdef1234567890  stopped  BARE    t3.medium      -</code></pre>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>列</th><th>意味</th></tr></thead>
+  <tbody>
+    <tr><td><code>STATE</code></td><td><code>running</code> = 起動中 / <code>stopped</code> = 停止中</td></tr>
+    <tr><td><code>TYPE</code></td><td><code>VSCODE</code> = 通常の環境 / <code>BARE</code> = <code>--bare</code> で作った環境 / <code>NAT</code> = 中継役 (<code>--show-nat</code> を付けたときだけ表示)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="backup">2. バックアップと復元</h2>
+<p>ディスクの内容をまるごと控えておけます。大きな変更をする前に取っておくと安心です。</p>
+
+<figure>
+  <img src="img/backup-restore.svg" alt="backup create で現在のディスクからスナップショット (世代) を作る。restore --label で選んだ世代の内容にディスクを戻すが、現在の内容は上書きされ元に戻せない。update はアップデート前に自動でバックアップを取る。">
+  <figcaption><strong>図 6-1: バックアップと復元。</strong> <code>backup</code> は増やしていくもの、<code>restore</code> は現在の内容を<strong>置き換える</strong>ものです。</figcaption>
+</figure>
+
+<p class="cmd-caption">PowerShell で実行</p>
+<pre><code>nakama aws backup create dev01                                  # ラベルは自動 (日時)
+nakama aws backup create dev01 --label before-upgrade --note "アップグレード前"
+nakama aws backup create dev01 --keep 5                         # 古い世代を 5 つまでに整理
+nakama aws backup list dev01                                    # 一覧
+nakama aws backup list                                           # 全環境の一覧 (NAME 列付き)
+nakama aws backup note dev01 --label before-upgrade --note "動作確認済み"
+nakama aws backup delete dev01 --label before-upgrade</code></pre>
+
+<pre class="output"><code>LABEL                 CREATED_AT            STATE       GiB    NOTE
+before-upgrade        2026-09-12T22:10:33Z  completed   30     アップグレード前
+20260913-001204       2026-09-13T00:12:04Z  pending     30</code></pre>
+<p><code>STATE</code> が <code>pending</code> の間はまだ作成中で、<code>completed</code> になれば復元に使えます。</p>
+
+<h3>復元する</h3>
+<pre><code>nakama aws restore dev01                       # 最新のバックアップに戻す
+nakama aws restore dev01 --label before-upgrade  # 世代を指定して戻す</code></pre>
+<p>実行すると確認を求められます。</p>
+<pre class="output"><code>Restore nakama instance "dev01" in place? This deletes the current root volume. [y/N]:</code></pre>
+
+<div class="callout danger">
+  <span class="title">restore は現在の内容を消します</span>
+  <p>復元はディスクを<strong>置き換える</strong>操作です。バックアップ以降に書いた内容は失われ、元に戻せません。実行前に <code>nakama aws backup create dev01</code> でいまの状態も控えておくと安全です。<code>--yes</code> で確認を省略できますが、意図が確実なときだけにしてください。</p>
+</div>
+
+<h2 id="update">3. アップデート</h2>
+<p>OS のパッケージと code-server を最新にします。</p>
+<pre><code>nakama aws update dev01
+nakama aws update dev01 --keep 5 --yes    # 自動バックアップを 5 世代までに制限し、確認を省略</code></pre>
+
+<p>内部では次の順に進みます。</p>
+<ol class="steps">
+  <li><p><strong>バックアップを自動取得</strong>します (失敗しても戻せるようにするため)。</p></li>
+  <li><p>停止していた場合は<strong>起動</strong>します。</p></li>
+  <li><p>OS のパッケージ更新 (<code>apt dist-upgrade</code> 相当) と code-server の最新版導入を実行します。</p></li>
+  <li><p>更新の内容によって<strong>再起動</strong>が必要な場合は再起動します。</p></li>
+  <li><p>元の電源状態に戻します (もともと停止していた環境は、また停止します)。</p></li>
+</ol>
+
+<div class="callout note">
+  <span class="title">--bare の環境では OS の更新だけ</span>
+  <p>code-server が無いので、その部分は行われません。</p>
+</div>
+
+<div class="callout warn">
+  <span class="title">時間がかかることがあります</span>
+  <p>更新の量によって数分から十数分かかります。途中で中断しないでください。うまくいかなかった場合は、直前に取られたバックアップから <code>restore</code> できます。</p>
+</div>
+
+<h2 id="edit">4. 大きさとディスクの変更</h2>
+<h3>ディスクを増やす</h3>
+<pre><code>nakama aws edit dev01 --ebs 60</code></pre>
+<p>ディスクを 60 GiB に拡張します。ディスク側の拡張だけでなく、OS 側での認識 (パーティションとファイルシステムの拡張) まで自動で行われます。</p>
+<div class="callout warn">
+  <span class="title">縮小はできません</span>
+  <p>AWS の仕様上、ディスクは大きくすることしかできません。<strong>現在より小さい値は指定できません。</strong></p>
+</div>
+
+<h3>インスタンスの型を変える</h3>
+<pre><code>nakama aws edit dev01 --instance-type m6a.2xlarge
+nakama aws edit dev01 --instance-type t3.medium --yes    # 確認を省略</code></pre>
+<p>停止 → 型の変更 → 元の電源状態へ復帰、という順に自動で進みます。起動中の環境に対して実行すると、いったん停止するため<strong>作業中のプロセスは終了します</strong>。</p>
+<div class="callout warn">
+  <span class="title">ARM と Intel/AMD の間は変更できません</span>
+  <p><code>t4g</code> (ARM) から <code>t3</code> (Intel/AMD) のような変更は、ディスクの中身が対応していないためできません。<a href="04-create.html#size">第 4 章</a>も参照してください。</p>
+</div>
+
+<h2 id="delete">5. 削除</h2>
+<pre><code>nakama aws delete dev01</code></pre>
+<p>確認のあと、その環境に属する AWS のリソース (EC2、ディスク、CloudFront、WAF の関連設定、SSM のパラメータ) を削除します。</p>
+
+<div class="callout danger">
+  <span class="title">中身も消えます</span>
+  <p><code>delete</code> はディスクも削除するため、<strong>その環境に置いていたコードやデータは失われます</strong>。必要なものは事前に git へ push するか、<code>backup create</code> を取ってください。</p>
+  <p>なお、<code>backup</code> で取ったスナップショットは環境の削除後も残ります (別途 <code>backup delete</code> で消せます)。</p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>オプション</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td><code>--yes</code> / <code>-y</code></td><td>確認を省略します</td></tr>
+    <tr><td><code>--force</code></td><td>「もう存在しない」というエラーを無視して先に進みます (途中で失敗した削除の後片付けに使います)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout tip">
+  <span class="title">土台 (init で作ったもの) は残ります</span>
+  <p><code>delete</code> は個々の環境だけを消します。VPC や WAF などの共通部分はそのままなので、また <code>create</code> すればすぐ作れます。共通部分まで消したい場合は AWS コンソールから手動で削除してください。</p>
+</div>
+
+<nav class="pager" aria-label="章の移動">
+  <a href="05-use.html">← 前へ: 第 5 章 開発環境を使う</a>
+  <a href="07-troubleshoot.html">次へ: 第 7 章 困ったときは →</a>
+</nav>
+</main>
+</div>
+
+<footer class="site-footer">
+  nakama チュートリアル 第 6 章
+</footer>
+</body>
+</html>
