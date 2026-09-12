@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nakama チュートリアル — はじめに</title>
+<meta name="description" content="AWS 上にブラウザで使える開発環境を作る CLI ツール nakama のチュートリアル。Windows と証明書の知識がなくても読めます。">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">本文へスキップ</a>
+
+<header class="site">
+  <strong>nakama チュートリアル</strong>
+  <span class="crumb">はじめに</span>
+  <span style="margin-left:auto"><a href="../../README.md">README</a></span>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="章の一覧">
+  <h2>目次</h2>
+  <ol>
+    <li><a href="index.html" aria-current="page">はじめに</a></li>
+    <li><a href="01-install.html">インストールとサインイン</a></li>
+    <li><a href="02-proxy-cert.html">会社のプロキシと証明書</a></li>
+    <li><a href="03-init.html">土台を用意する</a></li>
+    <li><a href="04-create.html">開発環境を作る</a></li>
+    <li><a href="05-use.html">開発環境を使う</a></li>
+    <li><a href="06-operate.html">日々の運用</a></li>
+    <li><a href="07-troubleshoot.html">困ったときは</a></li>
+    <li><a href="08-reference.html">コマンド早見表</a></li>
+  </ol>
+</nav>
+
+<main id="main">
+<h1>nakama チュートリアル</h1>
+<p class="lead">AWS 上に「ブラウザだけで使える開発環境」を数コマンドで作る道具、nakama の使い方を一から説明します。Windows や証明書のしくみに詳しくなくても読み進められるように書いています。</p>
+
+<h2>nakama で何ができるのか</h2>
+<p>手元のパソコンのメモリが足りず、開発ツールが重くて動かない。そんなときに、開発環境そのものを AWS (クラウド) 側に置いてしまうのが nakama です。</p>
+<ul>
+  <li><strong>ブラウザで VS Code が開きます。</strong> クラウド上で動く VS Code (<a href="https://github.com/coder/code-server">code-server</a>) に、ブラウザからアクセスします。手元に開発ツールを入れる必要はありません</li>
+  <li><strong>手元の VS Code からも使えます。</strong> デスクトップ版の VS Code や JetBrains、素の <code>ssh</code> からも接続できます</li>
+  <li><strong>止めればお金がほとんどかかりません。</strong> 使っていないときは停止でき、停止中はディスクの保管料だけになります</li>
+  <li><strong>aws コマンドのインストールは不要です。</strong> サインインもリソース操作も nakama だけで完結します</li>
+  <li><strong>会社のネットワーク (プロキシ) にそのまま対応します。</strong> 面倒な証明書の設定は nakama が肩代わりします</li>
+</ul>
+
+<figure>
+  <img src="img/overview.svg" alt="手元の PC のブラウザは CloudFront と WAF を通って AWS 上の EC2 インスタンスの code-server につながり、nakama CLI は AWS API と SSM Session Manager を通ってインスタンスを操作する。インスタンスからインターネットへの外向き通信は NAT インスタンスを経由する。">
+  <figcaption><strong>図 0-1: nakama の全体像。</strong> 開発環境は AWS の内部 (プライベートサブネット) にあり、外部から直接つなげる口を持ちません。ブラウザからは CloudFront という入口を通り、しかも許可した IP アドレスからしか通れません。コマンド操作は SSM という AWS の仕組みを通るので、SSH のポートを開ける必要がありません。</figcaption>
+</figure>
+
+<h2>このチュートリアルの読み方</h2>
+<p>最初から順に読めば、初回のセットアップから日々の運用までひととおり分かります。急いでいる場合は次の順で読んでください。</p>
+
+<figure>
+  <img src="img/flow-first-time.svg" alt="初回セットアップは、サインイン (約1分)、基盤を作る (約3分)、IP を許可 (数秒)、環境を作る (約15分)、使い始める (数秒) の5ステップ。">
+  <figcaption><strong>図 0-2: 初回セットアップの流れ。</strong> 2 番目の「基盤を作る」は AWS アカウントに 1 回だけ実行します。所要時間は目安です。</figcaption>
+</figure>
+
+<ul class="cards">
+  <li><a href="01-install.html"><span class="num">第 1 章</span><span class="name">インストールとサインイン</span><span class="desc">nakama を Windows に入れて、AWS にサインインします。複数の AWS アカウントの切り替えも扱います。</span></a></li>
+  <li><a href="02-proxy-cert.html"><span class="num">第 2 章</span><span class="name">会社のプロキシと証明書</span><span class="desc">「証明書エラー」がなぜ起きるのかを図で説明し、<code>nakama aws cli shell</code> の使い方を示します。</span></a></li>
+  <li><a href="03-init.html"><span class="num">第 3 章</span><span class="name">土台を用意する</span><span class="desc">ネットワークなどの共通部分を作り、自分の接続元 IP を許可します。料金の考え方もここで。</span></a></li>
+  <li><a href="04-create.html"><span class="num">第 4 章</span><span class="name">開発環境を作る</span><span class="desc">インスタンスの作成、大きさの選び方、初期セットアップの自動化、軽量版 (<code>--bare</code>) の使い分け。</span></a></li>
+  <li><a href="05-use.html"><span class="num">第 5 章</span><span class="name">開発環境を使う</span><span class="desc">ブラウザ / ターミナル / 手元の VS Code / ポート転送、4 つのアクセス方法を使い分けます。</span></a></li>
+  <li><a href="06-operate.html"><span class="num">第 6 章</span><span class="name">日々の運用</span><span class="desc">起動と停止、バックアップと復元、アップデート、サイズ変更、削除。</span></a></li>
+  <li><a href="07-troubleshoot.html"><span class="num">第 7 章</span><span class="name">困ったときは</span><span class="desc"><code>nakama aws doctor</code> の読み方と、症状別の対処一覧。</span></a></li>
+  <li><a href="08-reference.html"><span class="num">第 8 章</span><span class="name">コマンド早見表</span><span class="desc">全コマンドとオプション、環境変数、設定ファイルの置き場所。</span></a></li>
+</ul>
+
+<h2>始める前に用意するもの</h2>
+<div class="table-wrap">
+<table>
+  <caption class="cmd-caption">必要なもの</caption>
+  <thead><tr><th>もの</th><th>説明</th></tr></thead>
+  <tbody>
+    <tr><td>AWS アカウント</td><td>会社のものでも個人のものでも構いません。リージョン (地域) は東京 <code>ap-northeast-1</code> に固定されています</td></tr>
+    <tr><td>ブラウザで AWS にログインできること</td><td>nakama のサインインは、ブラウザで開いた AWS のログイン画面を使います</td></tr>
+    <tr><td>IAM の権限</td><td>ログインには AWS の管理ポリシー <code>SignInLocalDevelopmentAccess</code> が必要です。リソースを作るには EC2 や CloudFront などの権限も必要です (<a href="07-troubleshoot.html#doctor">第 7 章</a>で自分の権限を確認できます)</td></tr>
+    <tr><td>パソコン</td><td>Windows / macOS / Linux。このチュートリアルの画面例は Windows の PowerShell です</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn">
+  <span class="title">料金について</span>
+  <p>nakama は AWS のリソース (仮想サーバーやディスク) を作ります。使った分だけ AWS から課金されます。具体的な金額は地域や構成で変わるため、<a href="https://calculator.aws/">AWS 料金計算ツール</a>や AWS のコンソールで確認してください。このチュートリアルでは金額そのものは扱いませんが、<a href="03-init.html#cost">第 3 章</a>で「どこにお金がかかるか」と「止めれば減る仕組み」を説明します。</p>
+</div>
+
+<h2>用語ミニ辞典</h2>
+<p>本文で出てくる言葉です。分からない言葉が出てきたらここに戻ってきてください。</p>
+
+<dl class="terms">
+  <dt>CLI (コマンドラインインターフェース)</dt>
+  <dd>文字を打ってソフトを操作する方式のこと。nakama は CLI の道具で、Windows では PowerShell などの黒い (または青い) 画面で使います。</dd>
+
+  <dt>EC2 インスタンス</dt>
+  <dd>AWS が貸してくれる仮想サーバー 1 台のこと。nakama はこの上に開発環境を作ります。「インスタンス」は「サーバー 1 台」と読み替えて構いません。</dd>
+
+  <dt>code-server</dt>
+  <dd>ブラウザの中で動く VS Code。見た目も操作も、普段の VS Code とほぼ同じです。</dd>
+
+  <dt>CloudFront</dt>
+  <dd>AWS の配信サービス。ここではインターネットから開発環境へ入るための<strong>正面玄関</strong>として使います。</dd>
+
+  <dt>WAF / IP 許可リスト (ACL)</dt>
+  <dd>正面玄関の<strong>門番</strong>。あらかじめ登録した IP アドレス以外からのアクセスを拒否します。自宅や会社の回線ごとに登録します。</dd>
+
+  <dt>SSM Session Manager</dt>
+  <dd>AWS が用意する<strong>裏口</strong>のような仕組み。サーバー側にポートを開けなくても、AWS の権限だけで中に入れます。nakama の <code>connect</code> / <code>ssh</code> / <code>tunnel</code> はこれを使います。</dd>
+
+  <dt>NAT インスタンス</dt>
+  <dd>開発環境から<strong>外向き</strong>の通信 (ソフトのダウンロードなど) を中継する小さなサーバー。nakama は開発環境の稼働に合わせて自動で起動・停止します。</dd>
+
+  <dt>プロキシ</dt>
+  <dd>会社のネットワークで、外部との通信をいったん受け止めて代理で通す装置。多くの会社では、これを通らないと外に出られません。</dd>
+
+  <dt>証明書 / CA (認証局)</dt>
+  <dd>「この通信相手は本物です」を証明する電子的な身分証が<strong>証明書</strong>で、それを発行する組織が <strong>CA</strong> です。詳しくは<a href="02-proxy-cert.html">第 2 章</a>で図を使って説明します。</dd>
+
+  <dt>SSH</dt>
+  <dd>遠くのサーバーに安全にログインするための定番の仕組み。デスクトップ版 VS Code のリモート接続もこれを使います。</dd>
+
+  <dt>ポート転送 (トンネル)</dt>
+  <dd>クラウド側で動いているサービス (開発用サーバーなど) を、手元の <code>localhost</code> のように扱えるようにすること。<code>nakama aws tunnel</code> が担当します。</dd>
+
+  <dt>バックアップ / スナップショット</dt>
+  <dd>ある時点のディスクの内容をまるごと控えておくこと。nakama では <code>backup</code> で作り、<code>restore</code> で戻します。</dd>
+</dl>
+
+<div class="callout note">
+  <span class="title">画面例の読み方</span>
+  <p>入力するコマンドは次のように示します。プロンプト (<code>PS C:\&gt;</code> など) は省いているので、そのままコピーできます。</p>
+  <p class="cmd-caption">PowerShell で実行</p>
+  <pre><code>nakama version</code></pre>
+  <p>コマンドの実行結果は、点線の枠で示します。</p>
+  <pre class="output"><code>0.17.0 (6c34716, 2026-09-03T17:35:42Z)</code></pre>
+</div>
+
+<nav class="pager" aria-label="章の移動">
+  <span class="spacer">&nbsp;</span>
+  <a href="01-install.html">次へ: 第 1 章 インストールとサインイン →</a>
+</nav>
+</main>
+</div>
+
+<footer class="site-footer">
+  nakama チュートリアル — このページは <code>docs/tutorial/</code> にあります。図は <code>docs/tutorial/tools/gen_diagrams.py</code> で生成しています。
+</footer>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 430" role="img" aria-labelledby="doctor-map-title" aria-describedby="doctor-map-desc" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif">
+  <title id="doctor-map-title">doctor が点検する範囲</title>
+  <desc id="doctor-map-desc">doctor は手元の環境 (プロキシ、証明書)、AWS への資格情報、IP 許可、機能ごとの権限、ポート転送の状態を読み取り専用で点検する。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#374151" /></marker><marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#374151" /></marker><marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c" /></marker></defs>
+  <rect width="900" height="430" fill="#ffffff" />
+  <text x="20" y="36" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">手元の環境</text>
+  <rect x="20" y="50" width="250" height="66" rx="10" fill="#f0f9ff" stroke="#0369a1" stroke-width="2" />
+  <text x="145" y="77" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">proxy</text>
+  <text x="145" y="97" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">会社のプロキシを見つけられたか</text>
+  <rect x="20" y="126" width="250" height="66" rx="10" fill="#f0f9ff" stroke="#0369a1" stroke-width="2" />
+  <text x="145" y="153" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">tls</text>
+  <text x="145" y="173" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">監査プロキシの有無と検証結果</text>
+  <rect x="20" y="202" width="250" height="66" rx="10" fill="#f0f9ff" stroke="#0369a1" stroke-width="2" />
+  <text x="145" y="229" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">tunnels</text>
+  <text x="145" y="249" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">ポート転送が生きているか</text>
+  <text x="330" y="36" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">AWS 側</text>
+  <rect x="330" y="50" width="270" height="66" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
+  <text x="465" y="77" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">credentials</text>
+  <text x="465" y="97" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">どのアカウントとして動くか</text>
+  <rect x="330" y="126" width="270" height="66" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
+  <text x="465" y="153" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">waf-allowlist</text>
+  <text x="465" y="173" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">自分の IP が許可されているか</text>
+  <text x="650" y="36" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">機能ごとの権限</text>
+  <rect x="650" y="50" width="230" height="218" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2" />
+  <text x="765" y="93" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: create</text>
+  <text x="765" y="113" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: connect</text>
+  <text x="765" y="133" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: backup</text>
+  <text x="765" y="153" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: delete</text>
+  <text x="765" y="173" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">…など機能ごとに 1 行</text>
+  <text x="765" y="193" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827"></text>
+  <text x="765" y="213" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">足りない権限は</text>
+  <text x="765" y="233" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">その場に列挙されます</text>
+  <rect x="20" y="300" width="860" height="50" rx="10" fill="#f3f4f6" stroke="#6b7280" stroke-width="2" />
+  <text x="450" y="330" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">3 つの結果: ok = 問題なし / warn = 使えない機能がある / fail = 直さないと動かない</text>
+  <rect x="20" y="360" width="860" height="55" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2" />
+  <text x="450" y="382" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">完全に読み取り専用です (AWS のリソースも PC の設定も変更しません)</text>
+  <text x="450" y="402" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">パスワードや資格情報は表示しないので、出力をそのまま人に見せて相談できます</text>
+</svg>

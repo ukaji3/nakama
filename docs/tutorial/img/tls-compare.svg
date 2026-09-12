@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" role="img" aria-labelledby="tls-compare-title" aria-describedby="tls-compare-desc" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif">
+  <title id="tls-compare-title">通常の HTTPS と監査プロキシがある場合の違い</title>
+  <desc id="tls-compare-desc">通常は Amazon が発行した証明書をそのまま検証できる。監査プロキシは通信をいったん開いて中身を検査し、会社が発行した証明書で封をし直すため、会社の証明書を信頼していないソフトはエラーになる。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#374151" /></marker><marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#374151" /></marker><marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c" /></marker></defs>
+  <rect width="900" height="500" fill="#ffffff" />
+  <text x="20" y="40" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="16" font-weight="600" fill="#111827">A. 監査プロキシがない場合</text>
+  <rect x="20" y="55" width="150" height="70" rx="10" fill="#f0f9ff" stroke="#0369a1" stroke-width="2" />
+  <text x="95" y="84" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">あなたの PC</text>
+  <text x="95" y="105" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">ブラウザ / CLI</text>
+  <rect x="690" y="55" width="190" height="70" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
+  <text x="785" y="84" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">AWS</text>
+  <text x="785" y="105" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">sts.amazonaws.com など</text>
+  <line x1="172" y1="90" x2="686" y2="90" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <text x="429" y="82" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#374151">暗号化されたまま通過 (誰も中を見られない)</text>
+  <rect x="330" y="140" width="240" height="55" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2" />
+  <text x="450" y="162" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">証明書の発行者: Amazon</text>
+  <text x="450" y="182" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">→ 世界共通の信頼リストにある</text>
+  <line x1="450" y1="138" x2="450" y2="128" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <rect x="596" y="152" width="67" height="24" rx="12" fill="#ecfdf5" stroke="#047857" stroke-width="1.5" />
+  <text x="630" y="169" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="12" font-weight="600" fill="#111827">検証 OK</text>
+  <text x="20" y="250" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="16" font-weight="600" fill="#111827">B. 会社の監査プロキシがある場合</text>
+  <rect x="20" y="265" width="150" height="70" rx="10" fill="#f0f9ff" stroke="#0369a1" stroke-width="2" />
+  <text x="95" y="294" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">あなたの PC</text>
+  <text x="95" y="315" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">ブラウザ / CLI</text>
+  <rect x="330" y="258" width="220" height="85" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="2" />
+  <text x="440" y="284" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">会社の監査プロキシ</text>
+  <text x="440" y="304" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">①中身を検査するため開封</text>
+  <text x="440" y="324" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">②会社の証明書で封じ直す</text>
+  <rect x="710" y="265" width="170" height="70" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
+  <text x="795" y="294" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">AWS</text>
+  <text x="795" y="315" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">本来の相手</text>
+  <line x1="172" y1="300" x2="326" y2="300" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <line x1="554" y1="300" x2="706" y2="300" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <rect x="300" y="375" width="280" height="55" rx="10" fill="#fef2f2" stroke="#b91c1c" stroke-width="2" />
+  <text x="440" y="396" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">PC に届く証明書の発行者: 会社</text>
+  <text x="440" y="416" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">→ 世界共通の信頼リストには無い</text>
+  <line x1="440" y1="373" x2="440" y2="347" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
+  <rect x="600" y="368" width="285" height="34" rx="8" fill="#ecfdf5" stroke="#047857" stroke-width="2" />
+  <text x="742" y="388" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="600" fill="#111827">ブラウザ: OK (会社の証明書を信頼済み)</text>
+  <rect x="600" y="410" width="285" height="34" rx="8" fill="#fef2f2" stroke="#b91c1c" stroke-width="2" />
+  <text x="742" y="430" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="600" fill="#111827">aws CLI: エラー (信頼していない)</text>
+  <text x="20" y="478" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">B の状態は正常な会社の運用です。壊れているわけではなく、「会社の証明書を信頼するソフトかどうか」で結果が変わります。</text>
+</svg>

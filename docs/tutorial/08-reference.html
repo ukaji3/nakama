@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 8 章 コマンド早見表 — nakama チュートリアル</title>
+<meta name="description" content="nakama の全コマンドとオプション、環境変数、設定ファイルの置き場所の一覧。">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">本文へスキップ</a>
+
+<header class="site">
+  <strong><a href="index.html" style="text-decoration:none">nakama チュートリアル</a></strong>
+  <span class="crumb">第 8 章 コマンド早見表</span>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="章の一覧">
+  <h2>目次</h2>
+  <ol>
+    <li><a href="index.html">はじめに</a></li>
+    <li><a href="01-install.html">インストールとサインイン</a></li>
+    <li><a href="02-proxy-cert.html">会社のプロキシと証明書</a></li>
+    <li><a href="03-init.html">土台を用意する</a></li>
+    <li><a href="04-create.html">開発環境を作る</a></li>
+    <li><a href="05-use.html">開発環境を使う</a></li>
+    <li><a href="06-operate.html">日々の運用</a></li>
+    <li><a href="07-troubleshoot.html">困ったときは</a></li>
+    <li><a href="08-reference.html" aria-current="page">コマンド早見表</a></li>
+  </ol>
+  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <ol>
+    <li><a href="#global">共通オプション</a></li>
+    <li><a href="#commands">コマンド一覧</a></li>
+    <li><a href="#env">環境変数</a></li>
+    <li><a href="#files">ファイルの置き場所</a></li>
+    <li><a href="#cheatsheet">よく使う組み合わせ</a></li>
+  </ol>
+</nav>
+
+<main id="main">
+<h1>第 8 章 コマンド早見表</h1>
+<p class="lead">全コマンドとオプションの一覧です。手元で確認したいときは、どのコマンドにも <code>--help</code> を付けられます。</p>
+
+<h2 id="global">1. 共通オプション</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>オプション</th><th>意味</th></tr></thead>
+  <tbody>
+    <tr><td><code>-o, --output &lt;形式&gt;</code></td><td>出力形式。<code>table</code> (既定) / <code>json</code> / <code>yaml</code></td></tr>
+    <tr><td><code>-v, --verbose</code></td><td>詳細ログを表示 (原因調査に使います)</td></tr>
+    <tr><td><code>-h, --help</code></td><td>使い方を表示</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="commands">2. コマンド一覧</h2>
+
+<h3>サインインとアカウント</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>コマンド</th><th>説明</th><th>主なオプション</th></tr></thead>
+  <tbody>
+    <tr><td><code>nakama aws login</code></td><td>ブラウザ経由でサインイン</td><td><code>--remote</code> (URL 表示 + コード貼り付け方式)、<code>--name &lt;別名&gt;</code></td></tr>
+    <tr><td><code>nakama aws profile save</code></td><td>いまのセッションを保存</td><td><code>--name &lt;別名&gt;</code></td></tr>
+    <tr><td><code>nakama aws profile list</code></td><td>保存済みを一覧</td><td>—</td></tr>
+    <tr><td><code>nakama aws profile load &lt;名前&gt;</code></td><td>使うアカウントを選択</td><td>—</td></tr>
+    <tr><td><code>nakama aws profile unload</code></td><td>選択を解除</td><td>—</td></tr>
+    <tr><td><code>nakama aws profile delete &lt;名前&gt;</code></td><td>登録を削除</td><td>—</td></tr>
+    <tr><td><code>nakama version</code></td><td>バージョン表示</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>土台とアクセス制御</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>コマンド</th><th>説明</th><th>主なオプション</th></tr></thead>
+  <tbody>
+    <tr><td><code>nakama aws init</code></td><td>共通の土台を作成 (冪等)</td><td>—</td></tr>
+    <tr><td><code>nakama aws acl add [IP|CIDR]</code></td><td>許可 IP を追加 (省略時は自動検出)</td><td>—</td></tr>
+    <tr><td><code>nakama aws acl list</code></td><td>許可 IP を一覧</td><td>—</td></tr>
+    <tr><td><code>nakama aws acl delete &lt;IP|CIDR&gt;</code></td><td>許可 IP を削除</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>環境の作成と情報</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>コマンド</th><th>説明</th><th>主なオプション</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>nakama aws create</code></td>
+      <td>開発環境を作成</td>
+      <td>
+        <code>--name &lt;名前&gt;</code> (必須)、<code>--instance-type &lt;型&gt;</code> (必須)、
+        <code>--bare</code>、<code>--preset &lt;名前&gt;</code>、<code>--setup &lt;パス|https URL&gt;</code>、
+        <code>--dotfiles &lt;git URL&gt;</code>、<code>--code-server-version &lt;版&gt;</code>、
+        <code>--with-admin</code>、<code>--with-role &lt;ロール名&gt;</code>、<code>--show-password</code>
+      </td>
+    </tr>
+    <tr><td><code>nakama aws list</code></td><td>一覧表示</td><td><code>--show-nat</code> (中継役も表示)</td></tr>
+    <tr><td><code>nakama aws info &lt;名前&gt;</code></td><td>詳細表示</td><td><code>--show-password</code></td></tr>
+    <tr><td><code>nakama aws setup rerun &lt;名前&gt;</code></td><td>セットアップを再実行</td><td><code>--setup</code>、<code>--dotfiles</code>、<code>--preset</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>アクセス</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>コマンド</th><th>説明</th><th>主なオプション</th></tr></thead>
+  <tbody>
+    <tr><td><code>nakama aws open &lt;名前&gt;</code></td><td>ブラウザで開く (自動ログイン)</td><td><code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code> (既定 30s)</td></tr>
+    <tr><td><code>nakama aws connect &lt;名前&gt; [コマンド...]</code></td><td>ターミナルに入る / コマンド実行</td><td><code>--tty</code>、<code>--retry &lt;回数&gt;</code> (対話は既定 5、コマンド実行は既定 0)</td></tr>
+    <tr><td><code>nakama aws ssh setup &lt;名前&gt;</code></td><td>公開鍵の登録と ssh 設定の生成</td><td><code>--identity &lt;公開鍵&gt;</code>、<code>--no-key</code>、<code>--port &lt;番号&gt;</code> (既定 22)</td></tr>
+    <tr><td><code>nakama aws ssh proxy &lt;名前&gt;</code></td><td>ssh の <code>ProxyCommand</code> 用 (手で実行するものではありません)</td><td><code>--port &lt;番号&gt;</code></td></tr>
+    <tr><td><code>nakama aws tunnel [start] &lt;名前&gt; -L &lt;指定&gt;</code></td><td>ポート転送を開始</td><td><code>-L &lt;手元&gt;:&lt;相手&gt;</code> または <code>-L &lt;手元&gt;:&lt;ホスト&gt;:&lt;相手&gt;</code> (複数指定可)</td></tr>
+    <tr><td><code>nakama aws tunnel status [名前]</code></td><td>転送状態 (名前を省略すると全件)</td><td>—</td></tr>
+    <tr><td><code>nakama aws tunnel suggest &lt;名前&gt;</code></td><td>転送候補のポートを提案</td><td>—</td></tr>
+    <tr><td><code>nakama aws tunnel restart &lt;名前&gt;</code></td><td>設定を変えず再接続</td><td>—</td></tr>
+    <tr><td><code>nakama aws tunnel stop &lt;名前&gt;</code></td><td>転送を停止</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>運用</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>コマンド</th><th>説明</th><th>主なオプション</th></tr></thead>
+  <tbody>
+    <tr><td><code>nakama aws start &lt;名前&gt;</code></td><td>起動</td><td>—</td></tr>
+    <tr><td><code>nakama aws stop &lt;名前&gt;</code></td><td>停止</td><td>—</td></tr>
+    <tr><td><code>nakama aws edit &lt;名前&gt;</code></td><td>ディスク拡張 / 型変更</td><td><code>--ebs &lt;GiB&gt;</code>、<code>--instance-type &lt;型&gt;</code>、<code>-y, --yes</code></td></tr>
+    <tr><td><code>nakama aws update &lt;名前&gt;</code></td><td>OS と code-server を更新</td><td><code>--keep &lt;世代数&gt;</code>、<code>-y, --yes</code></td></tr>
+    <tr><td><code>nakama aws backup create &lt;名前&gt;</code></td><td>バックアップ作成</td><td><code>--label &lt;名札&gt;</code>、<code>--note &lt;メモ&gt;</code>、<code>--keep &lt;世代数&gt;</code></td></tr>
+    <tr><td><code>nakama aws backup list [名前]</code></td><td>バックアップ一覧 (省略で全件)</td><td>—</td></tr>
+    <tr><td><code>nakama aws backup note &lt;名前&gt;</code></td><td>メモを付ける</td><td><code>--label</code> (必須)、<code>--note</code> (必須)</td></tr>
+    <tr><td><code>nakama aws backup delete &lt;名前&gt;</code></td><td>バックアップ削除</td><td><code>--label</code> (必須)</td></tr>
+    <tr><td><code>nakama aws restore &lt;名前&gt;</code></td><td>バックアップから復元 (上書き)</td><td><code>--label &lt;名札&gt;</code> (既定は最新)、<code>-y, --yes</code></td></tr>
+    <tr><td><code>nakama aws delete &lt;名前&gt;</code></td><td>環境を削除</td><td><code>--force</code>、<code>-y, --yes</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>診断とツール</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>コマンド</th><th>説明</th><th>主なオプション</th></tr></thead>
+  <tbody>
+    <tr><td><code>nakama aws doctor</code></td><td>環境を読み取り専用で点検</td><td>共通の <code>-o json</code> が使えます</td></tr>
+    <tr><td><code>nakama aws cli shell</code></td><td>aws CLI が動くシェルを開く (Windows 専用)</td><td><code>--shell &lt;実行ファイル&gt;</code></td></tr>
+    <tr><td><code>nakama completion &lt;シェル&gt;</code></td><td>コマンド補完の設定を出力</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="env">3. 環境変数</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>環境変数</th><th>役割</th></tr></thead>
+  <tbody>
+    <tr><td><code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code> / <code>NO_PROXY</code></td><td>プロキシの指定 (小文字も可)。設定されていれば OS の設定より優先されます</td></tr>
+    <tr><td><code>AWS_CA_BUNDLE</code></td><td>aws CLI が使う証明書ファイル。<code>nakama aws cli shell</code> が自動で設定します</td></tr>
+    <tr><td><code>SSM_PLUGIN_PING_INTERVAL_SECONDS</code></td><td>接続維持の信号の間隔 (秒、既定 300)。切断が多い環境で短くします</td></tr>
+    <tr><td><code>XDG_CONFIG_HOME</code></td><td>nakama の設定の置き場所を変えたい場合に指定します (既定はホームの <code>.config</code>)</td></tr>
+    <tr><td><code>AWS_LOGIN_CACHE_DIRECTORY</code></td><td>サインイン情報のキャッシュ場所を変えたい場合 (通常は不要)</td></tr>
+    <tr><td><code>NAKAMA_AWS_CLI_SHELL</code></td><td><code>cli shell</code> の中にいることを示す目印 (二重起動の防止に使われます。自分で設定するものではありません)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="files">4. ファイルの置き場所</h2>
+<p>下の <code>~</code> は Windows では <code>C:\Users\&lt;あなた&gt;</code> です。nakama が作るファイルはすべて本人だけが読める権限 (0600) で作られます。</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>場所</th><th>内容</th></tr></thead>
+  <tbody>
+    <tr><td><code>~/.config/nakama/profiles.json</code></td><td>保存したアカウントの一覧 (識別子のみ)</td></tr>
+    <tr><td><code>~/.config/nakama/aws_config</code></td><td>上記から生成される AWS 形式の設定 (nakama 専用)</td></tr>
+    <tr><td><code>~/.config/nakama/tunnels/&lt;名前&gt;.json</code></td><td>ポート転送の状態 (<code>tunnel stop</code> で削除)</td></tr>
+    <tr><td><code>~/.config/nakama/ssh/&lt;名前&gt;.conf</code></td><td>ssh 設定のスニペット</td></tr>
+    <tr><td><code>~/.config/nakama/aws-ca-bundle.pem</code></td><td><code>cli shell</code> が作る証明書ファイル (公開証明書のみ)</td></tr>
+    <tr><td><code>~/.aws/login/cache/</code></td><td>サインイン情報のキャッシュ (AWS 公式の <code>aws login</code> と共有)</td></tr>
+    <tr><td>環境側の <code>/var/log/nakama-provision.log</code></td><td>初期セットアップの実行ログ</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="callout note">
+  <span class="title">nakama が触らないもの</span>
+  <p><code>~/.aws/config</code>、<code>~/.ssh/config</code>、Windows のレジストリ、ユーザー環境変数は<strong>いずれも書き換えません</strong>。ssh の設定は「スニペットを作るので、取り込むなら 1 行足してください」という方式です。</p>
+</div>
+
+<h2 id="cheatsheet">5. よく使う組み合わせ</h2>
+
+<p class="cmd-caption">初めて使う (1 回だけ)</p>
+<pre><code>nakama aws login
+nakama aws init
+nakama aws acl add
+nakama aws create --name dev01 --instance-type t3.medium
+nakama aws open dev01</code></pre>
+
+<p class="cmd-caption">毎日</p>
+<pre><code>nakama aws start dev01      # 使い始め
+nakama aws open dev01
+nakama aws stop dev01       # 使い終わり</code></pre>
+
+<p class="cmd-caption">場所 (回線) を変えたとき</p>
+<pre><code>nakama aws acl add          # いまの IP を追加</code></pre>
+
+<p class="cmd-caption">サインインの期限が切れたとき</p>
+<pre><code>nakama aws login
+nakama aws tunnel restart dev01   # 転送を使っていた場合</code></pre>
+
+<p class="cmd-caption">手元の VS Code から使う (1 回だけ設定)</p>
+<pre><code>nakama aws ssh setup dev01
+# 表示された Include 行を ~/.ssh/config に追加する
+ssh nakama-dev01</code></pre>
+
+<p class="cmd-caption">大きな変更の前後</p>
+<pre><code>nakama aws backup create dev01 --label before-change --note "変更前"
+# ... 作業 ...
+nakama aws restore dev01 --label before-change   # 戻したいとき (上書きです)</code></pre>
+
+<p class="cmd-caption">調子が悪いとき</p>
+<pre><code>nakama aws doctor
+nakama aws doctor -o json     # 相談用</code></pre>
+
+<nav class="pager" aria-label="章の移動">
+  <a href="07-troubleshoot.html">← 前へ: 第 7 章 困ったときは</a>
+  <a href="index.html">目次に戻る →</a>
+</nav>
+</main>
+</div>
+
+<footer class="site-footer">
+  nakama チュートリアル 第 8 章
+</footer>
+</body>
+</html>
