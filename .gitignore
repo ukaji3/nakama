@@ -18,6 +18,10 @@ coverage.html
 go.work
 go.work.sum
 
+# Python (docs/tutorial/tools の図生成・検査スクリプト)
+__pycache__/
+*.pyc
+
 # Editors
 .vscode/
 .idea/
