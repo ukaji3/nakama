@@ -4,15 +4,22 @@
 標準ライブラリのみを使用する。docs/tutorial/ を対象に次を検査する:
 
 1. 内部リンク切れ (ファイル・アンカーの両方)
-2. 画像の実体があるか / alt 属性があるか / figcaption があるか
-3. 本文に登場する nakama コマンドが実バイナリの仕様に存在するか
-4. HTML の構造 (タグの対応、必須要素、重複 id)
-5. 全ページで目次が揃っているか、aria-current が自分のページを指しているか
-6. 生成した図がすべてどこかのページで使われているか
+2. 画像の実体 / alt 属性 / figure ごとの figcaption
+3. 本文に登場する nakama コマンドとフラグが実仕様に存在するか
+4. <code> の外に生で書かれたコマンド (検査漏れの温床)
+5. HTML の構造 (タグの対応、必須要素、重複 id、見出し階層)
+6. 表のヘッダー関連付け (th の scope)
+7. 全ページで目次が揃っているか、aria-current が自分のページを指しているか
+8. 生成した図がすべてどこかのページで使われているか
+9. (NAKAMA_BIN を指定した場合) 検査用のコマンド定数が実バイナリと一致するか
 
 使い方:
     python3 docs/tutorial/tools/check_tutorial.py
+    NAKAMA_BIN=/path/to/nakama python3 docs/tutorial/tools/check_tutorial.py
 終了コード 0 = 問題なし、1 = 問題あり。
+
+この検査は視覚的な問題 (コントラスト比、レイアウト崩れ) を見ないので、
+図の重なりは tools/gen_diagrams.py 側の検査で、配色は目視で確認する。
 """
 
 from __future__ import annotations
@@ -42,6 +49,14 @@ KNOWN_COMMANDS = {
     "nakama",
     "nakama version",
     "nakama completion",
+    # サブコマンドを束ねるグループ (単体では実行しないが実在する)
+    "nakama aws",
+    "nakama aws acl",
+    "nakama aws backup",
+    "nakama aws cli",
+    "nakama aws profile",
+    "nakama aws setup",
+    "nakama aws ssh",
     "nakama aws login",
     "nakama aws profile save",
     "nakama aws profile list",
@@ -143,6 +158,11 @@ class Collector(html.parser.HTMLParser):
         self.figure_depth = 0
         self.figures = 0
         self.figcaptions = 0
+        # figure ごとの figcaption 数 (ページ合計では相殺されてしまうため)
+        self.figcaption_per_figure: list[int] = []
+        self.headings: list[int] = []
+        self.th_total = 0
+        self.th_scoped = 0
         self.aria_current: list[str] = []
         self.toc_links: list[str] = []
         self.in_toc = False
@@ -180,8 +200,17 @@ class Collector(html.parser.HTMLParser):
         if tag == "figure":
             self.figures += 1
             self.figure_depth += 1
+            self.figcaption_per_figure.append(0)
         if tag == "figcaption" and self.figure_depth > 0:
             self.figcaptions += 1
+            if self.figcaption_per_figure:
+                self.figcaption_per_figure[-1] += 1
+        if tag == "th":
+            self.th_total += 1
+            if a.get("scope"):
+                self.th_scoped += 1
+        if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self.headings.append(int(tag[1]))
         if tag == "h1":
             self.h1_count += 1
         if tag not in self.VOID:
@@ -267,6 +296,59 @@ def check_commands(page: str, src: str) -> None:
                 break
 
 
+def check_plaintext_commands(page: str, src: str) -> None:
+    """<code> の外に生で書かれた nakama コマンドを検出する。
+
+    コマンドは必ず <code> で囲む方針なので、素のテキストに現れたものは
+    書き忘れ (かつ検査対象から漏れる) を意味する。
+    """
+    body = re.sub(r"<(code|pre)[^>]*>.*?</\1>", "", src, flags=re.S)
+    body = re.sub(r"<[^>]+>", " ", body)
+    for m in re.finditer(r"nakama\s+aws\s+[a-z][a-z-]*", html.unescape(body)):
+        problem(page, f"command outside <code>: {m.group(0)}")
+
+
+def check_known_commands_against_binary(binary: str) -> None:
+    """KNOWN_COMMANDS が実バイナリと一致しているかを確認する (任意)。
+
+    NAKAMA_BIN に実行ファイルを指定したときだけ動く。定数の陳腐化を
+    検出するための仕組み。
+    """
+    import subprocess
+
+    def sub_commands(path: list[str]) -> set[str]:
+        out = subprocess.run([binary, *path, "--help"], capture_output=True, text=True)
+        found: set[str] = set()
+        in_block = False
+        for line in out.stdout.splitlines():
+            if line.startswith("Available Commands:"):
+                in_block = True
+                continue
+            if in_block:
+                if not line.strip():
+                    break
+                found.add(line.split()[0])
+        return found
+
+    stack = [["aws"]]
+    actual = {"nakama", "nakama aws", "nakama version", "nakama completion"}
+    while stack:
+        path = stack.pop()
+        for sub in sub_commands(path):
+            if sub in ("help", "completion"):
+                continue
+            full = path + [sub]
+            actual.add("nakama " + " ".join(full))
+            stack.append(full)
+    missing = actual - KNOWN_COMMANDS
+    extra = KNOWN_COMMANDS - actual
+    for m in sorted(missing):
+        problem("KNOWN_COMMANDS", f"the binary has `{m}` but the checker does not know it")
+    for e in sorted(extra):
+        if e.count(" ") >= 1:  # "nakama" 単体などは対象外
+            problem("KNOWN_COMMANDS", f"the checker lists `{e}` but the binary does not have it")
+
+
 def main() -> None:
     parsed: dict[str, Collector] = {}
     sources: dict[str, str] = {}
@@ -308,9 +390,22 @@ def main() -> None:
         if "style.css" not in src:
             problem(page, "stylesheet is not linked")
 
-        # -- 図
-        if c.figures != c.figcaptions:
-            problem(page, f"{c.figures} <figure> but {c.figcaptions} <figcaption>")
+        # -- 見出し階層 (h1 から始まり、1 段ずつ深くなること)
+        if c.headings:
+            if c.headings[0] != 1:
+                problem(page, f"the first heading is h{c.headings[0]}, want h1")
+            for prev, cur in zip(c.headings, c.headings[1:]):
+                if cur > prev + 1:
+                    problem(page, f"heading level jumps from h{prev} to h{cur}")
+
+        # -- 表のヘッダー関連付け
+        if c.th_total and c.th_scoped != c.th_total:
+            problem(page, f"{c.th_total - c.th_scoped} of {c.th_total} <th> lack scope")
+
+        # -- 図 (figure ごとに figcaption が 1 つ)
+        for i, n in enumerate(c.figcaption_per_figure, start=1):
+            if n != 1:
+                problem(page, f"figure #{i} has {n} <figcaption>, want exactly 1")
         for img in c.images:
             if img["alt"] == "\0":
                 problem(page, f"img without alt: {img['src']}")
@@ -327,6 +422,7 @@ def main() -> None:
             problem(page, f"aria-current should mark only this page, got {c.aria_current}")
 
         check_commands(page, src)
+        check_plaintext_commands(page, src)
 
     # -- リンク検査 (ファイルとアンカー)
     for page, c in parsed.items():
@@ -351,6 +447,9 @@ def main() -> None:
     for name in sorted(os.listdir(img_dir)):
         if name.endswith(".svg") and name not in used:
             problem("img/", f"{name} is generated but not referenced by any page")
+
+    if binary := os.getenv("NAKAMA_BIN"):
+        check_known_commands_against_binary(binary)
 
     if problems:
         print(f"{len(problems)} problem(s) found:\n", file=sys.stderr)

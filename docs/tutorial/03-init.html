@@ -17,7 +17,7 @@
 
 <div class="layout">
 <nav class="toc" aria-label="章の一覧">
-  <h2>目次</h2>
+  <p class="toc-label" id="toc-chapters">目次</p>
   <ol>
     <li><a href="index.html">はじめに</a></li>
     <li><a href="01-install.html">インストールとサインイン</a></li>
@@ -29,7 +29,7 @@
     <li><a href="07-troubleshoot.html">困ったときは</a></li>
     <li><a href="08-reference.html">コマンド早見表</a></li>
   </ol>
-  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <p class="toc-label" style="margin-top:1.2rem">この章の内容</p>
   <ol>
     <li><a href="#init">init で土台を作る</a></li>
     <li><a href="#acl">自分の IP を許可する</a></li>
@@ -44,36 +44,39 @@
 <h2 id="init">1. init で土台を作る</h2>
 <p class="cmd-caption">PowerShell で実行</p>
 <pre><code>nakama aws init</code></pre>
-<p>数分かかります。次のものが作られます (すでにあるものは作り直さずそのまま使います)。</p>
+<p>数分かかります。進行状況が順に表示され、エラーが出ずに終われば成功です。うまく終わったかは次で確認できます。</p>
+<pre><code>nakama aws doctor</code></pre>
+<p><code>capability: init</code> の行が <code>ok</code> で、<code>credentials</code> も <code>ok</code> なら問題ありません。途中でエラーになった場合は、そのまま <code>nakama aws init</code> をもう一度実行してください (できているところは飛ばされます)。</p>
+<p>作られるものは次のとおりです (すでにあるものは作り直さずそのまま使います)。</p>
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th>作られるもの</th><th>役割</th></tr></thead>
+  <thead><tr><th scope="col">作られるもの</th><th scope="col">役割</th></tr></thead>
   <tbody>
     <tr><td>VPC とサブネット</td><td>AWS の中に用意する専用のネットワーク区画。開発環境は外から直接触れない「プライベート」側に置かれます</td></tr>
-    <tr><td>インターネットゲートウェイとルートテーブル</td><td>外向きの通信経路の設定</td></tr>
+    <tr><td>インターネットゲートウェイとルートテーブル</td><td>外向きの通信経路の設定 (触る必要はありません)</td></tr>
     <tr><td>NAT インスタンス</td><td>開発環境が外部と通信する (ソフトのダウンロードなど) ための小さな中継サーバー</td></tr>
-    <tr><td>IAM ロールとインスタンスプロファイル</td><td>開発環境が AWS の機能 (SSM 経由の接続など) を使うための権限</td></tr>
+    <tr><td>IAM ロールとインスタンスプロファイル</td><td>開発環境が AWS の機能 (SSM 経由の接続など) を使うための権限 (触る必要はありません)</td></tr>
     <tr><td>WAF (Web ACL と IP セット)</td><td>正面玄関の門番。許可した IP からのアクセスだけ通します</td></tr>
     <tr><td>SSM パラメータ</td><td>作ったリソースの ID などの控え (nakama が次回以降参照します)</td></tr>
   </tbody>
 </table>
 </div>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">何度実行しても大丈夫です</span>
   <p><code>init</code> は<strong>冪等</strong>です。すでに nakama が作ったリソースがあれば、それを再利用します。「途中で失敗した」「設定が合っているか不安」というときは、もう一度実行して構いません。</p>
 </div>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">以前の nakama から移行する場合の注意</span>
   <p>過去のバージョンの nakama が作った <strong>NAT ゲートウェイ</strong>が残っている場合、<code>init</code> はそれを削除し、割り当てられていた固定 IP (Elastic IP) を解放します。これは、より安価な NAT インスタンスへ移行するためです。通信が途切れないように、先に新しい経路へ切り替えてから削除する順序で行われます。</p>
   <p>初めて nakama を使う場合は、この動作は起こりません。</p>
 </div>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">リージョンは東京固定です</span>
-  <p>nakama は <code>ap-northeast-1</code> (東京) を前提に作られています。他のリージョンを指定するオプションはありません。使う AZ (データセンターの区画) は <code>ap-northeast-1a</code> と <code>ap-northeast-1c</code> です。</p>
+  <p>nakama は <code>ap-northeast-1</code> (東京) を前提に作られています。他のリージョンを指定するオプションはありません (使うデータセンターの区画も自動で決まるので、気にしなくて構いません)。</p>
 </div>
 
 <h2 id="acl">2. 自分の IP を許可する</h2>
@@ -82,7 +85,7 @@
 <p class="cmd-caption">PowerShell で実行 (いまの接続元 IP を自動で調べて登録します)</p>
 <pre><code>nakama aws acl add</code></pre>
 
-<p>IP を明示したい場合や、まとまった範囲を許可したい場合は引数で渡します。</p>
+<p>登録できたかは <code>acl list</code> で確認できます。IP を明示したい場合や、まとまった範囲を許可したい場合は引数で渡します。</p>
 <pre><code>nakama aws acl add 203.0.113.10          # 1 つの IP (自動で /32 が付きます)
 nakama aws acl add 203.0.113.0/24        # 範囲で指定 (会社の出口が複数ある場合など)
 nakama aws acl list                      # 登録済みの一覧
@@ -92,18 +95,18 @@ nakama aws acl delete 203.0.113.10/32    # 削除</code></pre>
 <pre class="output"><code>CIDR                  ADDED_AT
 203.0.113.10/32       2026-09-13T00:12:04Z</code></pre>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">IP アドレスは変わります</span>
   <p>自宅の回線は再接続で IP が変わることがあり、会社のネットワークは出口が複数あって日によって変わることもあります。「昨日は開けたのに今日は 403 になる」ときは、まず <code>nakama aws acl add</code> をもう一度実行してください。</p>
   <p>使わなくなった IP は <code>acl delete</code> で消しておくと安全です。</p>
 </div>
 
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">許可が要るのはブラウザからのアクセスだけ</span>
   <p><code>connect</code> / <code>ssh</code> / <code>tunnel</code> は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)。IP 許可が必要なのは <code>nakama aws open</code> でブラウザから開く場合だけです。<a href="05-use.html">第 5 章</a>で詳しく扱います。</p>
 </div>
 
-<div class="callout danger">
+<div class="callout danger" role="note">
   <span class="title">広すぎる範囲を登録しないでください</span>
   <p><code>0.0.0.0/0</code> のような「どこからでも」に相当する範囲を登録すると、門番の意味がなくなります。開発環境にはパスワードもかかっていますが、許可 IP は必要最小限にしてください。</p>
 </div>
@@ -113,11 +116,11 @@ nakama aws acl delete 203.0.113.10/32    # 削除</code></pre>
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th>対象</th><th>いつ課金されるか</th></tr></thead>
+  <thead><tr><th scope="col">対象</th><th scope="col">いつ課金されるか</th></tr></thead>
   <tbody>
     <tr><td>開発環境の EC2 インスタンス</td><td><strong>起動している時間だけ</strong>。停止すればかかりません</td></tr>
     <tr><td>ディスク (EBS)</td><td><strong>作ってある間ずっと</strong>。停止中も保管料がかかります (中身を保つため)</td></tr>
-    <tr><td>NAT インスタンス</td><td>開発環境が 1 台でも起動している時間だけ (自動で連動します)</td></tr>
+    <tr><td>NAT インスタンス</td><td>開発環境が 1 台でも起動している時間だけ (自動で連動します)。ただし <code>init</code> の直後は起動した状態で作られ、次に <code>stop</code> / <code>delete</code> などで電源が見直されるまで動き続けます</td></tr>
     <tr><td>CloudFront</td><td>通信量とリクエスト数に応じて</td></tr>
     <tr><td>WAF</td><td>Web ACL が存在する間、時間割りの基本料金 + リクエスト数 (<a href="https://aws.amazon.com/waf/pricing/">AWS WAF の料金</a>)</td></tr>
     <tr><td>バックアップ (スナップショット)</td><td>保管している容量に応じて。世代を増やすほど増えます</td></tr>
@@ -126,11 +129,11 @@ nakama aws acl delete 203.0.113.10/32    # 削除</code></pre>
 </div>
 
 <figure>
-  <img src="img/cost.svg" alt="code-server が 1 台でも起動していると NAT インスタンスも自動で起動し、インスタンスと NAT とディスクの料金がかかる。すべて停止すると NAT も自動停止し、ディスクの保管料だけになる。">
-  <figcaption><strong>図 3-1: 電源の連動。</strong> 外向き通信の中継役 (NAT インスタンス) は、開発環境の稼働に合わせて自動で起動・停止します。常時稼働するタイプの中継 (NAT ゲートウェイ) を使わないのは、使っていない時間の料金を避けるためです。</figcaption>
+  <img width="900" height="390" src="img/cost.svg" alt="code-server が 1 台でも起動していると NAT インスタンスも自動で起動し、インスタンスと NAT とディスクの料金がかかる。すべて停止すると NAT も自動停止し、ディスクの保管料だけになる。">
+  <figcaption><strong>図 3-1: 電源の連動。</strong> 外向き通信の中継役 (NAT インスタンス) は、開発環境の稼働に合わせて自動で起動・停止します。常時稼働するタイプの中継 (NAT ゲートウェイ) を使わないのは、使っていない時間の料金を避けるためです。図の「固定費はほぼゼロ」は<strong>ディスクと WAF の基本料金だけが残る</strong>という意味です (下の注記を参照)。</figcaption>
 </figure>
 
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">お金を抑えるコツ</span>
   <ul>
     <li>作業が終わったら <code>nakama aws stop &lt;名前&gt;</code> で止める (中身は残ります)</li>
@@ -140,9 +143,15 @@ nakama aws acl delete 203.0.113.10/32    # 削除</code></pre>
   </ul>
 </div>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">完全にゼロにはなりません</span>
-  <p>すべて停止しても、<strong>ディスクの保管料</strong>と <strong>WAF の基本料金</strong>は残ります (どちらも小さな額ですが、ゼロではありません)。完全に課金を止めたい場合は、環境を <code>delete</code> し、土台も不要なら AWS コンソールから WAF の Web ACL などを削除してください。</p>
+  <p>すべて停止しても、次の 3 つは残ります (いずれも小さな額ですが、ゼロではありません)。</p>
+  <ol>
+    <li>各環境の<strong>ディスク保管料</strong></li>
+    <li><strong>WAF の Web ACL の基本料金</strong> (時間割り)</li>
+    <li>NAT インスタンスの<strong>小さなディスクの保管料</strong></li>
+  </ol>
+  <p>土台まで含めて消すコマンドは<strong>ありません</strong>。完全に止めるには、各環境を <code>nakama aws delete</code> で削除したうえで、AWS コンソールから名前が <code>nakama-</code> で始まるリソース (WAF の Web ACL と IP セット、NAT インスタンス、VPC、IAM ロール、SSM パラメータ) を削除します。判断に迷う場合は AWS の管理者に依頼してください。</p>
 </div>
 
 <nav class="pager" aria-label="章の移動">

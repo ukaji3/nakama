@@ -123,7 +123,13 @@ body {
   padding: 1rem 1.1rem;
   background: var(--bg-soft);
 }
-.toc h2 { font-size: 0.86rem; letter-spacing: 0.04em; color: var(--ink-soft); margin: 0 0 0.6rem; }
+.toc .toc-label {
+  font-size: 0.86rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  font-weight: 700;
+  margin: 0 0 0.6rem;
+}
 .toc ol { margin: 0; padding-left: 1.35rem; }
 .toc li { margin-bottom: 0.35rem; }
 .toc a { color: var(--ink); text-decoration: none; }

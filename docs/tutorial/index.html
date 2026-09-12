@@ -13,12 +13,12 @@
 <header class="site">
   <strong>nakama チュートリアル</strong>
   <span class="crumb">はじめに</span>
-  <span style="margin-left:auto"><a href="../../README.md">README</a></span>
+  <span style="margin-left:auto"><a href="https://github.com/ukaji3/nakama#readme">README (GitHub)</a></span>
 </header>
 
 <div class="layout">
 <nav class="toc" aria-label="章の一覧">
-  <h2>目次</h2>
+  <p class="toc-label" id="toc-chapters">目次</p>
   <ol>
     <li><a href="index.html" aria-current="page">はじめに</a></li>
     <li><a href="01-install.html">インストールとサインイン</a></li>
@@ -41,13 +41,13 @@
 <ul>
   <li><strong>ブラウザで VS Code が開きます。</strong> クラウド上で動く VS Code (<a href="https://github.com/coder/code-server">code-server</a>) に、ブラウザからアクセスします。手元に開発ツールを入れる必要はありません</li>
   <li><strong>手元の VS Code からも使えます。</strong> デスクトップ版の VS Code や JetBrains、素の <code>ssh</code> からも接続できます</li>
-  <li><strong>止めればお金がほとんどかかりません。</strong> 使っていないときは停止でき、停止中はディスクの保管料だけになります</li>
+  <li><strong>止めればお金がほとんどかかりません。</strong> 使っていないときは停止でき、停止中に残るのはディスクの保管料と WAF の基本料金だけです (<a href="03-init.html#cost">第 3 章</a>)</li>
   <li><strong>aws コマンドのインストールは不要です。</strong> サインインもリソース操作も nakama だけで完結します</li>
   <li><strong>会社のネットワーク (プロキシ) にそのまま対応します。</strong> 面倒な証明書の設定は nakama が肩代わりします</li>
 </ul>
 
 <figure>
-  <img src="img/overview.svg" alt="手元の PC のブラウザは CloudFront と WAF を通って AWS 上の EC2 インスタンスの code-server につながり、nakama CLI は AWS API と SSM Session Manager を通ってインスタンスを操作する。インスタンスからインターネットへの外向き通信は NAT インスタンスを経由する。">
+  <img width="900" height="440" src="img/overview.svg" alt="手元の PC のブラウザは CloudFront と WAF を通って AWS 上の EC2 インスタンスの code-server につながり、nakama CLI は AWS API と SSM Session Manager を通ってインスタンスを操作する。インスタンスからインターネットへの外向き通信は NAT インスタンスを経由する。">
   <figcaption><strong>図 0-1: nakama の全体像。</strong> 開発環境は AWS の内部 (プライベートサブネット) にあり、外部から直接つなげる口を持ちません。ブラウザからは CloudFront という入口を通り、しかも許可した IP アドレスからしか通れません。コマンド操作は SSM という AWS の仕組みを通るので、SSH のポートを開ける必要がありません。</figcaption>
 </figure>
 
@@ -55,11 +55,11 @@
 <p>最初から順に読めば、初回のセットアップから日々の運用までひととおり分かります。急いでいる場合は次の順で読んでください。</p>
 
 <figure>
-  <img src="img/flow-first-time.svg" alt="初回セットアップは、サインイン (約1分)、基盤を作る (約3分)、IP を許可 (数秒)、環境を作る (約15分)、使い始める (数秒) の5ステップ。">
+  <img width="920" height="250" src="img/flow-first-time.svg" alt="初回セットアップは、サインイン (約1分)、基盤を作る (約3分)、IP を許可 (数秒)、環境を作る (約15分)、使い始める (数秒) の5ステップ。">
   <figcaption><strong>図 0-2: 初回セットアップの流れ。</strong> 2 番目の「基盤を作る」は AWS アカウントに 1 回だけ実行します。所要時間は目安です。</figcaption>
 </figure>
 
-<ul class="cards">
+<ul class="cards" role="list">
   <li><a href="01-install.html"><span class="num">第 1 章</span><span class="name">インストールとサインイン</span><span class="desc">nakama を Windows に入れて、AWS にサインインします。複数の AWS アカウントの切り替えも扱います。</span></a></li>
   <li><a href="02-proxy-cert.html"><span class="num">第 2 章</span><span class="name">会社のプロキシと証明書</span><span class="desc">「証明書エラー」がなぜ起きるのかを図で説明し、<code>nakama aws cli shell</code> の使い方を示します。</span></a></li>
   <li><a href="03-init.html"><span class="num">第 3 章</span><span class="name">土台を用意する</span><span class="desc">ネットワークなどの共通部分を作り、自分の接続元 IP を許可します。料金の考え方もここで。</span></a></li>
@@ -74,7 +74,7 @@
 <div class="table-wrap">
 <table>
   <caption class="cmd-caption">必要なもの</caption>
-  <thead><tr><th>もの</th><th>説明</th></tr></thead>
+  <thead><tr><th scope="col">もの</th><th scope="col">説明</th></tr></thead>
   <tbody>
     <tr><td>AWS アカウント</td><td>会社のものでも個人のものでも構いません。リージョン (地域) は東京 <code>ap-northeast-1</code> に固定されています</td></tr>
     <tr><td>ブラウザで AWS にログインできること</td><td>nakama のサインインは、ブラウザで開いた AWS のログイン画面を使います</td></tr>
@@ -84,7 +84,7 @@
 </table>
 </div>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">料金について</span>
   <p>nakama は AWS のリソース (仮想サーバーやディスク) を作ります。使った分だけ AWS から課金されます。具体的な金額は地域や構成で変わるため、<a href="https://calculator.aws/">AWS 料金計算ツール</a>や AWS のコンソールで確認してください。このチュートリアルでは金額そのものは扱いませんが、<a href="03-init.html#cost">第 3 章</a>で「どこにお金がかかるか」と「止めれば減る仕組み」を説明します。</p>
 </div>
@@ -95,6 +95,21 @@
 <dl class="terms">
   <dt>CLI (コマンドラインインターフェース)</dt>
   <dd>文字を打ってソフトを操作する方式のこと。nakama は CLI の道具で、Windows では PowerShell などの黒い (または青い) 画面で使います。</dd>
+
+  <dt>環境変数</dt>
+  <dd>プログラムに設定を渡すための「名前と値」の組。PowerShell では <code>$env:名前 = "値"</code> と打つと、そのウィンドウの中だけで設定され、閉じれば消えます。</dd>
+
+  <dt>PATH</dt>
+  <dd>環境変数の 1 つで、「コマンド名だけで実行できるフォルダー」の一覧。ここに登録すると、どの場所からでも <code>nakama</code> と打つだけで実行できます。</dd>
+
+  <dt>IP アドレス / グローバル IP</dt>
+  <dd>インターネット上の住所にあたる番号。自宅や会社の回線ごとに、外から見える番号 (グローバル IP) が割り当てられます。nakama では「この番号からのアクセスだけ許可する」という使い方をします。</dd>
+
+  <dt>ポート</dt>
+  <dd>1 台のサーバーの中でサービスを区別する番号。Web は 80 や 443、開発用サーバーは 3000 や 8080 がよく使われます。</dd>
+
+  <dt>IAM</dt>
+  <dd>AWS の利用者と権限を管理する仕組み。<strong>ユーザー</strong>は人、<strong>ロール</strong>はサーバーやプログラムに貸し出す権限の束です。</dd>
 
   <dt>EC2 インスタンス</dt>
   <dd>AWS が貸してくれる仮想サーバー 1 台のこと。nakama はこの上に開発環境を作ります。「インスタンス」は「サーバー 1 台」と読み替えて構いません。</dd>
@@ -130,7 +145,7 @@
   <dd>ある時点のディスクの内容をまるごと控えておくこと。nakama では <code>backup</code> で作り、<code>restore</code> で戻します。</dd>
 </dl>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">画面例の読み方</span>
   <p>入力するコマンドは次のように示します。プロンプト (<code>PS C:\&gt;</code> など) は省いているので、そのままコピーできます。</p>
   <p class="cmd-caption">PowerShell で実行</p>

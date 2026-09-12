@@ -17,7 +17,7 @@
 
 <div class="layout">
 <nav class="toc" aria-label="章の一覧">
-  <h2>目次</h2>
+  <p class="toc-label" id="toc-chapters">目次</p>
   <ol>
     <li><a href="index.html">はじめに</a></li>
     <li><a href="01-install.html">インストールとサインイン</a></li>
@@ -29,7 +29,7 @@
     <li><a href="07-troubleshoot.html">困ったときは</a></li>
     <li><a href="08-reference.html">コマンド早見表</a></li>
   </ol>
-  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <p class="toc-label" style="margin-top:1.2rem">この章の内容</p>
   <ol>
     <li><a href="#basic">まず 1 台作ってみる</a></li>
     <li><a href="#name">名前のルール</a></li>
@@ -38,6 +38,7 @@
     <li><a href="#bare">code-server が要らない場合 (--bare)</a></li>
     <li><a href="#provision">初期セットアップを自動化する</a></li>
     <li><a href="#iam">AWS を操作する権限を持たせる</a></li>
+    <li><a href="#version">code-server のバージョンを固定する</a></li>
   </ol>
 </nav>
 
@@ -56,9 +57,11 @@
   url               : https://d111111abcdef8.cloudfront.net
   password          : (use `nakama aws info dev01 --show-password`)</code></pre>
 
-<div class="callout note">
-  <span class="title">15 分ほどかかります</span>
-  <p>時間の大半は、正面玄関 (CloudFront) の設定が世界中に反映されるのを待つ時間です。この待ち時間が惜しい場合は、<a href="#bare">軽量版 (<code>--bare</code>)</a> を使うと数分で作れます (ブラウザからは開けなくなります)。</p>
+<div class="callout note" role="note">
+  <span class="title">15 分ほどかかります。終わるまで閉じないでください</span>
+  <p>時間の大半は、正面玄関 (CloudFront) の設定が世界中に反映されるのを待つ時間です。実行中は進行状況が順に表示されます。<strong>完了するまで PowerShell のウィンドウを閉じたり <kbd>Ctrl</kbd>+<kbd>C</kbd> を押したりしないでください。</strong></p>
+  <p>途中で止めてしまった場合は <code>nakama aws list</code> で状態を確認し、中途半端な環境が残っていれば <code>nakama aws delete &lt;名前&gt; --force</code> で片付けてから作り直します。</p>
+  <p>この待ち時間が惜しい場合は、<a href="#bare">軽量版 (<code>--bare</code>)</a> を使うと数分で作れます (ブラウザからは開けなくなります)。</p>
 </div>
 
 <p>作れたかどうかは <code>list</code> で確認できます。</p>
@@ -90,7 +93,7 @@ password          : (use --show-password to reveal)</code></pre>
   <li>長さは 2〜32 文字</li>
   <li>次の 5 つは<strong>予約語</strong>で使えません: <code>start</code> / <code>stop</code> / <code>status</code> / <code>restart</code> / <code>suggest</code> (<code>nakama aws tunnel</code> のサブコマンド名と区別できなくなるため)</li>
 </ul>
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">名前の付け方の例</span>
   <p><code>dev01</code>、<code>api-work</code>、<code>ml-gpu</code> のように「用途 + 番号」にしておくと、複数台を運用するときに分かりやすくなります。</p>
 </div>
@@ -99,7 +102,7 @@ password          : (use --show-password to reveal)</code></pre>
 <p><code>--instance-type</code> は AWS の仮想サーバーの「型番」です。CPU とメモリの量が決まります。</p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>例</th><th>目安</th></tr></thead>
+  <thead><tr><th scope="col">例</th><th scope="col">目安</th></tr></thead>
   <tbody>
     <tr><td><code>t3.small</code></td><td>軽い編集や小さなスクリプト中心。メモリは少なめ</td></tr>
     <tr><td><code>t3.medium</code></td><td><strong>最初はここから</strong>。一般的な Web 開発ならまず足ります</td></tr>
@@ -108,18 +111,18 @@ password          : (use --show-password to reveal)</code></pre>
   </tbody>
 </table>
 </div>
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">あとで変えられますが、ARM と Intel/AMD の間は変えられません</span>
   <p>大きさは <code>nakama aws edit &lt;名前&gt; --instance-type &lt;型番&gt;</code> であとから変更できます (<a href="06-operate.html#edit">第 6 章</a>)。ただし <strong>ARM (t4g など) と Intel/AMD (t3, m6a など) の間の変更はできません</strong>。ディスクの中身が別の CPU 向けに作られているためです。迷ったら Intel/AMD 系 (<code>t3</code>) から始めると無難です。</p>
 </div>
 
 <h2 id="password">4. パスワードの扱い</h2>
-<p>ブラウザから開くときのログインパスワードは、作成時に自動生成され、AWS の SSM Parameter Store に暗号化されて保管されます。<strong>あなたのパソコンには保存されません。</strong></p>
+<p>ブラウザから開くときのログインパスワードは、作成時に自動生成され、AWS の SSM Parameter Store (AWS 側の設定・秘密情報の保管庫) に暗号化されて保管されます。<strong>あなたのパソコンには保存されません。</strong></p>
 <pre><code>nakama aws info dev01 --show-password     # 必要なときだけ表示する
 nakama aws create --name dev02 --instance-type t3.medium --show-password   # 作成時に表示する</code></pre>
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">ふだんはパスワードを見なくて済みます</span>
-  <p><code>nakama aws open</code> はパスワードの自動入力までやってくれます (<a href="05-use.html#open">第 5 章</a>)。パスワードを手で入れる必要があるのは、別の端末のブラウザから開くときなどです。</p>
+  <p><code>nakama aws open</code> はパスワードの自動入力までやってくれます (<a href="05-use.html#open">第 5 章「ブラウザで開く」</a>)。パスワードを手で入れる必要があるのは、別の端末のブラウザから開くときなどです。</p>
 </div>
 
 <h2 id="bare">5. code-server が要らない場合 (--bare)</h2>
@@ -134,14 +137,14 @@ nakama aws create --name dev02 --instance-type t3.medium --show-password   # 作
   access            : nakama aws ssh setup box01  |  nakama aws connect box01</code></pre>
 
 <figure>
-  <img src="img/bare-vs-full.svg" alt="通常の create は EC2 インスタンス、code-server、CloudFront と VPC Origin、ログイン用パスワードを作り、約15分かかる。--bare は EC2 インスタンスと SSM 経由の接続のみを作り数分で終わる。bare では open が使えない。">
+  <img width="900" height="400" src="img/bare-vs-full.svg" alt="通常の create は EC2 インスタンス、code-server、CloudFront と VPC Origin、ログイン用パスワードを作り、約15分かかる。--bare は EC2 インスタンスと SSM 経由の接続のみを作り数分で終わる。bare では open が使えない。">
   <figcaption><strong>図 4-1: 通常の <code>create</code> と <code>--bare</code> の違い。</strong> <code>--bare</code> は作成が速く、CloudFront と WAF の分の料金もかかりません。代わりにブラウザからは開けません。</figcaption>
 </figure>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">--bare で作った環境の使い方</span>
   <p><code>connect</code> (ターミナル) / <code>ssh</code> (手元のエディタ) / <code>tunnel</code> (ポート転送) が使えます。<code>list</code> では TYPE 列が <code>BARE</code> と表示されます。<code>open</code> を実行すると、代わりに <code>ssh setup</code> や <code>connect</code> を使うよう案内するエラーになります。</p>
-  <p><code>--bare</code> と <code>--code-server-version</code> は同時に指定できません (code-server を入れないため、バージョン指定に意味がないからです)。</p>
+  <p><code>--bare</code> と <code>--code-server-version</code> (この章の最後で説明する、ブラウザ版 VS Code のバージョンを固定するオプション) は同時に指定できません。code-server を入れないため、バージョン指定に意味がないからです。</p>
 </div>
 
 <h2 id="provision">6. 初期セットアップを自動化する</h2>
@@ -149,7 +152,7 @@ nakama aws create --name dev02 --instance-type t3.medium --show-password   # 作
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th>オプション</th><th>内容</th></tr></thead>
+  <thead><tr><th scope="col">オプション</th><th scope="col">内容</th></tr></thead>
   <tbody>
     <tr>
       <td><code>--preset &lt;名前&gt;</code></td>
@@ -176,13 +179,18 @@ nakama aws create --name dev04 --instance-type t3.medium --dotfiles https://gith
 <pre><code>nakama aws setup rerun dev01 --setup .\setup.sh
 nakama aws setup rerun dev01 --preset kiro</code></pre>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">セットアップが失敗しても create は成功します</span>
   <p>サーバー自体は作成できているため、セットアップの失敗で全体を巻き戻すことはしません。失敗した場合は警告と再実行コマンドが表示されます。実行ログはサーバー上の <code>/var/log/nakama-provision.log</code> に残るので、<code>nakama aws connect &lt;名前&gt;</code> で入って確認できます。</p>
   <pre><code>nakama aws connect dev01 sudo tail -n 50 /var/log/nakama-provision.log</code></pre>
 </div>
 
-<div class="callout danger">
+<div class="callout warn" role="note">
+  <span class="title">Windows で作ったスクリプトは改行に注意</span>
+  <p><code>--setup</code> に渡すのは <strong>Linux (Ubuntu) の bash で動くスクリプト</strong>です。Windows のエディタで作ると改行が <code>CRLF</code> になり、環境側で <code>$'\r': command not found</code> のようなエラーになります。VS Code なら<strong>画面右下の「CRLF」をクリックして「LF」に切り替えて保存</strong>してください。1 行目は <code>#!/bin/bash</code> と書いておきます。</p>
+</div>
+
+<div class="callout danger" role="note">
   <span class="title">スクリプトの安全性は指定した人の責任です</span>
   <ul>
     <li><code>http://</code> の URL は<strong>拒否されます</strong> (通信途中で内容を書き換えられる危険があるため)。<code>https://</code> を使ってください</li>
@@ -192,13 +200,13 @@ nakama aws setup rerun dev01 --preset kiro</code></pre>
 </div>
 
 <h2 id="iam">7. AWS を操作する権限を持たせる</h2>
-<p>開発環境の中から AWS を操作したい場合 (CDK や CloudFormation を使うなど)、サーバーに権限 (IAM ロール) を持たせられます。</p>
+<p>開発環境の中から AWS を操作したい場合 (CDK や CloudFormation = コードで AWS のリソースを作る仕組みを使うなど)、サーバーに権限 (IAM ロール) を持たせられます。使う予定がなければ、この節は読み飛ばして構いません。</p>
 <pre><code>nakama aws create --name ops01 --instance-type t3.medium --with-admin
 nakama aws create --name app01 --instance-type t3.medium --with-role my-existing-role</code></pre>
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th>オプション</th><th>意味</th></tr></thead>
+  <thead><tr><th scope="col">オプション</th><th scope="col">意味</th></tr></thead>
   <tbody>
     <tr><td><code>--with-admin</code></td><td>nakama が管理する共有ロール (AdministratorAccess 付き) を割り当てます</td></tr>
     <tr><td><code>--with-role &lt;名前&gt;</code></td><td>既存の任意の IAM ロールを割り当てます (nakama はそのロールを書き換えません)</td></tr>
@@ -207,17 +215,17 @@ nakama aws create --name app01 --instance-type t3.medium --with-role my-existing
 </div>
 <p>この 2 つは同時に指定できません。また、どちらもリソースを作る前に「あなたにロールを割り当てる権限があるか」を確認し、足りない場合は<strong>何も作らずにエラーで終了</strong>します。</p>
 
-<div class="callout danger">
+<div class="callout danger" role="note">
   <span class="title">--with-admin のリスクを理解してください</span>
   <p>付与されるのは AWS アカウントの<strong>管理者権限</strong>です。つまり、その開発環境にログインできる人は、実質的に AWS アカウント全体を操作できます。IP 許可リストを最小限にし、パスワードの扱いに注意してください。共同利用の環境では避けるのが無難です。</p>
 </div>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">--with-role を使うときの注意</span>
   <p>指定したロールに SSM の権限 (<code>AmazonSSMManagedInstanceCore</code>) が含まれていないと、<code>connect</code> / <code>ssh</code> / <code>tunnel</code> / <code>update</code> や初期パスワードの取得が動かない可能性があります。この場合、実行時に警告が表示されます。</p>
 </div>
 
-<h3>code-server のバージョンを固定する</h3>
+<h2 id="version">8. code-server のバージョンを固定する</h2>
 <p>既定では最新版が入ります。特定のバージョンに固定したい場合は次のようにします。</p>
 <pre><code>nakama aws create --name dev05 --instance-type t3.medium --code-server-version 4.104.2</code></pre>
 

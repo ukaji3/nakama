@@ -17,7 +17,7 @@
 
 <div class="layout">
 <nav class="toc" aria-label="章の一覧">
-  <h2>目次</h2>
+  <p class="toc-label" id="toc-chapters">目次</p>
   <ol>
     <li><a href="index.html">はじめに</a></li>
     <li><a href="01-install.html" aria-current="page">インストールとサインイン</a></li>
@@ -29,7 +29,7 @@
     <li><a href="07-troubleshoot.html">困ったときは</a></li>
     <li><a href="08-reference.html">コマンド早見表</a></li>
   </ol>
-  <h2 style="margin-top:1.2rem">この章の内容</h2>
+  <p class="toc-label" style="margin-top:1.2rem">この章の内容</p>
   <ol>
     <li><a href="#install">Windows にインストールする</a></li>
     <li><a href="#other-os">macOS / Linux の場合</a></li>
@@ -47,29 +47,33 @@
 <h2 id="install">1. Windows にインストールする</h2>
 <p>nakama は <strong>1 つの実行ファイル (nakama.exe) だけ</strong>で動きます。インストーラーはありません。ファイルを好きな場所に置いて、そこを Windows に教えるだけです。</p>
 
-<ol class="steps">
+<ol class="steps" role="list">
   <li>
     <p><strong>ダウンロードする。</strong> <a href="https://github.com/ukaji3/nakama/releases">Releases ページ</a>を開き、最新版の <code>nakama_&lt;バージョン&gt;_windows_amd64.zip</code> をダウンロードします。<code>checksums.txt</code> も一緒にダウンロードしてください。</p>
-    <div class="callout note">
+    <div class="callout note" role="note">
       <span class="title">amd64 と arm64 のどちらを選ぶか</span>
       <p>ふつうの Windows パソコンは <strong>amd64</strong> です。Surface Pro X などの ARM 版 Windows を使っている場合だけ <code>arm64</code> を選びます。分からなければ、PowerShell で次を実行してください。<code>AMD64</code> と表示されれば amd64 です。</p>
       <pre><code>$env:PROCESSOR_ARCHITECTURE</code></pre>
     </div>
   </li>
   <li>
-    <p><strong>ファイルが壊れていないか確認する (任意ですが推奨)。</strong> ダウンロードしたフォルダーで PowerShell を開き、次を実行します。</p>
-    <p class="cmd-caption">PowerShell で実行</p>
-    <pre><code>Get-FileHash .\nakama_0.17.0_windows_amd64.zip -Algorithm SHA256</code></pre>
-    <p>表示された <code>Hash</code> の文字列が、<code>checksums.txt</code> の中に同じファイル名と並んで書かれているものと一致していれば正常です。</p>
+    <p><strong>ファイルが壊れていないか確認する (任意ですが推奨)。</strong> まずダウンロードしたフォルダーで PowerShell を開きます。エクスプローラーでそのフォルダーを開き、<strong>ファイルのない余白で <kbd>Shift</kbd> を押しながら右クリック</strong>し、「PowerShell ウィンドウをここで開く」(Windows 11 では「ターミナルで開く」) を選びます。</p>
+    <p class="cmd-caption">PowerShell で実行 (2 つの値を並べて表示します)</p>
+    <pre><code>(Get-FileHash .\nakama_0.17.0_windows_amd64.zip -Algorithm SHA256).Hash
+Select-String -Path .\checksums.txt -Pattern windows_amd64.zip</code></pre>
+    <p>表示された 2 つの英数字列が同じなら正常です (大文字・小文字の違いは無視して構いません)。ファイル名の <code>0.17.0</code> は、ダウンロードしたバージョンに読み替えてください。</p>
   </li>
   <li>
     <p><strong>展開する。</strong> zip ファイルを右クリックして「すべて展開」を選びます。中に <code>nakama.exe</code> が入っています。</p>
   </li>
   <li>
-    <p><strong>置き場所を決める。</strong> 例として、自分のユーザーフォルダーの下に <code>bin</code> というフォルダーを作って置きます。管理者権限が要らないので安全です。</p>
-    <p class="cmd-caption">PowerShell で実行 (フォルダーを作って移動する例)</p>
-    <pre><code>New-Item -ItemType Directory -Force "$env:USERPROFILE\bin"
+    <p><strong>置き場所を決めて移動する。</strong> 例として、自分のユーザーフォルダーの下に <code>bin</code> というフォルダーを作って置きます。管理者権限が要らないので安全です。</p>
+    <p>「すべて展開」を使うと <code>nakama_0.17.0_windows_amd64</code> のような<strong>フォルダーが新しく作られ、その中に <code>nakama.exe</code> が入っています</strong>。まずそのフォルダーへ移動してください。</p>
+    <p class="cmd-caption">PowerShell で実行 (展開先へ移動 → 置き場所を作る → 移動)</p>
+    <pre><code>cd .\nakama_0.17.0_windows_amd64
+New-Item -ItemType Directory -Force "$env:USERPROFILE\bin"
 Move-Item .\nakama.exe "$env:USERPROFILE\bin\nakama.exe"</code></pre>
+    <p>フォルダー名はバージョンによって変わります。<code>cd .\nakama_</code> まで打って <kbd>Tab</kbd> キーを押すと、残りが自動で補完されます。「パスが見つかりません」と出る場合は、<code>dir</code> と打って、いまいる場所に何があるかを確認してください。</p>
   </li>
   <li>
     <p><strong>置き場所を Windows に教える (PATH に追加)。</strong> これをしておくと、どのフォルダーからでも <code>nakama</code> と打つだけで実行できます。</p>
@@ -78,10 +82,11 @@ Move-Item .\nakama.exe "$env:USERPROFILE\bin\nakama.exe"</code></pre>
   "Path",
   [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\bin",
   "User")</code></pre>
-    <div class="callout warn">
+    <div class="callout warn" role="note">
       <span class="title">設定後は新しいウィンドウを開いてください</span>
       <p>この設定は<strong>今開いているウィンドウには反映されません</strong>。PowerShell を閉じて、もう一度開いてから次の手順に進みます。</p>
       <p>画面から設定したい場合は、<kbd>Windows</kbd> キーで「環境変数」と検索 →「環境変数を編集」→ ユーザー環境変数の <code>Path</code> を選んで「編集」→「新規」で <code>C:\Users\&lt;あなたの名前&gt;\bin</code> を追加します。</p>
+      <p>上のコマンドを実行したあと、値の先頭に <code>;</code> が付くことがあります (もともと Path が空だった場合)。動作に影響はありません。</p>
     </div>
   </li>
   <li>
@@ -93,7 +98,7 @@ Move-Item .\nakama.exe "$env:USERPROFILE\bin\nakama.exe"</code></pre>
   </li>
 </ol>
 
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">どんなコマンドがあるかを見る</span>
   <p>いつでも <code>--help</code> を付けると、そのコマンドの説明とオプションが表示されます。迷ったらまずこれを見てください。</p>
   <pre><code>nakama aws --help
@@ -117,21 +122,21 @@ nakama version</code></pre>
 <pre><code>nakama aws login</code></pre>
 
 <p>次のように進みます。</p>
-<ol class="steps">
+<ol class="steps" role="list">
   <li><p>ブラウザが自動で開きます (開かない場合は、画面に表示された URL を自分でブラウザに貼り付けます)。</p></li>
   <li><p>AWS のサインイン画面が出たら、ふだん使っている AWS のユーザーでログインします。すでにブラウザで AWS コンソールにログイン済みなら、確認画面だけで済みます。</p></li>
-  <li><p>「許可」を選ぶと、PowerShell の側に戻ってサインイン完了と表示されます。</p></li>
+  <li><p>「許可」を選ぶと、PowerShell の側に戻ってサインイン完了が表示されます。このとき <code>profile</code> という言葉が出ますが、これは「どの AWS アカウントとして操作するか」の記録です (<a href="#profile">5 節</a>で説明します)。いまは気にしなくて構いません。</p></li>
 </ol>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">なぜブラウザを使うのか</span>
   <p>アクセスキーのような長期間有効な秘密の文字列をパソコンに置かずに済むからです。nakama は AWS 公式の <code>aws login</code> と同じ方式 (OAuth 2.0 + PKCE + DPoP) を自前で実装しているため、<strong>aws コマンドをインストールしなくてもサインインできます</strong>。取得した一時的な認証情報は <code>~/.aws/login/cache/</code> (Windows では <code>C:\Users\&lt;あなた&gt;\.aws\login\cache\</code>) に保存され、あなたの <code>~/.aws/config</code> は書き換えません。</p>
 </div>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">サインインできない場合</span>
   <p>ログインには AWS の管理ポリシー <code>SignInLocalDevelopmentAccess</code> が、あなたの IAM ユーザーまたはロールに付いている必要があります。付いていないと、ブラウザ側で拒否されます。会社のアカウントであれば、AWS の管理者に「この管理ポリシーを付けてほしい」と依頼してください。</p>
-  <p>権限を変えられない場合は、AWS SSO や環境変数など<strong>ふだん使っている別の方法で認証情報を用意しても構いません</strong>。nakama は標準的な AWS の認証情報をそのまま使えます。</p>
+  <p>AWS の利用経験がある人向けの補足: 権限を変えられない場合は、AWS SSO や環境変数など<strong>ふだん使っている別の方法で認証情報を用意しても構いません</strong> (nakama は標準的な AWS の認証情報をそのまま使えます)。初めての場合は、管理者に <code>SignInLocalDevelopmentAccess</code> の付与を依頼する方法だけ知っておけば十分です。</p>
 </div>
 
 <h3>サインインできたかを確かめる</h3>
@@ -146,7 +151,7 @@ nakama version</code></pre>
 <h2 id="expire">4. 有効期限と再サインイン</h2>
 <p>サインインの有効期限は<strong>最長 12 時間</strong>です。期限が切れると、コマンドを実行したときに「期限切れなのでもう一度サインインしてほしい」というエラーが出ます。その場合はもう一度実行するだけです。</p>
 <pre><code>nakama aws login</code></pre>
-<div class="callout tip">
+<div class="callout tip" role="note">
   <span class="title">ポート転送を使っていた場合</span>
   <p>再サインインしたあとに <code>nakama aws tunnel restart &lt;名前&gt;</code> を実行すると、設定を変えずに転送をつなぎ直せます (<a href="05-use.html#tunnel">第 5 章</a>)。</p>
 </div>
@@ -169,7 +174,7 @@ nakama aws profile delete personal        # 登録を削除</code></pre>
 <p><code>profile list</code> は次の列を表示します。</p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>列</th><th>意味</th></tr></thead>
+  <thead><tr><th scope="col">列</th><th scope="col">意味</th></tr></thead>
   <tbody>
     <tr><td><code>ACTIVE</code></td><td><code>*</code> が付いているものが、いま nakama が使うアカウントです</td></tr>
     <tr><td><code>ACCOUNT</code></td><td>AWS アカウント ID (12 桁の数字)</td></tr>
@@ -181,12 +186,12 @@ nakama aws profile delete personal        # 登録を削除</code></pre>
 </table>
 </div>
 
-<div class="callout note">
+<div class="callout note" role="note">
   <span class="title">保存されるのは秘密の情報ではありません</span>
   <p>nakama が保存するのはセッションの<strong>識別子</strong>だけで、パスワードやアクセスキーではありません。実際の一時認証情報は AWS 公式と同じ場所 (<code>~/.aws/login/cache/</code>) にあり、nakama はそれを読み書きします。<code>~/.aws/config</code> には一切手を触れません。</p>
 </div>
 
-<div class="callout warn">
+<div class="callout warn" role="note">
   <span class="title">意図しないアカウントに作らないための安全策</span>
   <p><code>profile load</code> したセッションが期限切れなどで使えない場合、nakama は<strong>別のアカウントに勝手に切り替えずエラーで止まります</strong>。「仕事用のつもりで個人用アカウントにサーバーを作ってしまう」ことを防ぐためです。</p>
 </div>
@@ -194,7 +199,7 @@ nakama aws profile delete personal        # 登録を削除</code></pre>
 <h2 id="trouble1">6. つまずきやすい点</h2>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>症状</th><th>原因と対処</th></tr></thead>
+  <thead><tr><th scope="col">症状</th><th scope="col">原因と対処</th></tr></thead>
   <tbody>
     <tr>
       <td><code>用語 'nakama' は ... 認識されません</code></td>
