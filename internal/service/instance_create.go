@@ -46,6 +46,12 @@ type CreateInstanceInput struct {
 	// password, no CloudFront distribution and no VPC origin. Reached
 	// with connect / ssh / tunnel instead of a browser (Issue #52).
 	Bare bool
+
+	// NoKiro skips the Kiro CLI / Kiro Crew install that the
+	// cloud-init user-data performs by default (Issue #68). It is
+	// expressed negatively because installing is the default; the
+	// user-data parameter is the positive InstallKiro.
+	NoKiro bool
 }
 
 // CreateInstanceOutput is what the CLI ultimately renders to the
@@ -169,6 +175,7 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		ud, err = userdata.RenderBare(userdata.BareParams{
 			InstanceName: in.Name,
 			Region:       config.Region,
+			InstallKiro:  !in.NoKiro,
 		})
 	} else {
 		ud, err = userdata.RenderCodeServer(userdata.CodeServerParams{
@@ -178,6 +185,7 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 			SSMPasswordParameter: ssmPasswordPath(in.Name),
 			SSMVersionParameter:  ssmVersionPath(in.Name),
 			PinnedVersion:        in.CodeServerVersion,
+			InstallKiro:          !in.NoKiro,
 		})
 	}
 	if err != nil {

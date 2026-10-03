@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ukaji3/nakama/internal/kiro"
 )
 
 func TestValidateProvisionSpec(t *testing.T) {
@@ -135,13 +137,24 @@ func TestBuildProvisionScriptPresetKiro(t *testing.T) {
 	}
 	for _, want := range []string{
 		"cli.kiro.dev/install",
-		"kiro-cli crew --yes",
-		"service install",
+		"crew -y install",
+		"kirocrew service install",
 		"sudo -u ubuntu -H",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the kiro preset lacks %q:\n%s", want, got)
 		}
+	}
+}
+
+// TestPresetKiroSharesTheUserDataScript pins that the preset and the
+// cloud-init user-data run the same steps: the preset is the re-run
+// path for what create does by default, so the two must not drift
+// (Issue #68).
+func TestPresetKiroSharesTheUserDataScript(t *testing.T) {
+	if got := provisionPresets()["kiro"]; got != kiro.InstallScript() {
+		t.Error("the kiro preset must be exactly internal/kiro's install script, " +
+			"so `setup rerun --preset kiro` reproduces what the user-data did")
 	}
 }
 

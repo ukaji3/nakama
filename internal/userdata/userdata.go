@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"regexp"
 	"text/template"
+
+	"github.com/ukaji3/nakama/internal/kiro"
 )
 
 //go:embed code-server.tmpl.sh
@@ -24,6 +26,9 @@ type BareParams struct {
 	InstanceName string
 	// Region is the AWS region.
 	Region string
+	// InstallKiro requests Kiro CLI and Kiro Crew (the default; turned
+	// off by `create --no-kiro`, Issue #68).
+	InstallKiro bool
 }
 
 // RenderBare returns the rendered cloud-init User Data shell script for
@@ -35,10 +40,32 @@ func RenderBare(p BareParams) (string, error) {
 		return "", err
 	}
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, p); err != nil {
+	if err := t.Execute(&buf, bareTemplateData{
+		BareParams: p,
+		KiroScript: kiroScriptFor(p.InstallKiro),
+	}); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// bareTemplateData is BareParams plus the fields the template needs but
+// callers should not have to supply.
+type bareTemplateData struct {
+	BareParams
+	// KiroScript is the shared Kiro install fragment, empty when the
+	// instance was created with --no-kiro.
+	KiroScript string
+}
+
+// kiroScriptFor returns the shared install fragment when requested.
+// Keeping the decision here means both templates stay identical in
+// behaviour and neither embeds its own copy of the steps.
+func kiroScriptFor(install bool) string {
+	if !install {
+		return ""
+	}
+	return kiro.InstallScript()
 }
 
 // pinnedVersionPattern is the accepted shape of an explicit
@@ -79,6 +106,18 @@ type CodeServerParams struct {
 	// PinnedVersion is the optional explicit code-server version to
 	// install. Empty means latest.
 	PinnedVersion string
+	// InstallKiro requests Kiro CLI and Kiro Crew (the default; turned
+	// off by `create --no-kiro`, Issue #68).
+	InstallKiro bool
+}
+
+// codeServerTemplateData is CodeServerParams plus the derived fields
+// the template needs.
+type codeServerTemplateData struct {
+	CodeServerParams
+	// KiroScript is the shared Kiro install fragment, empty when the
+	// instance was created with --no-kiro.
+	KiroScript string
 }
 
 // RenderCodeServer returns the rendered cloud-init User Data shell
@@ -92,7 +131,10 @@ func RenderCodeServer(p CodeServerParams) (string, error) {
 		return "", err
 	}
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, p); err != nil {
+	if err := t.Execute(&buf, codeServerTemplateData{
+		CodeServerParams: p,
+		KiroScript:       kiroScriptFor(p.InstallKiro),
+	}); err != nil {
 		return "", err
 	}
 	return buf.String(), nil

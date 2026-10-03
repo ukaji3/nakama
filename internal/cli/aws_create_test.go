@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ukaji3/nakama/internal/service"
@@ -66,5 +67,37 @@ func TestCreateCommand_BareAndCodeServerVersionMutuallyExclusive(t *testing.T) {
 	})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected cobra mutual-exclusion error for --bare with --code-server-version, got nil")
+	}
+}
+
+// TestCreateInputFromFlagsNoKiro pins the --no-kiro wiring: Kiro is
+// installed by default, so the flag has to reach the service layer
+// (Issue #68).
+func TestCreateInputFromFlagsNoKiro(t *testing.T) {
+	t.Parallel()
+	in := createFlags{name: "dev01", instanceType: "t3.medium", noKiro: true}
+	if got := createInputFromFlags(&in); !got.NoKiro {
+		t.Error("--no-kiro must set CreateInstanceInput.NoKiro")
+	}
+	base := createFlags{name: "dev01", instanceType: "t3.medium"}
+	if got := createInputFromFlags(&base); got.NoKiro {
+		t.Error("NoKiro must default to false so Kiro is installed by default")
+	}
+}
+
+// TestCreateCommandHasNoKiroFlag pins that the flag is registered and
+// documented (the help text is how users discover the opt-out).
+func TestCreateCommandHasNoKiroFlag(t *testing.T) {
+	t.Parallel()
+	cmd := newAWSCreateCommand()
+	f := cmd.Flags().Lookup("no-kiro")
+	if f == nil {
+		t.Fatal("create must offer --no-kiro")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("--no-kiro default = %q, want false", f.DefValue)
+	}
+	if !strings.Contains(strings.ToLower(f.Usage), "kiro") {
+		t.Errorf("--no-kiro usage = %q, want it to mention Kiro", f.Usage)
 	}
 }

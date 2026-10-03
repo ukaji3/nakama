@@ -1,8 +1,11 @@
 package userdata
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/ukaji3/nakama/internal/kiro"
 )
 
 func TestRenderBare(t *testing.T) {
@@ -15,7 +18,7 @@ func TestRenderBare(t *testing.T) {
 		`REGION="ap-northeast-1"`,
 		"amazon-ssm-agent", // connect / tunnel / ssh depend on the agent
 		"systemctl enable --now ssh",
-		"git curl unzip jq build-essential",
+		"git curl unzip unar jq build-essential",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered bare user data lacks %q", want)
@@ -29,5 +32,56 @@ func TestRenderBare(t *testing.T) {
 	}
 	if strings.Contains(got, "{{") {
 		t.Errorf("template placeholders were left unrendered:\n%s", got)
+	}
+}
+
+// TestRenderBareInstallsKiroByDefault pins that a bare box also gets
+// Kiro by default (Issue #68): --bare drops the browser IDE, not the
+// development tooling.
+func TestRenderBareInstallsKiroByDefault(t *testing.T) {
+	got, err := RenderBare(BareParams{InstanceName: "box01", Region: "ap-northeast-1", InstallKiro: true})
+	if err != nil {
+		t.Fatalf("RenderBare: %v", err)
+	}
+	if !strings.Contains(got, kiro.InstallScript()) {
+		t.Error("the bare user-data must embed internal/kiro's install script verbatim")
+	}
+	if !strings.Contains(got, "unar") {
+		t.Errorf("the bare base packages must include unar:\n%s", got)
+	}
+	// The trailing chown must not run after the Kiro steps: it would
+	// not reset the modes, but keeping the order explicit documents
+	// that ~/.kiro is tightened last.
+	chownAt := strings.LastIndex(got, "chown -R")
+	kiroAt := strings.Index(got, "cli.kiro.dev/install")
+	if chownAt < 0 || kiroAt < 0 || chownAt > kiroAt {
+		t.Error("the home-directory chown must precede the Kiro steps")
+	}
+}
+
+func TestRenderBareNoKiro(t *testing.T) {
+	got, err := RenderBare(BareParams{InstanceName: "box01", Region: "ap-northeast-1", InstallKiro: false})
+	if err != nil {
+		t.Fatalf("RenderBare: %v", err)
+	}
+	if strings.Contains(strings.ToLower(got), "kiro") {
+		t.Errorf("--no-kiro must render no Kiro content at all:\n%s", got)
+	}
+}
+
+func TestRenderBareIsValidBash(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not available")
+	}
+	for _, installKiro := range []bool{true, false} {
+		got, err := RenderBare(BareParams{InstanceName: "box01", Region: "ap-northeast-1", InstallKiro: installKiro})
+		if err != nil {
+			t.Fatalf("RenderBare(InstallKiro=%v): %v", installKiro, err)
+		}
+		cmd := exec.Command("bash", "-n")
+		cmd.Stdin = strings.NewReader(got)
+		if out, cerr := cmd.CombinedOutput(); cerr != nil {
+			t.Errorf("InstallKiro=%v: bash -n rejected the bare user-data: %v\n%s", installKiro, cerr, out)
+		}
 	}
 }
