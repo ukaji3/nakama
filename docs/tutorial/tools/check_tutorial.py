@@ -103,6 +103,7 @@ KNOWN_FLAGS = {
     "nakama aws create": {
         "--name", "--instance-type", "--bare", "--preset", "--setup", "--dotfiles",
         "--code-server-version", "--with-admin", "--with-role", "--show-password",
+        "--no-kiro",
     },
     "nakama aws list": {"--show-nat"},
     "nakama aws info": {"--show-password"},

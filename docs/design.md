@@ -470,7 +470,7 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 - **事前検証**: CLI が `ValidateProvisionSpec` を **AWS 呼び出し前**に実行し、未知の preset・読めないローカルスクリプト・http URL (経路上での改変を許すため拒否) を即座に弾く
 - **実行シェルの前提**: aws:runShellScript は commands を `_script.sh` に書き出し**ファイルとして** `sh` 起動する (amazon-ssm-agent の runshellscript.go で確認)。つまり shebang が解釈器を決め、shebang の無いスクリプトは /bin/sh (Ubuntu では dash) で動く。bash 構文 (process substitution・pipefail) を使うスクリプトは必ず `#!/bin/bash` で始めること (Issue #61)
 - **リモートスクリプト**: `runRemoteScript` (§8.14 と共通) で 1 本のスクリプトを実行。全出力を `/var/log/nakama-provision.log` に tee し、各ステップを `NAKAMA_STEP_BEGIN/OK/FAILED` マーカーで囲んでサブシェル実行する (1 ステップの失敗が他を隠さない・中断しない)。ステップ順は preset → dotfiles → setup (後段が前段の成果に依存できる)
-- **各ステップ**: preset = 同梱レシピ (`kiro` は Issue #20 の内容を一般化。`sudo -u ubuntu -H` で実行) / dotfiles = `~/.dotfiles` へ clone (既存なら `pull --ff-only` で再実行可) → `install.sh`/`setup.sh`/`bootstrap.sh` があれば実行、無ければドットファイルを `$HOME` へリンク / setup = https は `curl` 取得、ローカルは**引用付き heredoc** で内容を転送 (外側シェルの展開を防止。マーカー衝突は拒否)
+- **各ステップ**: preset = 同梱レシピ (`kiro` は `internal/kiro.InstallScript()` をそのまま使う。`sudo -u ubuntu -H` で実行) / dotfiles = `~/.dotfiles` へ clone (既存なら `pull --ff-only` で再実行可) → `install.sh`/`setup.sh`/`bootstrap.sh` があれば実行、無ければドットファイルを `$HOME` へリンク / setup = https は `curl` 取得、ローカルは**引用付き heredoc** で内容を転送 (外側シェルの展開を防止。マーカー衝突は拒否)
 - **`setup rerun`**: 同じ `Provision` を既存インスタンスに適用する復旧・再適用手段。冪等性はスクリプト作成者の責務であることを docs に明記
 
 ### 8.17 `nakama aws create --bare` — 軽量開発ボックス (Issue #52)
@@ -481,6 +481,19 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 - **user-data**: `internal/userdata/bare.tmpl.sh` (SSM エージェントの起動確認・sshd 有効化・aws CLI と基本ツールの導入のみ)。`connect` / `ssh` / `tunnel` が成立する最小構成
 - **種別の記録**: `/nakama/<name>/meta/kind = bare`。**未記録は従来の code-server インスタンス**として扱うため、既存インスタンスへの移行処理は不要。空値の PutParameter は SSM が拒否するため、bare では distribution 系のメタキー自体を書かない
 - **各コマンドの対応**: `list` は kind を読んで TYPE=BARE 表示 / `info` は Kind を返し bare ではパスワードを読まない / `open` は bare を検出して `ssh setup`・`connect` を案内するエラー / `update` は OS 更新のみのスクリプト (reboot マーカーは共通) / `delete` は空の distribution・VPC Origin メタを既にスキップする構造だったためそのまま動作 / NAT 電源連動は通常インスタンスと同一 (egress が必要)
+
+### 8.18 Kiro CLI / Kiro Crew の既定導入 (Issue #68)
+
+Issue #20 の内容を `--preset kiro` (§8.16) として一般化していたが、常用構成であるため user-data での既定導入に変更した。
+
+- **単一の情報源**: 導入手順は `internal/kiro/install.sh` に 1 つだけ置き、`go:embed` で `internal/kiro.InstallScript()` として公開する。user-data (通常・bare の両テンプレート) と `--preset kiro` の双方がこの同一文字列を使う。テストが「preset == InstallScript()」を固定しているため、片方だけが更新されることがない
+- **実行経路**: cloud-init は root で動くため、スクリプト自身が `sudo -u ubuntu -H bash -lc` で ubuntu に降りる。インストール先が `$HOME/.local/bin` (公式インストーラの `LINUX_INSTALL_DIR`) であり、`kirocrew service install` 内部の sudo も Ubuntu AMI の passwordless sudo で非対話に通る
+- **PATH**: 公式インストーラは shell の rc を変更せず PATH 行を表示するだけなので、`~/.bashrc` への追記をこちらで行う (`grep -qF` による冪等化)
+- **必要パッケージ**: インストーラは Linux で `unzip` を必須依存としてチェックする。通常テンプレートには無かったため `unzip unar` を追加した (bare テンプレートは `unzip` があったので `unar` を追加)
+- **AppArmor 制約**: `kirocrew service install` が導入する AppArmor profile は unprivileged userns の許可を含むため、`~/.kiro` が group/world 書き込み可能な間は導入を拒否する (他の local user が `~/.kiro/crew-venv/bin/kirocrew` を差し替えて許可を得られてしまう)。ubuntu ユーザーは private group により umask 0002 で動くためツリーは 0775 で作られる。したがって service install の**直前**に `chmod -R go-w "$HOME/.kiro"` を実行する。この順序はテストで固定
+- **best-effort**: 両テンプレートは `set -euxo pipefail` で動くため、導入失敗が user-data 全体を落とすと code-server の起動や SSM へのバージョン記録に波及する。スクリプトは `if sudo ...; then ... else WARNING fi` の構造で自身の失敗を吸収し、再実行コマンド (`setup rerun --preset kiro`) を案内する。内側のシェルは `set -euo pipefail` を自前で設定し、最初の失敗で止まる (pipefail はインストーラのダウンロード失敗が空スクリプト = exit 0 として通過するのを防ぐ)
+- **配置順**: 通常テンプレートでは code-server の起動とバージョン記録の後 (遅いダウンロードが利用開始を遅らせない)。bare テンプレートではホームの `chown -R` の後 (`~/.kiro` のモードを後から触らない)
+- **オプトアウト**: `create --no-kiro` → `CreateInstanceInput.NoKiro` → `userdata.*Params.InstallKiro` (正の意味に反転)。テンプレートは `{{if .InstallKiro}}` で節全体を囲むため、無効時は節コメントすら残らない
 
 ## 9. テスト戦略
 

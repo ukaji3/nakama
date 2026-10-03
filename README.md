@@ -20,6 +20,7 @@ nakama aws open dev01     # ブラウザが開き、パスワードログイン�
 - **SSH 不要・受信ポート開放なし**: シェルログイン (`connect`) もポート転送 (`tunnel`) も SSM Session Manager 経由。`session-manager-plugin` の追加インストールも不要
 - **企業プロキシにそのまま対応**: 環境変数 → Windows の WinHTTP/PAC の順で自動解決し、TLS 検証は OS 証明書ストアを使用 (ADR 0015)。aws CLI 本体を使いたい場合も `nakama aws cli shell` で設定済みサブシェルを提供 (ADR 0018)
 - **安全側の既定**: アクセスは WAF の IP 許可リスト制、パスワードは SSM SecureString 管理でディスクに残さず、`~/.aws/config` には一切手を触れません
+- **Kiro CLI と Kiro Crew を既定で導入**: 作成したインスタンスには Kiro CLI・Kiro Crew と gateway サービスが自動で入ります (不要なら `create --no-kiro`)
 - **運用コマンド一式**: バックアップ/復元 (`backup` / `restore`)、OS と code-server の一括更新 (`update`)、インスタンスタイプ/EBS の変更 (`edit`)
 
 ## インストール
@@ -128,7 +129,7 @@ nakama aws create --name arm01 --instance-type t4g.large   # Graviton (ARM64) �
 nakama aws create --name ops01 --instance-type t3.medium --with-admin        # AdministratorAccess 付きロールを付与 (CDK/CloudFormation 用)
 nakama aws create --name app01 --instance-type t3.medium --with-role my-role # 任意の既存 IAM ロールを付与
 nakama aws create --name box01 --instance-type t3.medium --bare               # code-server なしの軽量ボックス (ssh/connect で使う)
-nakama aws create --name dev02 --instance-type t3.medium --preset kiro         # 同梱プリセット (kiro-cli + Kiro Crew) を適用
+nakama aws create --name dev02 --instance-type t3.medium --no-kiro             # Kiro CLI / Kiro Crew の既定導入をスキップ
 nakama aws create --name dev03 --instance-type t3.medium --setup ./setup.sh --dotfiles https://github.com/me/dotfiles.git
 nakama aws list                  # TYPE 列で VSCODE 種別を表示
 nakama aws list --show-nat       # NAT インスタンスの稼働状況 (TYPE=NAT, running/stopped) も表示
@@ -161,6 +162,26 @@ nakama aws connect box01       # シェルだけで良い場合
 - **`open` は使えません**: 実行すると `ssh setup` / `connect` を案内してエラーになります
 - NAT インスタンスの電源連動は通常インスタンスと同じです (apt などの egress に必要なため)
 
+### Kiro CLI と Kiro Crew (既定で導入)
+
+`create` で作ったインスタンスには、**Kiro CLI と Kiro Crew、および Crew の gateway サービス**が自動で導入されます (`--bare` でも同じ)。追加の指定は不要です。
+
+```bash
+nakama aws create --name dev01 --instance-type t3.medium            # Kiro も入る
+nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れない
+```
+
+導入内容は次のとおりです (すべて ubuntu ユーザーとして実行されます)。
+
+1. 公式インストーラ (`curl -fsSL https://cli.kiro.dev/install | bash`) で Kiro CLI を `~/.local/bin` へ導入
+2. `kiro-cli crew -y install` で Kiro Crew を導入
+3. `kirocrew service install` で gateway を systemd に登録
+
+- `~/.bashrc` に `export PATH="$HOME/.local/bin:$PATH"` が追記されます (既にあれば追記しません)
+- 初回ログイン時に `kiro-cli login --use-device-flow` での認証が別途必要です (プロビジョニング時には自動化できません)
+- **導入の失敗で create は失敗しません**。警告が出るだけで、インスタンスはそのまま使えます。`nakama aws setup rerun <名前> --preset kiro` で同じ手順を再実行できます
+- Crew の gateway は `localhost:5476` のみで待ち受けます。手元から見る場合は `nakama aws tunnel <名前> -L 5476:5476`
+
 ### 環境構築の自動化 (`create --setup` / `--dotfiles` / `--preset`)
 
 ```bash
@@ -172,7 +193,7 @@ nakama aws setup rerun dev01 --setup ./setup.sh    # 後から適用・失敗時
 
 作成直後のインスタンスに対して、**プリセット → dotfiles → セットアップスクリプト**の順に ubuntu ユーザーで実行します。
 
-- **`--preset <name>`**: 同梱レシピ。現在は `kiro` (kiro-cli + Kiro Crew + gateway の systemd 登録)
+- **`--preset <name>`**: 同梱レシピ。現在は `kiro` (Kiro CLI + Kiro Crew + gateway の systemd 登録)。**この内容は既定で導入される**ため、通常は指定不要です (後述)
 - **`--dotfiles <git-URL>`**: `~/.dotfiles` に clone し、`install.sh` / `setup.sh` / `bootstrap.sh` があれば実行、無ければドットファイルを `$HOME` にシンボリックリンク
 - **`--setup <path|https URL>`**: 任意のシェルスクリプト。ローカルパスは内容がそのまま転送されます (http は拒否 — 経路上で書き換えられ得るため)
 - 実行ログはインスタンス上の `/var/log/nakama-provision.log` に追記されます
