@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ukaji3/nakama/internal/kiro"
 )
 
 // ProvisionSpec declares what to run on a freshly created instance
@@ -47,26 +49,24 @@ type ProvisionResult struct {
 // failed run can be inspected after the fact.
 const ProvisionLogPath = "/var/log/nakama-provision.log"
 
-// provisionPresets are the bundled recipes. `kiro` is Issue #20
-// generalized into a preset: kiro-cli plus Kiro Crew with its gateway
-// service, installed as the ubuntu user (the installer targets
-// ~/.local/bin, and `kirocrew service install` needs passwordless sudo,
-// which the Ubuntu AMI provides).
-var provisionPresets = map[string]string{
-	"kiro": `echo "nakama: installing kiro-cli"
-sudo -u ubuntu -H bash -lc 'curl -fsSL https://cli.kiro.dev/install | bash'
-echo "nakama: installing Kiro Crew"
-sudo -u ubuntu -H bash -lc 'export PATH="$HOME/.local/bin:$PATH"; kiro-cli crew --yes'
-echo "nakama: installing the Kiro Crew gateway service"
-sudo -u ubuntu -H bash -lc 'export PATH="$HOME/.local/bin:$PATH"; kiro-cli crew --yes service install'
-`,
+// provisionPresets are the bundled recipes. `kiro` installs Kiro CLI
+// plus Kiro Crew with its gateway service, and shares the exact steps
+// with the cloud-init user-data (internal/kiro), where they now run by
+// default (Issue #68). The preset therefore stays useful as the
+// re-run path: `nakama aws setup rerun <name> --preset kiro` after a
+// failed install, or on an instance created with --no-kiro.
+func provisionPresets() map[string]string {
+	return map[string]string{
+		"kiro": kiro.InstallScript(),
+	}
 }
 
 // ProvisionPresetNames lists the bundled presets (for CLI help and
 // validation messages).
 func ProvisionPresetNames() []string {
-	names := make([]string, 0, len(provisionPresets))
-	for n := range provisionPresets {
+	presets := provisionPresets()
+	names := make([]string, 0, len(presets))
+	for n := range presets {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -78,7 +78,7 @@ func ProvisionPresetNames() []string {
 // of after a multi-minute create.
 func ValidateProvisionSpec(p ProvisionSpec) error {
 	if p.Preset != "" {
-		if _, ok := provisionPresets[p.Preset]; !ok {
+		if _, ok := provisionPresets()[p.Preset]; !ok {
 			return fmt.Errorf("unknown --preset %q: available presets: %s",
 				p.Preset, strings.Join(ProvisionPresetNames(), ", "))
 		}
@@ -186,7 +186,7 @@ func buildProvisionScript(p ProvisionSpec) (string, error) {
 	b.WriteString("nakama_done() {\n  if [ \"$2\" -eq 0 ]; then echo \"NAKAMA_STEP_OK $1\"; else echo \"NAKAMA_STEP_FAILED $1 (exit $2)\"; fi\n}\n")
 
 	if p.Preset != "" {
-		body, ok := provisionPresets[p.Preset]
+		body, ok := provisionPresets()[p.Preset]
 		if !ok {
 			return "", fmt.Errorf("unknown preset %q", p.Preset)
 		}

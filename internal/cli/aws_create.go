@@ -20,6 +20,7 @@ type createFlags struct {
 	dotfiles          string
 	preset            string
 	bare              bool
+	noKiro            bool
 }
 
 // createInputFromFlags maps the parsed CLI flags to the service-layer
@@ -34,6 +35,7 @@ func createInputFromFlags(f *createFlags) service.CreateInstanceInput {
 		WithAdmin:         f.withAdmin,
 		WithRole:          f.withRole,
 		Bare:              f.bare,
+		NoKiro:            f.noKiro,
 		Provision: service.ProvisionSpec{
 			SetupScript: f.setupScript,
 			Dotfiles:    f.dotfiles,
@@ -130,6 +132,8 @@ resource when the permissions are insufficient.`,
 		"Dotfiles repository to clone into ~/.dotfiles and apply (install.sh/setup.sh/bootstrap.sh, else symlinks)")
 	cmd.Flags().BoolVar(&f.bare, "bare", false,
 		"Create a lightweight box without code-server, CloudFront or a password (use connect/ssh/tunnel)")
+	cmd.Flags().BoolVar(&f.noKiro, "no-kiro", false,
+		"Skip the Kiro CLI / Kiro Crew install that is performed by default")
 	cmd.Flags().StringVar(&f.preset, "preset", "",
 		"Bundled provisioning recipe to apply ("+strings.Join(service.ProvisionPresetNames(), ", ")+")")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")

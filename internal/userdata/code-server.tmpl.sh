@@ -31,7 +31,7 @@ HOME_DIR="/home/${TARGET_USER}"
 #    complete (early cloud-init can race it), then install the classic snap.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl ca-certificates jq
+apt-get install -y curl ca-certificates jq unzip unar
 apt-get purge -y awscli || true
 snap wait system seed.loaded
 snap install aws-cli --classic
@@ -96,4 +96,10 @@ if VERSION_LINE="$(sudo -u "${TARGET_USER}" code-server --version 2>/dev/null | 
   fi
 fi
 
-echo "nakama User Data finished for instance: ${INSTANCE_NAME}"
+{{if .InstallKiro}}# 7. Kiro CLI and Kiro Crew (Issue #68). Rendered from
+#    internal/kiro/install.sh, shared with the `kiro` provisioning
+#    preset. Runs last so a slow download does not hold up code-server,
+#    and is best-effort: the block reports a warning instead of
+#    failing the whole User Data.
+{{.KiroScript}}
+{{end}}echo "nakama User Data finished for instance: ${INSTANCE_NAME}"

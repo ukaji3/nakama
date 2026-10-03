@@ -35,7 +35,7 @@ snap install aws-cli --classic
 ln -sf /snap/bin/aws /usr/local/bin/aws
 
 # Baseline tooling a developer expects to find on a fresh box.
-apt-get install -y -qq git curl unzip jq build-essential
+apt-get install -y -qq git curl unzip unar jq build-essential
 
 # Session Manager (and therefore `connect` / `tunnel` / `ssh`) needs the
 # SSM agent. Ubuntu images ship it as a snap; make sure it is enabled so
@@ -48,4 +48,11 @@ snap start amazon-ssm-agent 2>/dev/null || systemctl enable --now snap.amazon-ss
 systemctl enable --now ssh || true
 
 chown -R "${TARGET_USER}:${TARGET_USER}" "/home/${TARGET_USER}" || true
-echo "nakama: bare instance ready"
+
+{{if .InstallKiro}}# Kiro CLI and Kiro Crew (Issue #68). Rendered from
+# internal/kiro/install.sh, shared with the `kiro` provisioning preset.
+# Placed after the chown above so the tightened ~/.kiro permissions the
+# AppArmor profile requires are not reset, and best-effort: a failure
+# here leaves a usable box.
+{{.KiroScript}}
+{{end}}echo "nakama: bare instance ready"

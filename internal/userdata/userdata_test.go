@@ -1,8 +1,11 @@
 package userdata
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/ukaji3/nakama/internal/kiro"
 )
 
 func TestRenderCodeServer_Substitutes(t *testing.T) {
@@ -145,5 +148,79 @@ func TestRenderCodeServer_RejectsInvalidPinnedVersion(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("RenderCodeServer accepted a malformed pinned version")
+	}
+}
+
+// TestRenderCodeServerInstallsKiroByDefault pins that an ordinary
+// create carries the Kiro steps (Issue #68) and that they are the
+// shared ones, not a second copy.
+func TestRenderCodeServerInstallsKiroByDefault(t *testing.T) {
+	got, err := RenderCodeServer(CodeServerParams{
+		InstanceName: "dev01", Region: "ap-northeast-1", Port: 8080,
+		SSMPasswordParameter: "/nakama/dev01/code-server/password",
+		SSMVersionParameter:  "/nakama/dev01/code-server/version",
+		InstallKiro:          true,
+	})
+	if err != nil {
+		t.Fatalf("RenderCodeServer: %v", err)
+	}
+	if !strings.Contains(got, kiro.InstallScript()) {
+		t.Error("the user-data must embed internal/kiro's install script verbatim")
+	}
+	// The official installer checks for unzip on Linux and aborts
+	// without it, so the package has to be installed first.
+	if !strings.Contains(got, "unzip") || !strings.Contains(got, "unar") {
+		t.Errorf("the base packages must include unzip and unar:\n%s", got)
+	}
+	aptAt := strings.Index(got, "apt-get install -y curl")
+	kiroAt := strings.Index(got, "cli.kiro.dev/install")
+	if aptAt < 0 || kiroAt < 0 || aptAt > kiroAt {
+		t.Error("unzip/unar must be installed before the Kiro installer runs")
+	}
+}
+
+// TestRenderCodeServerNoKiro pins that --no-kiro leaves no trace at
+// all: not even the section comment, which would otherwise suggest the
+// install was attempted.
+func TestRenderCodeServerNoKiro(t *testing.T) {
+	got, err := RenderCodeServer(CodeServerParams{
+		InstanceName: "dev01", Region: "ap-northeast-1", Port: 8080,
+		SSMPasswordParameter: "/nakama/dev01/code-server/password",
+		SSMVersionParameter:  "/nakama/dev01/code-server/version",
+		InstallKiro:          false,
+	})
+	if err != nil {
+		t.Fatalf("RenderCodeServer: %v", err)
+	}
+	if strings.Contains(strings.ToLower(got), "kiro") {
+		t.Errorf("--no-kiro must render no Kiro content at all:\n%s", got)
+	}
+	// unzip stays: it is generally useful and harmless.
+	if !strings.Contains(got, "unzip") {
+		t.Error("unzip should remain in the base packages even without Kiro")
+	}
+}
+
+// TestRenderedUserDataIsValidBash guards both variants against a syntax
+// error reaching cloud-init, where it would only surface as a broken
+// instance.
+func TestRenderedUserDataIsValidBash(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not available")
+	}
+	for _, installKiro := range []bool{true, false} {
+		got, err := RenderCodeServer(CodeServerParams{
+			InstanceName: "dev01", Region: "ap-northeast-1", Port: 8080,
+			SSMPasswordParameter: "/p", SSMVersionParameter: "/v",
+			InstallKiro: installKiro,
+		})
+		if err != nil {
+			t.Fatalf("RenderCodeServer(InstallKiro=%v): %v", installKiro, err)
+		}
+		cmd := exec.Command("bash", "-n")
+		cmd.Stdin = strings.NewReader(got)
+		if out, cerr := cmd.CombinedOutput(); cerr != nil {
+			t.Errorf("InstallKiro=%v: bash -n rejected the user-data: %v\n%s", installKiro, cerr, out)
+		}
 	}
 }
