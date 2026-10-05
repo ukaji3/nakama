@@ -155,8 +155,12 @@ path, action = sys.argv[1], sys.argv[2]
 begin = "# BEGIN nakama kirocrew (managed by ` + "`nakama aws kirocrew enable`" + `)"
 end = "# END nakama kirocrew"
 
-with open(path, encoding="utf-8") as fh:
-    lines = fh.read().splitlines()
+# newline="" disables newline translation both ways, so the file keeps
+# exactly the line endings it had (and LF when it had none).
+with open(path, encoding="utf-8", newline="") as fh:
+    raw = fh.read()
+eol = "\r\n" if "\r\n" in raw else "\n"
+lines = raw.splitlines()
 
 kept, inside = [], False
 for line in lines:
@@ -187,8 +191,8 @@ elif action != "remove":
 
 st = os.stat(path)
 tmp = path + ".nakama.tmp"
-with open(tmp, "w", encoding="utf-8") as fh:
-    fh.write("\n".join(kept) + "\n")
+with open(tmp, "w", encoding="utf-8", newline="") as fh:
+    fh.write(eol.join(kept) + eol)
 os.chmod(tmp, st.st_mode & 0o7777)
 # os.chown is POSIX-only. On the instance (Ubuntu) it always exists and
 # keeps the file owned by ubuntu after root rewrote it; elsewhere (tests
