@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -79,6 +80,9 @@ func TestKirocrewTokenScript(t *testing.T) {
 // it prints. This exercises the exact openssl invocation the instance
 // uses (Ubuntu ships OpenSSL 3).
 func TestKirocrewTokenScriptEndToEnd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub sudo/kirocrew are shebang scripts, which Windows cannot execute; the script only runs on Ubuntu")
+	}
 	for _, tool := range []string{"bash", "openssl", "base64"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is not available", tool)
