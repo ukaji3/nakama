@@ -190,7 +190,11 @@ tmp = path + ".nakama.tmp"
 with open(tmp, "w", encoding="utf-8") as fh:
     fh.write("\n".join(kept) + "\n")
 os.chmod(tmp, st.st_mode & 0o7777)
-os.chown(tmp, st.st_uid, st.st_gid)
+# os.chown is POSIX-only. On the instance (Ubuntu) it always exists and
+# keeps the file owned by ubuntu after root rewrote it; elsewhere (tests
+# on Windows) there is no owner to restore.
+if hasattr(os, "chown"):
+    os.chown(tmp, st.st_uid, st.st_gid)
 os.replace(tmp, path)
 `
 

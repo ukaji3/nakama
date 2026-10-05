@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -156,7 +157,10 @@ func TestKirocrewConfigEditor(t *testing.T) {
 	if string(got) != want {
 		t.Errorf("after set:\n%s\nwant:\n%s", got, want)
 	}
-	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+	// Windows has no POSIX mode bits to preserve; the editor only ever
+	// runs on the Ubuntu instance, where this check is the one that
+	// matters.
+	if st, _ := os.Stat(path); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v, want 0600 (the file holds the password)", st.Mode().Perm())
 	}
 
