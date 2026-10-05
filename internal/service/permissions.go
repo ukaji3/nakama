@@ -250,6 +250,43 @@ func featurePermissionMatrix() []FeaturePermission {
 			Simulate: true,
 		},
 		{
+			Feature:  "kirocrew",
+			Commands: "nakama aws kirocrew",
+			Actions: mergeActions(
+				resolveInstanceActions,
+				remoteScriptActions, // the dashboard token is minted on the instance
+				[]string{"cloudfront:GetDistribution"},
+			),
+			Note: "トークンは RSA-OAEP で暗号化して Run Command で受け取る (ADR 0020)。" +
+				"code-server のパスワード読み取りは open と同じ",
+			Simulate: true,
+		},
+		{
+			Feature:  "kirocrew enable / disable",
+			Commands: "nakama aws kirocrew enable / disable",
+			Actions: mergeActions(
+				resolveInstanceActions,
+				remoteScriptActions, // nginx + code-server proxy-domain on the instance
+				[]string{
+					"cloudfront:CreateDistribution",
+					"cloudfront:CreateFunction",
+					"cloudfront:DeleteDistribution",
+					"cloudfront:DeleteFunction",
+					"cloudfront:DescribeFunction",
+					"cloudfront:GetDistribution",
+					"cloudfront:GetDistributionConfig",
+					"cloudfront:PublishFunction",
+					"cloudfront:TagResource",
+					"cloudfront:UpdateDistribution",
+					"cloudfront:UpdateFunction",
+					"ssm:DeleteParameters",
+					"ssm:PutParameter",
+				},
+			),
+			Note:     "Kiro Crew 専用の distribution と CloudFront Function を作成・削除する",
+			Simulate: true,
+		},
+		{
 			Feature:  "connect",
 			Commands: "nakama aws connect",
 			Actions:  mergeActions(resolveInstanceActions, sessionActions),
@@ -351,7 +388,10 @@ func featurePermissionMatrix() []FeaturePermission {
 				natLifecycleActions,
 				[]string{
 					"cloudfront:DeleteDistribution",
+					"cloudfront:DeleteFunction",
 					"cloudfront:DeleteVpcOrigin",
+					"cloudfront:DescribeFunction",
+					"cloudfront:GetDistribution",
 					"cloudfront:GetDistributionConfig",
 					"cloudfront:GetVpcOrigin",
 					"cloudfront:UpdateDistribution",
@@ -364,7 +404,8 @@ func featurePermissionMatrix() []FeaturePermission {
 					"ssm:GetParametersByPath",
 				},
 			),
-			Note:     "--bare で作成したインスタンスは cloudfront:* を使わない",
+			Note: "--bare で作成したインスタンスは cloudfront:* を使わない。" +
+				"cloudfront:*Function は kirocrew enable 済みのインスタンスでのみ使う",
 			Simulate: true,
 		},
 		{

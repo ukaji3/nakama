@@ -52,6 +52,9 @@ func formatInfo(i *service.InstanceInfo, showPassword bool) string {
 	fmt.Fprintf(&b, "distribution_id   : %s\n", i.DistributionID)
 	fmt.Fprintf(&b, "url               : %s\n", i.URL)
 	fmt.Fprintf(&b, "code_server_ver   : %s\n", i.CodeServerVersion)
+	if i.KiroCrewURL != "" {
+		fmt.Fprintf(&b, "kirocrew_url      : %s\n", i.KiroCrewURL)
+	}
 	if showPassword {
 		fmt.Fprintf(&b, "password          : %s", i.Password)
 	} else {

@@ -126,6 +126,9 @@ type InstanceInfo struct {
 	Password           string `json:"password,omitempty"` // populated only when showPassword=true
 	// Kind is "vscode" (the default) or "bare" (Issue #52).
 	Kind string `json:"kind,omitempty"`
+	// KiroCrewURL is the Kiro Crew dashboard URL when web access was
+	// enabled with `nakama aws kirocrew enable` (Issue #71).
+	KiroCrewURL string `json:"kirocrew_url,omitempty"`
 }
 
 // GetInstanceInfo returns the consolidated state of a nakama instance,
@@ -159,6 +162,13 @@ func (s *Service) GetInstanceInfo(ctx context.Context, name string, showPassword
 	}
 	if info.DistributionDomain != "" {
 		info.URL = "https://" + info.DistributionDomain
+	}
+	crewDomain, err := s.ssmGetOptional(ctx, ssmKirocrewDistributionDomainPath(name))
+	if err != nil {
+		return nil, err
+	}
+	if crewDomain != "" {
+		info.KiroCrewURL = kirocrewURL(crewDomain)
 	}
 	if info.Kind == "" {
 		info.Kind = instanceKindVSCode

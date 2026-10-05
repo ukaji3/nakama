@@ -44,6 +44,9 @@ var reservedInstanceNames = map[string]bool{
 	"status":  true,
 	"restart": true,
 	"suggest": true,
+	// `nakama aws kirocrew enable|disable <name>` (Issue #71).
+	"enable":  true,
+	"disable": true,
 }
 
 // ValidateNewInstanceName validates a name for instances about to be
@@ -53,7 +56,7 @@ func ValidateNewInstanceName(name string) error {
 		return err
 	}
 	if reservedInstanceNames[name] {
-		return fmt.Errorf("instance name %q is reserved (it is a `nakama aws tunnel` subcommand); choose another name", name)
+		return fmt.Errorf("instance name %q is reserved (it is a `nakama aws tunnel` or `nakama aws kirocrew` subcommand); choose another name", name)
 	}
 	return nil
 }
