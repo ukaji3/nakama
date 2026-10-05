@@ -180,7 +180,7 @@ nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れな�
 - `~/.bashrc` に `export PATH="$HOME/.local/bin:$PATH"` が追記されます (既にあれば追記しません)
 - 初回ログイン時に `kiro-cli login --use-device-flow` での認証が別途必要です (プロビジョニング時には自動化できません)
 - **導入の失敗で create は失敗しません**。警告が出るだけで、インスタンスはそのまま使えます。`nakama aws setup rerun <名前> --preset kiro` で同じ手順を再実行できます
-- Crew の gateway は `localhost:5476` のみで待ち受けます。手元から見る場合は `nakama aws tunnel <名前> -L 5476:5476`
+- Crew の gateway は `localhost:5476` のみで待ち受けます。ブラウザから開くには `nakama aws kirocrew enable <名前>` の後に `nakama aws kirocrew <名前>` (後述)、手元のループバックから直接開く場合は `nakama aws tunnel <名前> -L 5476:5476`
 
 ### 環境構築の自動化 (`create --setup` / `--dotfiles` / `--preset`)
 
@@ -209,6 +209,24 @@ nakama aws open dev01 --print-url    # ブラウザを起動せず URL を表示
 ```
 
 `open` は code-server の URL をブラウザで開き、パスワードログインを自動通過します (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 上の 1 回限りのローカルページ (ランダムトークン付き URL) からログインフォームを自動送信する方式のため、**パスワードはディスクに書き込まれず**、メモリ内にのみ存在します。自動ログインができない環境 (ブラウザ起動不可など) では、理由を表示した上で URL を開く/表示するだけの動作に退避します。URL への到達には呼び出し元 IP が WAF allowlist (`nakama aws acl add`) に登録されている必要があります (未登録なら警告が表示されます)。
+
+### Kiro Crew の Web 画面を開く (`kirocrew`)
+
+```bash
+nakama aws kirocrew enable dev01     # 最初に 1 回だけ (CloudFront の反映待ちで数分〜十数分)
+nakama aws kirocrew dev01            # ブラウザで Kiro Crew の画面が開く (パスワード入力なし)
+nakama aws kirocrew disable dev01    # 撤去 (delete でも一緒に消えます)
+```
+
+Kiro Crew の Web 画面 (gateway) は、通常はインスタンスの `localhost:5476` でしか開けません。code-server のポート転送 (`/proxy/5476/`) では、Kiro Crew の Host 検査とルートからの絶対パス前提に阻まれて開けないためです。`kirocrew` は、**Kiro Crew を CloudFront に直接さらすことなく、必ず code-server を経由させて**画面を開く仕組みを作ります (ADR 0020)。
+
+- `enable` を実行すると、Kiro Crew 専用の CloudFront distribution、インスタンス上の小さなプロキシ (nginx、127.0.0.1 だけで待ち受け)、code-server の設定がそろいます。code-server は 1 回再起動するので、開いているタブは再接続されます
+- `nakama aws kirocrew <名前>` は、code-server へのログインと Kiro Crew のトークンの受け渡しを、1 回のブラウザ起動で済ませます。トークンはインスタンス上で暗号化してから受け取るので、AWS の実行履歴にも画面にも平文では残りません
+- `enable` の後は、ターミナルに出る `http://localhost:5476?token=…` のリンク (code-server が `/proxy/5476/` に書き換えるもの) をクリックしても、Kiro Crew 用のホスト名へ転送されます
+- 防御の層は「WAF の IP 許可リスト → code-server のパスワード → プロキシの Origin 検査 → Kiro Crew のトークン」の 4 段です
+- **ブラウザから Kiro Crew の設定を書き換えたり、秘密情報を表示したりはできません** (Kiro Crew の仕様で、プロキシ経由のリクエストには許可されない)。必要なときは `nakama aws tunnel <名前> -L 5476:5476` で手元のループバックから開くか、インスタンス上の CLI を使ってください
+- `--bare` のインスタンスには code-server が無いので使えません (`tunnel` を使ってください)
+- distribution が 1 つ増えるので、CloudFront と WAF の料金がその分増えます
 
 ### バックアップと復元 (`backup` / `restore`)
 
@@ -337,7 +355,7 @@ egress (private subnet からのアウトバウンド通信) は NAT Gateway で
 
 ## ステータス
 
-主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `ssh` / `update` / `profile` / `doctor` / `setup` / `cli shell`) は実装済み。
+主要サブコマンド (`login` / `init` / `acl` / `create` / `list` / `info` / `open` / `kirocrew` / `start` / `stop` / `delete` / `edit` / `backup` / `restore` / `connect` / `tunnel` / `ssh` / `update` / `profile` / `doctor` / `setup` / `cli shell`) は実装済み。
 
 ## ドキュメント
 
