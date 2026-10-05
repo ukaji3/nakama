@@ -197,7 +197,8 @@ func (s *Service) waitSSMCommand(ctx context.Context, commandID, instanceID stri
 		}
 		switch out.Status {
 		case ssmtypes.CommandInvocationStatusSuccess:
-			slog.Info("ssm command success", "command_id", commandID, "stdout", trimOutput(out.StandardOutputContent))
+			// See waitSSMCommandOutput: the output itself is never logged.
+			slog.Debug("ssm command success", "command_id", commandID, "stdout_bytes", outputLen(out.StandardOutputContent))
 			return true, nil
 		case ssmtypes.CommandInvocationStatusFailed,
 			ssmtypes.CommandInvocationStatusCancelled,
@@ -208,6 +209,14 @@ func (s *Service) waitSSMCommand(ctx context.Context, commandID, instanceID stri
 		slog.Info("ssm command pending", "command_id", commandID, "status", out.Status)
 		return false, nil
 	})
+}
+
+// outputLen reports the size of a command output without exposing it.
+func outputLen(p *string) int {
+	if p == nil {
+		return 0
+	}
+	return len(*p)
 }
 
 func trimOutput(p *string) string {
