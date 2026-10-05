@@ -301,7 +301,11 @@ func (s *Service) waitSSMCommandOutput(ctx context.Context, commandID, instanceI
 		}
 		switch out.Status {
 		case ssmtypes.CommandInvocationStatusSuccess:
-			slog.Info("update: command success", "command_id", commandID, "stdout", trimOutput(out.StandardOutputContent))
+			// Never log the remote output itself: callers run scripts
+			// whose stdout can carry secrets (e.g. the encrypted Kiro
+			// Crew token exchange), and the default log level would put
+			// it on the user's terminal. The size is enough to debug.
+			slog.Debug("ssm command success", "command_id", commandID, "stdout_bytes", outputLen(out.StandardOutputContent))
 			return true, nil
 		case ssmtypes.CommandInvocationStatusFailed,
 			ssmtypes.CommandInvocationStatusCancelled,
@@ -309,7 +313,7 @@ func (s *Service) waitSSMCommandOutput(ctx context.Context, commandID, instanceI
 			return false, fmt.Errorf("ssm command terminated as %s; stderr: %s",
 				out.Status, trimOutput(out.StandardErrorContent))
 		}
-		slog.Info("update: command pending", "command_id", commandID, "status", out.Status)
+		slog.Info("ssm command pending", "command_id", commandID, "status", out.Status)
 		return false, nil
 	})
 	return stdout, err
