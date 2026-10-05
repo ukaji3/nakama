@@ -114,6 +114,9 @@
 <table>
   <thead><tr><th scope="col">コマンド</th><th scope="col">説明</th><th scope="col">主なオプション</th></tr></thead>
   <tbody>
+    <tr><td><code>nakama aws kirocrew &lt;名前&gt;</code></td><td>Kiro Crew の画面を code-server 経由で開く (自動ログイン)</td><td><code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code></td></tr>
+    <tr><td><code>nakama aws kirocrew enable &lt;名前&gt;</code></td><td>Kiro Crew の画面を開く仕組みを用意する (最初に 1 回)</td><td>—</td></tr>
+    <tr><td><code>nakama aws kirocrew disable &lt;名前&gt;</code></td><td>上の仕組みを取り外す</td><td>—</td></tr>
     <tr><td><code>nakama aws open &lt;名前&gt;</code></td><td>ブラウザで開く (自動ログイン)</td><td><code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code> (既定 30s)</td></tr>
     <tr><td><code>nakama aws connect &lt;名前&gt; [コマンド...]</code></td><td>ターミナルに入る / コマンド実行。<strong>フラグは名前より前</strong>に置きます (名前より後ろは環境側で実行するコマンドとして扱われます)</td><td><code>--tty</code>、<code>--retry &lt;回数&gt;</code> (対話は既定 5、コマンド実行は既定 0)</td></tr>
     <tr><td><code>nakama aws ssh setup &lt;名前&gt;</code></td><td>公開鍵の登録と ssh 設定の生成</td><td><code>--identity &lt;公開鍵&gt;</code>、<code>--no-key</code>、<code>--port &lt;番号&gt;</code> (既定 22)</td></tr>

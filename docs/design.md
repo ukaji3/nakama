@@ -495,6 +495,20 @@ Issue #20 の内容を `--preset kiro` (§8.16) として一般化していた�
 - **配置順**: 通常テンプレートでは code-server の起動とバージョン記録の後 (遅いダウンロードが利用開始を遅らせない)。bare テンプレートではホームの `chown -R` の後 (`~/.kiro` のモードを後から触らない)
 - **オプトアウト**: `create --no-kiro` → `CreateInstanceInput.NoKiro` → `userdata.*Params.InstallKiro` (正の意味に反転)。テンプレートは `{{if .InstallKiro}}` で節全体を囲むため、無効時は節コメントすら残らない
 
+### 8.19 Kiro Crew の Web 画面 (`nakama aws kirocrew`、ADR 0020 / Issue #71)
+
+code-server のパス転送 (`/proxy/5476/`) では、Kiro Crew の Host 検査とルートからの絶対パス前提の 2 点に阻まれて画面が開かない (ADR 0020 の Context)。そこで、Kiro Crew 専用の CloudFront distribution、code-server のホスト名による振り分け、インスタンス上の nginx を組み合わせる。
+
+- **経路**: `https://<crew>` → CloudFront (オリジンのカスタムヘッダー `X-Forwarded-Host: 15476.kirocrew.nakama.internal`) → code-server:8080 (パスワード認証 → `proxy-domain` の照合でポート 15476 を選び、パスを変えずに転送) → nginx 127.0.0.1:15476 (Origin を検査し、Host と Origin を `localhost:5476` に書き換え、`X-Forwarded-Proto: https` を付ける。`X-Forwarded-For` は残す) → Kiro Crew 127.0.0.1:5476
+- **構成の組み立て**: `distributionConfig()` を code-server 用と Kiro Crew 用で共用する。共通の内容は、VPC Origin が 1 つ、CachingDisabled、AllViewer、全メソッド許可、redirect-to-https、共有の WAF。Kiro Crew 用はこれにオリジンのカスタムヘッダーを足すだけである。code-server 用の構成は、関数に切り出す前と 1 バイトも変わっていない (テストで固定)
+- **リダイレクト**: 既存の distribution に `/proxy/5476*` と `/absproxy/5476*` の behavior を先頭に足す。既定の behavior と同じ設定に、viewer-request の CloudFront Function を付けたもの。Function は `https://<crew>` + 残りのパス + クエリへの 302 を返す。パスの照合は厳密に行うので、`/proxy/54760` は素通しになる。behavior の追加と削除は冪等で、利用者が足した behavior は残す。内容が変わらないときは UpdateDistribution を呼ばない
+- **enable** (冪等、途中から再実行できる): 次の順に進む。① インスタンスの確認 (bare は拒否、停止中は `start` を案内) → ② 既存の distribution の構成から VPC Origin と WAF を読む → ③ Kiro Crew 用 distribution を作り、**作った直後に ID とドメインをメタデータへ書く** → ④ Run Command でインスタンス側を設定する (nginx の導入と設定、`config.yaml` の管理ブロック、code-server の再起動。結果は `NAKAMA_KIROCREW_OK` / `NAKAMA_KIROCREW_ERROR` で返す) → ⑤ Function を作成または更新して LIVE に公開 → ⑥ 既存の distribution に behavior を足す → ⑦ 2 つの distribution が Deployed になるのを並行して待つ。④ が失敗したら ⑥ は行わないので、壊れた設定へ誘導されることはない
+- **disable / delete**: disable は、behavior を外して反映を待つ → Function を削除する (CloudFront が使用中と返す間は再試行) → Kiro Crew 用 distribution を削除する → インスタンスが起動していれば後片付けのスクリプトを実行する (停止中なら飛ばして、そのことを知らせる) → 最後にメタデータを消す、の順に進む。delete は、Kiro Crew 用 distribution を**既存の distribution と VPC Origin より先に**消し (どちらも同じ VPC Origin を参照しているため)、Function は既存の distribution を消した後に消す
+- **トークン**: `MintKiroCrewToken` が、リクエストのたびに RSA-4096 の鍵を作り、公開鍵を埋め込んだスクリプトを Run Command で実行する。スクリプトは `kirocrew token` の出力からループバックの URL を取り出し、`openssl pkeyutl` (OAEP、SHA-256、MGF1 も SHA-256) で暗号化して `NAKAMA_KIROCREW_TOKEN_RSA <base64>` として返す。復号した値は `[A-Za-z0-9._-]` の 20〜1024 バイトかを確かめ、エラーメッセージにも値を含めない。Run Command の成功ログには、出力の中身を書かずバイト数だけを DEBUG で出す
+- **ブラウザの起動**: 1 回限りログインページ (ADR 0012) を `newOneShotLoginServerFor(…, loginTarget{domain, label, extra})` に汎用化した。Kiro Crew では送信先を `https://<crew>/login?to=/&token=…`、href を crew にする。`open` が生成する HTML は変わっていない (テストで固定)。`--no-auth` を付けると `https://<crew>/?token=…` を直接開くので、code-server のログイン画面が先に出る
+- **メタデータ**: `/nakama/<名前>/meta/kirocrew-distribution-id` と `kirocrew-distribution-domain`。`info` は後者から `kirocrew_url` を表示する
+- **予約名**: `enable` と `disable` はサブコマンド名なので、インスタンス名として予約する
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>第 5 章 開発環境を使う — nakama チュートリアル</title>
-<meta name="description" content="ブラウザ (open)、ターミナル (connect)、手元の VS Code (ssh)、ポート転送 (tunnel) の 4 つのアクセス方法を使い分けます。">
+<meta name="description" content="ブラウザ (open)、ターミナル (connect)、手元の VS Code (ssh)、ポート転送 (tunnel) の 4 つのアクセス方法の使い分けと、Kiro Crew の画面を開く方法 (kirocrew)。">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -36,6 +36,7 @@
     <li><a href="#connect">ターミナルに入る (connect)</a></li>
     <li><a href="#ssh">手元の VS Code から使う (ssh)</a></li>
     <li><a href="#tunnel">ポートを手元に持ってくる (tunnel)</a></li>
+    <li><a href="#kirocrew">Kiro Crew の画面を開く (kirocrew)</a></li>
   </ol>
 </nav>
 
@@ -227,6 +228,45 @@ FORWARD                   STATE         SINCE       DETAIL
   <span class="title">常駐プログラムのログと状態ファイル</span>
   <p>ログは OS の標準的な場所に出ます (Windows はイベントログ、macOS / Linux は syslog)。転送の状態は <code>~/.config/nakama/tunnels/&lt;名前&gt;.json</code> に保存され、<code>tunnel stop</code> で削除されます。</p>
 </div>
+
+<h2 id="kirocrew">6. Kiro Crew の画面を開く (kirocrew)</h2>
+<p>環境に入っている Kiro Crew には Web の画面があります。この画面は環境の中の <code>localhost:5476</code> でしか待ち受けておらず、code-server のポート転送 (<code>/proxy/5476/</code>) でも開けません。そこで nakama は、<strong>Kiro Crew を外に直接出さず、必ず code-server を通して</strong>開く仕組みを用意しています。</p>
+
+<p class="cmd-caption">PowerShell で実行 (最初の 1 回だけ)</p>
+<pre><code>nakama aws kirocrew enable dev01</code></pre>
+<p>Kiro Crew 用の入口 (CloudFront) と、環境の中の小さなプロキシを用意します。CloudFront の反映待ちで数分から十数分かかります。途中で code-server が 1 回再起動するので、開いているブラウザの VS Code はつなぎ直されます。</p>
+
+<p class="cmd-caption">PowerShell で実行 (使うたび)</p>
+<pre><code>nakama aws kirocrew dev01</code></pre>
+<p>ブラウザが開き、code-server へのログインと Kiro Crew への受け渡しが自動で済んで、Kiro Crew の画面が表示されます。パスワードを入力する必要はありません。</p>
+
+<div class="callout note" role="note">
+  <span class="title">どうやって安全に開いているのか</span>
+  <p>入口から Kiro Crew にたどり着くまでに、<strong>IP の許可リスト → code-server のパスワード → プロキシによる送信元の確認 → Kiro Crew のトークン</strong>の 4 段の確認を通ります。Kiro Crew そのものはインターネットに一切出ていません。</p>
+  <p>Kiro Crew に入るためのトークンは、環境の中で暗号化してから nakama が受け取ります。AWS の実行履歴にも画面にも、そのままの形では残りません。</p>
+</div>
+
+<div class="callout tip" role="note">
+  <span class="title">ターミナルのリンクからも開けます</span>
+  <p><code>enable</code> の後は、VS Code のターミナルで <code>kirocrew token</code> が出す <code>http://localhost:5476?token=…</code> のリンクをクリックしても、Kiro Crew 用の入口へ自動で転送されます。初めて開くときは、Kiro Crew 用の入口で code-server のパスワードを 1 回だけ聞かれます (別の入口なので、ログイン状態を共有できないためです)。</p>
+</div>
+
+<div class="callout warn" role="note">
+  <span class="title">ブラウザからは設定を変えられません</span>
+  <p>Kiro Crew の仕様で、外から入った画面では設定の書き換えと秘密情報の表示ができません。必要なときは、<code>nakama aws tunnel dev01 -L 5476:5476</code> で手元の <code>http://localhost:5476</code> から開くか、環境の中の <code>kirocrew</code> コマンドを使ってください。</p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th scope="col">コマンド</th><th scope="col">内容</th></tr></thead>
+  <tbody>
+    <tr><td><code>nakama aws kirocrew enable dev01</code></td><td>仕組みを用意する (何度実行しても同じ結果。途中で失敗しても、もう一度実行すれば続きから進む)</td></tr>
+    <tr><td><code>nakama aws kirocrew dev01</code></td><td>ブラウザで開く (<code>--print-url</code>、<code>--no-auth</code>、<code>--browser</code>、<code>--timeout</code> の意味は <code>open</code> と同じ)</td></tr>
+    <tr><td><code>nakama aws kirocrew disable dev01</code></td><td>仕組みを取り外す (<code>nakama aws delete</code> でも一緒に消える)</td></tr>
+  </tbody>
+</table>
+</div>
+<p><code>--bare</code> で作った環境には code-server が無いので、この方法は使えません。<code>tunnel</code> を使ってください。</p>
 
 <nav class="pager" aria-label="章の移動">
   <a href="04-create.html">← 前へ: 第 4 章 開発環境を作る</a>
