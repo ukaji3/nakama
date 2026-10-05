@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"sort"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -145,32 +147,111 @@ func (s *Service) createInstanceDistribution(ctx context.Context, instanceName, 
 	if err != nil {
 		return "", "", err
 	}
-	originID := "vpc-origin-" + vpcOriginID
+	cfg := distributionConfig(distributionParams{
+		callerReference: caller,
+		comment:         "nakama-" + instanceName,
+		vpcOriginID:     vpcOriginID,
+		originDomain:    originDomain,
+		wafWebACLARN:    wafWebACLARN,
+	})
 
-	cfg := &cftypes.DistributionConfig{
-		CallerReference: aws.String(caller),
-		Comment:         aws.String("nakama-" + instanceName),
+	out, err := s.clients.CloudFront.CreateDistribution(ctx, &cloudfront.CreateDistributionInput{
+		DistributionConfig: cfg,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("CreateDistribution: %w", err)
+	}
+	if out.Distribution == nil || out.Distribution.Id == nil || out.Distribution.DomainName == nil {
+		return "", "", errors.New("CreateDistribution returned nil")
+	}
+	id := *out.Distribution.Id
+	domain := *out.Distribution.DomainName
+	slog.Info("distribution: created, waiting for Deployed", "id", id, "domain", domain)
+
+	if _, err := s.clients.CloudFront.TagResource(ctx, &cloudfront.TagResourceInput{
+		Resource: out.Distribution.ARN,
+		Tags:     awshelper.CloudFrontTags(tagging.ForInstance(instanceName, tagging.ComponentCloudFront, "nakama-"+instanceName)),
+	}); err != nil {
+		// non-fatal; tags can be re-applied later
+		slog.Warn("distribution: TagResource failed", "id", id, "error", err)
+	}
+
+	return id, domain, nil
+}
+
+// distributionParams parameterises distributionConfig. Every nakama
+// distribution shares one shape: a single VPC origin (code-server:8080
+// on the instance), caching off, every viewer header forwarded (needed
+// for WebSockets) and the shared WAF web ACL.
+type distributionParams struct {
+	callerReference string
+	comment         string
+	vpcOriginID     string
+	originDomain    string
+	wafWebACLARN    string
+	// originHeaders are added to every origin request. The code-server
+	// distribution has none; the Kiro Crew one injects X-Forwarded-Host.
+	originHeaders map[string]string
+}
+
+func (p distributionParams) originID() string { return "vpc-origin-" + p.vpcOriginID }
+
+// quantity is the int32 element count CloudFront list types carry.
+// The lists nakama builds are tiny; a count that does not fit int32
+// cannot occur and is a programming error.
+func quantity(n int) *int32 {
+	if n < 0 || n > math.MaxInt32 {
+		panic(fmt.Sprintf("cloudfront list length %d out of range", n))
+	}
+	return aws.Int32(int32(n)) // #nosec G115 -- bounds checked above
+}
+
+func (p distributionParams) customHeaders() *cftypes.CustomHeaders {
+	if len(p.originHeaders) == 0 {
+		return &cftypes.CustomHeaders{Quantity: aws.Int32(0)}
+	}
+	names := make([]string, 0, len(p.originHeaders))
+	for k := range p.originHeaders {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	items := make([]cftypes.OriginCustomHeader, 0, len(names))
+	for _, k := range names {
+		items = append(items, cftypes.OriginCustomHeader{
+			HeaderName:  aws.String(k),
+			HeaderValue: aws.String(p.originHeaders[k]),
+		})
+	}
+	return &cftypes.CustomHeaders{Quantity: quantity(len(items)), Items: items}
+}
+
+// distributionConfig renders the distribution config shared by the
+// code-server and Kiro Crew distributions.
+func distributionConfig(p distributionParams) *cftypes.DistributionConfig {
+	return &cftypes.DistributionConfig{
+		CallerReference: aws.String(p.callerReference),
+		Comment:         aws.String(p.comment),
 		Enabled:         aws.Bool(true),
 		HttpVersion:     cftypes.HttpVersionHttp11,
 		IsIPV6Enabled:   aws.Bool(false),
 		PriceClass:      cftypes.PriceClassPriceClassAll,
-		WebACLId:        aws.String(wafWebACLARN),
+		WebACLId:        aws.String(p.wafWebACLARN),
 		Origins: &cftypes.Origins{
 			Quantity: aws.Int32(1),
 			Items: []cftypes.Origin{{
-				Id:         aws.String(originID),
-				DomainName: aws.String(originDomain),
+				Id:         aws.String(p.originID()),
+				DomainName: aws.String(p.originDomain),
 				VpcOriginConfig: &cftypes.VpcOriginConfig{
-					VpcOriginId: aws.String(vpcOriginID),
+					VpcOriginId: aws.String(p.vpcOriginID),
 				},
-				CustomHeaders:      &cftypes.CustomHeaders{Quantity: aws.Int32(0)},
+				CustomHeaders:      p.customHeaders(),
 				ConnectionAttempts: aws.Int32(3),
 				ConnectionTimeout:  aws.Int32(10),
 				OriginShield:       &cftypes.OriginShield{Enabled: aws.Bool(false)},
 			}},
 		},
 		DefaultCacheBehavior: &cftypes.DefaultCacheBehavior{
-			TargetOriginId:       aws.String(originID),
+			TargetOriginId:       aws.String(p.originID()),
 			ViewerProtocolPolicy: cftypes.ViewerProtocolPolicyRedirectToHttps,
 			AllowedMethods: &cftypes.AllowedMethods{
 				Quantity: aws.Int32(7),
@@ -198,29 +279,6 @@ func (s *Service) createInstanceDistribution(ctx context.Context, instanceName, 
 			},
 		},
 	}
-
-	out, err := s.clients.CloudFront.CreateDistribution(ctx, &cloudfront.CreateDistributionInput{
-		DistributionConfig: cfg,
-	})
-	if err != nil {
-		return "", "", fmt.Errorf("CreateDistribution: %w", err)
-	}
-	if out.Distribution == nil || out.Distribution.Id == nil || out.Distribution.DomainName == nil {
-		return "", "", errors.New("CreateDistribution returned nil")
-	}
-	id := *out.Distribution.Id
-	domain := *out.Distribution.DomainName
-	slog.Info("distribution: created, waiting for Deployed", "id", id, "domain", domain)
-
-	if _, err := s.clients.CloudFront.TagResource(ctx, &cloudfront.TagResourceInput{
-		Resource: out.Distribution.ARN,
-		Tags:     awshelper.CloudFrontTags(tagging.ForInstance(instanceName, tagging.ComponentCloudFront, "nakama-"+instanceName)),
-	}); err != nil {
-		// non-fatal; tags can be re-applied later
-		slog.Warn("distribution: TagResource failed", "id", id, "error", err)
-	}
-
-	return id, domain, nil
 }
 
 func (s *Service) waitDistributionDeployed(ctx context.Context, id string) error {
