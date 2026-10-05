@@ -41,12 +41,13 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 	// Resource IDs come from SSM. A read failure here must abort the
 	// delete: treating it as "no such resource" would skip cleanup and
 	// falsely report success (leaving CloudFront/EC2/ENI/SG behind).
-	var distID, vpcOriginID, instanceID, eniID, sgID string
+	var distID, vpcOriginID, instanceID, eniID, sgID, crewID string
 	for _, f := range []struct {
 		dst  *string
 		path string
 	}{
 		{&distID, ssmDistributionIDPath(in.Name)},
+		{&crewID, ssmKirocrewDistributionIDPath(in.Name)},
 		{&vpcOriginID, ssmVPCOriginIDPath(in.Name)},
 		{&instanceID, ssmInstanceIDPath(in.Name)},
 		{&eniID, ssmENIIDPath(in.Name)},
@@ -60,15 +61,35 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 	}
 
 	slog.Info("delete: starting", "name", in.Name,
-		"distribution", distID, "vpc_origin", vpcOriginID,
+		"distribution", distID, "kirocrew_distribution", crewID, "vpc_origin", vpcOriginID,
 		"instance", instanceID, "eni", eniID, "sg", sgID)
 
+	// The Kiro Crew distribution (ADR 0020) shares the VPC origin, so it
+	// must be gone before the VPC origin below can be deleted.
+	if crewID != "" {
+		if err := s.deleteKirocrewDistributionForInstance(ctx, crewID); err != nil {
+			if !in.Force {
+				return fmt.Errorf("kirocrew distribution: %w", err)
+			}
+			slog.Warn("delete: kirocrew distribution failed (continuing due to --force)", "error", err)
+		}
+	}
 	if distID != "" {
 		if err := s.deleteDistribution(ctx, distID); err != nil {
 			if !in.Force {
 				return fmt.Errorf("distribution: %w", err)
 			}
 			slog.Warn("delete: distribution failed (continuing due to --force)", "error", err)
+		}
+	}
+	// The redirect function is referenced by the code-server
+	// distribution's behaviors; it can only go once that is deleted.
+	if crewID != "" {
+		if err := s.deleteKirocrewFunction(ctx, in.Name); err != nil {
+			if !in.Force {
+				return fmt.Errorf("kirocrew function: %w", err)
+			}
+			slog.Warn("delete: kirocrew function failed (continuing due to --force)", "error", err)
 		}
 	}
 	if vpcOriginID != "" {

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -454,15 +455,15 @@ var loginPageTemplate = template.Must(template.New("login").Parse(`<!DOCTYPE htm
 <head>
 <meta charset="utf-8">
 <meta name="referrer" content="no-referrer">
-<title>nakama: signing in to code-server</title>
+<title>nakama: signing in to {{.Target}}</title>
 </head>
 <body onload="document.getElementById('nakama-login').submit()">
-<p>Signing in to code-server&hellip; If nothing happens (JavaScript disabled), click the button below.</p>
+<p>Signing in to {{.Target}}&hellip; If nothing happens (JavaScript disabled), click the button below.</p>
 <form id="nakama-login" method="post" action="{{.Action}}">
 <input type="hidden" name="password" value="{{.Password}}">
 <input type="hidden" name="base" value=".">
 <input type="hidden" name="href" value="{{.Href}}">
-<button type="submit">Continue to code-server</button>
+<button type="submit">Continue to {{.Target}}</button>
 </form>
 </body>
 </html>
@@ -485,20 +486,44 @@ type oneShotLoginServer struct {
 // CloudFront domain and password and starts serving it at
 // /<token> on the provided listener.
 func newOneShotLoginServer(lis net.Listener, token, domain, password string) (*oneShotLoginServer, error) {
+	return newOneShotLoginServerFor(lis, token, loginTarget{domain: domain, label: "code-server"}, password)
+}
+
+// loginTarget says where the one-shot page signs in. Every target is a
+// code-server login endpoint (the Kiro Crew distribution is fronted by
+// code-server too, ADR 0020); extra carries query parameters that
+// code-server preserves across its post-login redirect — the Kiro Crew
+// dashboard token rides on that.
+type loginTarget struct {
+	domain string
+	label  string
+	extra  url.Values
+}
+
+// newOneShotLoginServerFor is newOneShotLoginServer for any target.
+func newOneShotLoginServerFor(lis net.Listener, token string, target loginTarget, password string) (*oneShotLoginServer, error) {
+	// ?to=/ makes code-server 302 to the root after setting the session
+	// cookie. code-server's redirect keeps every other query parameter
+	// (src/node/http.ts redirect: "Query variables on the current URI
+	// will be preserved"), so extra parameters reach the root page.
+	query := "to=/"
+	if len(target.extra) > 0 {
+		query += "&" + target.extra.Encode()
+	}
 	var page strings.Builder
 	err := loginPageTemplate.Execute(&page, struct {
 		Action   string
 		Password string
 		Href     string
+		Target   string
 	}{
-		// ?to=/ makes code-server 302 to the workspace root after
-		// setting the session cookie.
-		Action:   "https://" + domain + "/login?to=/",
+		Action:   "https://" + target.domain + "/login?" + query,
 		Password: password,
 		// href mirrors what the interactive login form submits so the
 		// cookie domain/path are derived identically (verified against
 		// code-server's src/node/routes/login.ts).
-		Href: "https://" + domain + "/login",
+		Href:   "https://" + target.domain + "/login",
+		Target: target.label,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render login page: %w", err)
