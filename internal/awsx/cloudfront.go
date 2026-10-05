@@ -27,6 +27,13 @@ type CloudFrontAPI interface {
 	DeleteDistribution(ctx context.Context, in *cloudfront.DeleteDistributionInput, opts ...func(*cloudfront.Options)) (*cloudfront.DeleteDistributionOutput, error)
 	ListDistributions(ctx context.Context, in *cloudfront.ListDistributionsInput, opts ...func(*cloudfront.Options)) (*cloudfront.ListDistributionsOutput, error)
 
+	// CloudFront Functions (the Kiro Crew redirect, ADR 0020)
+	CreateFunction(ctx context.Context, in *cloudfront.CreateFunctionInput, opts ...func(*cloudfront.Options)) (*cloudfront.CreateFunctionOutput, error)
+	DescribeFunction(ctx context.Context, in *cloudfront.DescribeFunctionInput, opts ...func(*cloudfront.Options)) (*cloudfront.DescribeFunctionOutput, error)
+	UpdateFunction(ctx context.Context, in *cloudfront.UpdateFunctionInput, opts ...func(*cloudfront.Options)) (*cloudfront.UpdateFunctionOutput, error)
+	PublishFunction(ctx context.Context, in *cloudfront.PublishFunctionInput, opts ...func(*cloudfront.Options)) (*cloudfront.PublishFunctionOutput, error)
+	DeleteFunction(ctx context.Context, in *cloudfront.DeleteFunctionInput, opts ...func(*cloudfront.Options)) (*cloudfront.DeleteFunctionOutput, error)
+
 	// Tagging
 	TagResource(ctx context.Context, in *cloudfront.TagResourceInput, opts ...func(*cloudfront.Options)) (*cloudfront.TagResourceOutput, error)
 	ListTagsForResource(ctx context.Context, in *cloudfront.ListTagsForResourceInput, opts ...func(*cloudfront.Options)) (*cloudfront.ListTagsForResourceOutput, error)
