@@ -17,12 +17,15 @@ import (
 
 func main() {
 	if err := cli.NewRootCommand().Execute(); err != nil {
-		// cobra already prints the error; we just translate to an exit code.
-		fmt.Fprintln(os.Stderr)
-		// `nakama aws connect` propagates the exit code of its session
-		// child unchanged (ADR 0014).
 		var ec *service.ExitCodeError
-		if errors.As(err, &ec) {
+		isExitCode := errors.As(err, &ec)
+		// cobra already printed the error; the blank line separates it.
+		// A remote command's exit status (`nakama aws connect <name>
+		// <command>`, ADR 0021) is reported like ssh does: no output.
+		if !isExitCode || !ec.Remote {
+			fmt.Fprintln(os.Stderr)
+		}
+		if isExitCode {
 			os.Exit(ec.Code)
 		}
 		os.Exit(1)

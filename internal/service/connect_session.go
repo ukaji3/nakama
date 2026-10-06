@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
@@ -54,6 +56,14 @@ const disconnectExitCodeEnv = "SSM_PLUGIN_DISCONNECT_EXIT_CODE"
 // inside the pipe. Unused on unix, where the pipe is always fd 3.
 const SessionPayloadHandleEnv = "NAKAMA_SESSION_PAYLOAD_HANDLE"
 
+// SessionStatusHandleEnv names the inherited descriptor (unix) or
+// handle (Windows) on which a command-mode session-runner child reports
+// the remote command's exit status to the supervisor (Issue #75,
+// ADR 0021). It is set only when the supervisor asks for the status.
+// The value is the number only; the status line itself goes through
+// the pipe.
+const SessionStatusHandleEnv = "NAKAMA_SESSION_STATUS_HANDLE"
+
 // sessionRunnerArgs is the argv (after the binary path) of the hidden
 // child command that executes a single Session Manager session. It must
 // match the command tree in internal/cli (aws_session_runner.go).
@@ -71,6 +81,12 @@ type sessionRunnerPayload struct {
 	Endpoint   string `json:"endpoint"`
 	Region     string `json:"region"`
 	TargetID   string `json:"targetId"`
+	// Mode selects how the child drives the plugin; empty (raw) for
+	// tunnel and ssh, which therefore behave exactly as before.
+	Mode sessionMode `json:"mode,omitempty"`
+	// Marker is the per-run frame marker of command mode
+	// (commandWrapper).
+	Marker string `json:"marker,omitempty"`
 }
 
 // connectHooks abstracts the process-supervision side effects of
@@ -78,11 +94,8 @@ type sessionRunnerPayload struct {
 // processes or sleeping. defaultConnectHooks returns the production
 // implementation.
 type connectHooks struct {
-	// runSession runs one session to completion and returns the child's
-	// exit code. disconnectCode > 0 requests permanent-disconnect
-	// detection with that exit code; 0 leaves the plugin's upstream
-	// behavior untouched.
-	runSession func(ctx context.Context, payload []byte, disconnectCode int) (int, error)
+	// runSession runs one session to completion.
+	runSession func(ctx context.Context, req sessionRunRequest) (sessionRunResult, error)
 	// sleep waits for d or until ctx is cancelled.
 	sleep func(ctx context.Context, d time.Duration) error
 	// now is the clock used to measure session lifetimes.
@@ -104,6 +117,26 @@ func defaultConnectHooks() *connectHooks {
 	}
 }
 
+// sessionRunRequest is one execution of the session-runner child.
+type sessionRunRequest struct {
+	payload []byte
+	// disconnectCode > 0 requests permanent-disconnect detection with
+	// that exit code; 0 leaves the plugin's upstream behavior untouched.
+	disconnectCode int
+	// reportStatus gives the child a status pipe for the remote exit
+	// status (command mode).
+	reportStatus bool
+}
+
+// sessionRunResult is the outcome of one session-runner child.
+type sessionRunResult struct {
+	// code is the child's exit code, -1 when a signal killed it.
+	code int
+	// remoteExit is the remote command's exit status as reported on the
+	// status pipe, nil when none was reported.
+	remoteExit *int
+}
+
 // spawnSessionRunner re-executes the current nakama binary as the
 // hidden `nakama aws session-runner` command and waits for it. The
 // session payload (which contains the secret TokenValue) is handed over
@@ -112,8 +145,8 @@ func defaultConnectHooks() *connectHooks {
 // connect_session_unix.go / connect_session_windows.go);
 // stdin/stdout/stderr are inherited so the child owns the terminal for
 // the session's lifetime.
-func spawnSessionRunner(ctx context.Context, payload []byte, disconnectCode int) (int, error) {
-	return spawnSessionRunnerIO(ctx, payload, disconnectCode, sessionRunnerIO{
+func spawnSessionRunner(ctx context.Context, req sessionRunRequest) (sessionRunResult, error) {
+	return spawnSessionRunnerIO(ctx, req, sessionRunnerIO{
 		stdin:                os.Stdin,
 		stdout:               os.Stdout,
 		stderr:               os.Stderr,
@@ -138,41 +171,59 @@ type sessionRunnerIO struct {
 
 // spawnSessionRunnerIO is spawnSessionRunner with explicit stdio
 // wiring (see sessionRunnerIO).
-func spawnSessionRunnerIO(ctx context.Context, payload []byte, disconnectCode int, stdio sessionRunnerIO) (int, error) {
+func spawnSessionRunnerIO(ctx context.Context, req sessionRunRequest, stdio sessionRunnerIO) (sessionRunResult, error) {
+	failed := sessionRunResult{code: -1}
 	exe, err := os.Executable()
 	if err != nil {
-		return -1, fmt.Errorf("locate nakama binary for session runner: %w", err)
+		return failed, fmt.Errorf("locate nakama binary for session runner: %w", err)
 	}
 
 	// The payload (< 64 KiB, the pipe buffer size) is written before the
 	// child starts, so the write cannot block or race a child crash.
 	r, w, err := os.Pipe()
 	if err != nil {
-		return -1, fmt.Errorf("create session payload pipe: %w", err)
+		return failed, fmt.Errorf("create session payload pipe: %w", err)
 	}
 	defer func() { _ = r.Close() }()
-	if _, err := w.Write(payload); err != nil {
+	if _, err := w.Write(req.payload); err != nil {
 		_ = w.Close()
-		return -1, fmt.Errorf("write session payload: %w", err)
+		return failed, fmt.Errorf("write session payload: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return -1, fmt.Errorf("close session payload pipe: %w", err)
+		return failed, fmt.Errorf("close session payload pipe: %w", err)
 	}
 
 	cmd := exec.Command(exe, sessionRunnerArgs...) // #nosec G204 -- argv is the re-exec'd nakama binary plus fixed args
 	cmd.Stdin = stdio.stdin
 	cmd.Stdout = stdio.stdout
 	cmd.Stderr = stdio.stderr
-	env := os.Environ()
-	if disconnectCode > 0 {
-		env = append(env, fmt.Sprintf("%s=%d", disconnectExitCodeEnv, disconnectCode))
+	// The status handle is announced only when this run asks for it, so
+	// a value inherited from the environment must not leak through.
+	env := withoutEnv(os.Environ(), SessionStatusHandleEnv)
+	if req.disconnectCode > 0 {
+		env = append(env, fmt.Sprintf("%s=%d", disconnectExitCodeEnv, req.disconnectCode))
 	}
 	cmd.Env = env
 	// Hand the payload pipe's read end to the child. The mechanism is
 	// OS-specific (fd 3 via ExtraFiles on unix, an inherited handle on
 	// Windows); the payload content itself never leaves the pipe.
 	if err := attachSessionPayload(cmd, r); err != nil {
-		return -1, fmt.Errorf("attach session payload: %w", err)
+		return failed, fmt.Errorf("attach session payload: %w", err)
+	}
+	// The status pipe carries the remote exit status back (command
+	// mode). A side channel rather than the child's exit code keeps the
+	// remote status apart from the child's own codes (1 for its errors,
+	// DisconnectExitCode for a lost session).
+	var statusR, statusW *os.File
+	if req.reportStatus {
+		if statusR, statusW, err = os.Pipe(); err != nil {
+			return failed, fmt.Errorf("create session status pipe: %w", err)
+		}
+		defer func() { _ = statusR.Close() }()
+		defer func() { _ = statusW.Close() }() // no-op once closed after Start
+		if err := attachSessionStatus(cmd, statusW); err != nil {
+			return failed, fmt.Errorf("attach session status: %w", err)
+		}
 	}
 
 	// While the child runs, the parent must survive terminal-generated
@@ -187,7 +238,14 @@ func spawnSessionRunnerIO(ctx context.Context, payload []byte, disconnectCode in
 	}
 
 	if err := cmd.Start(); err != nil {
-		return -1, fmt.Errorf("start session runner: %w", err)
+		return failed, fmt.Errorf("start session runner: %w", err)
+	}
+	var status <-chan []byte
+	if statusR != nil {
+		// Only the child may hold the write end now, so the read below
+		// ends when the child does.
+		_ = statusW.Close()
+		status = readSessionStatus(statusR)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -195,17 +253,87 @@ func spawnSessionRunnerIO(ctx context.Context, payload []byte, disconnectCode in
 	case <-ctx.Done():
 		_ = terminateSessionRunner(cmd.Process)
 		<-done
-		return -1, ctx.Err()
+		return failed, ctx.Err()
 	case err := <-done:
+		res := sessionRunResult{remoteExit: collectSessionStatus(status)}
 		if err == nil {
-			return 0, nil
+			return res, nil
 		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			return ee.ExitCode(), nil
+			res.code = ee.ExitCode()
+			return res, nil
 		}
-		return -1, fmt.Errorf("wait for session runner: %w", err)
+		return failed, fmt.Errorf("wait for session runner: %w", err)
 	}
+}
+
+// sessionStatusLimit bounds what the supervisor reads from the status
+// pipe; the protocol is one short line.
+const sessionStatusLimit = 4096
+
+// sessionStatusGrace is how long the supervisor waits for the status
+// pipe to reach EOF after the child exited. The child marks the pipe
+// close-on-exec, so nothing else should hold it; the bound only guards
+// against a descendant that inherited it anyway.
+const sessionStatusGrace = 2 * time.Second
+
+// readSessionStatus reads the status pipe in the background so the child
+// can never block on it.
+func readSessionStatus(r io.Reader) <-chan []byte {
+	ch := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(io.LimitReader(r, sessionStatusLimit))
+		ch <- b
+	}()
+	return ch
+}
+
+// collectSessionStatus returns the reported remote exit status, if any.
+func collectSessionStatus(status <-chan []byte) *int {
+	if status == nil {
+		return nil
+	}
+	select {
+	case b := <-status:
+		return parseSessionStatus(b)
+	case <-time.After(sessionStatusGrace):
+		return nil
+	}
+}
+
+// withoutEnv returns env without any assignment to name.
+func withoutEnv(env []string, name string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, name+"=") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// OpenSessionStatus opens the status pipe the supervisor handed to this
+// session-runner child (see SessionStatusHandleEnv). It returns nil
+// when the supervisor did not ask for the status. The variable is
+// removed from the environment so that nothing the child starts sees
+// it, and the descriptor is marked close-on-exec for the same reason.
+func OpenSessionStatus() (*os.File, error) {
+	v, ok := os.LookupEnv(SessionStatusHandleEnv)
+	if !ok {
+		return nil, nil
+	}
+	_ = os.Unsetenv(SessionStatusHandleEnv)
+	h, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", SessionStatusHandleEnv, err)
+	}
+	f := os.NewFile(uintptr(h), "nakama-session-status")
+	if f == nil {
+		return nil, fmt.Errorf("session status handle %s is not a valid handle", v)
+	}
+	closeOnExec(f)
+	return f, nil
 }
 
 // sleepCtx sleeps for d, returning early with ctx.Err() when the
@@ -230,10 +358,24 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // disconnect terminates it with that code instead. Credentials resolved
 // by nakama (including the `aws login` fallback) are injected into the
 // session so the plugin does not run its own credential chain.
-func RunSessionRunner(ctx context.Context, clients *awsx.Clients, payloadJSON []byte) error {
+//
+// The payload's Mode adapts the plugin to connect (ADR 0021): command
+// mode installs commandSession, which reports the remote exit status on
+// status (nil when the supervisor did not ask for it); terminal mode
+// feeds a non-terminal stdin through a never-ending pipe.
+func RunSessionRunner(ctx context.Context, clients *awsx.Clients, payloadJSON []byte, status io.Writer) error {
 	var p sessionRunnerPayload
 	if err := json.Unmarshal(payloadJSON, &p); err != nil {
 		return fmt.Errorf("decode session payload: %w", err)
+	}
+	switch p.Mode {
+	case sessionModeRaw, sessionModeTerminal:
+	case sessionModeCommand:
+		if p.Marker == "" {
+			return errors.New("command mode needs an output marker")
+		}
+	default:
+		return fmt.Errorf("unknown session mode %q", p.Mode)
 	}
 	creds, err := clients.Credentials.Retrieve(ctx)
 	if err != nil {
@@ -280,17 +422,39 @@ func RunSessionRunner(ctx context.Context, clients *awsx.Clients, payloadJSON []
 		Signer:      v4.NewSigner(),
 		Credentials: creds,
 	}
+	// Process-wide changes come last, right before the session starts.
+	switch p.Mode {
+	case sessionModeCommand:
+		installCommandSession(p.Marker, status)
+	case sessionModeTerminal:
+		if err := pipeNonTerminalStdin(); err != nil {
+			return err
+		}
+	}
 	return sess.Execute(logger)
 }
 
-// ExitCodeError propagates a child process exit code through the error
-// chain so cmd/nakama can terminate with the same code.
+// ExitCodeError propagates an exit code through the error chain so
+// cmd/nakama can terminate with the same code.
 type ExitCodeError struct {
 	Code int
+	// Remote marks the remote command's own exit status (connect's
+	// command mode): ssh-style, it becomes nakama's exit code and
+	// nothing is printed.
+	Remote bool
+	// Message replaces the default text when set.
+	Message string
 }
 
 func (e *ExitCodeError) Error() string {
-	return fmt.Sprintf("session runner exited with code %d", e.Code)
+	switch {
+	case e.Message != "":
+		return e.Message
+	case e.Remote:
+		return fmt.Sprintf("remote command exited with status %d", e.Code)
+	default:
+		return fmt.Sprintf("session runner exited with code %d", e.Code)
+	}
 }
 
 // startSessionErrorKind classifies ssm:StartSession failures for the

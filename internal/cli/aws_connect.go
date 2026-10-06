@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -24,10 +25,20 @@ func newAWSConnectCommand() *cobra.Command {
 		Long: `Open an interactive shell on a nakama instance via AWS Systems Manager
 Session Manager (no SSH, no inbound ports). You are logged in as the
 "ubuntu" user (Session Manager authenticates as ssm-user, which nakama
-switches from via sudo); a single "exit" ends the session. Append a
-command to run it as ubuntu, non-interactively (like "ssh host ls"); use
---tty for a PTY. For background port forwarding, see
-"nakama aws tunnel".
+switches from via sudo); a single "exit" ends the session. For
+background port forwarding, see "nakama aws tunnel".
+
+Append a command to run it as ubuntu, non-interactively (like
+"ssh host ls"): its stdout and stderr arrive separately, and nakama
+exits with the command's exit status (255 when nakama itself failed or
+the status was not reported). Standard input is not read in this mode:
+Session Manager does not deliver it to the command.
+
+--tty runs the command in a PTY. In a PTY, and in the shell, input is
+sent to the remote terminal. It may also come from a file or a pipe
+(the remote terminal echoes it, and its end is sent as Ctrl-D, which
+ends the shell), except on Windows, which needs a console. Session
+Manager reports no exit status for a PTY.
 
 When the session is permanently disconnected (e.g. the instance was
 hibernated or the network dropped for too long), nakama reconnects
@@ -41,7 +52,10 @@ instance as the remote command (ssh-style).
 Examples:
   nakama aws connect dev01
   nakama aws connect dev01 ls -la
+  nakama aws connect dev01 test -d /srv/app || echo missing
+  nakama aws connect dev01 'cd /srv/app && git status'
   nakama aws connect --tty dev01 top
+  nakama aws connect dev01 < setup-steps.sh
   nakama aws connect --retry 0 dev01`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,7 +70,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			return service.NewService(clients).Connect(ctx, in)
+			return silenceRemoteExit(cmd, service.NewService(clients).Connect(ctx, in))
 		},
 	}
 	// Treat everything after <name> as the remote command, so flags like
@@ -66,6 +80,17 @@ Examples:
 	cmd.Flags().IntVar(&retries, "retry", defaultConnectRetries,
 		"Max automatic reconnect attempts after a permanent disconnect (0 = disabled; default 0 in command mode)")
 	return cmd
+}
+
+// silenceRemoteExit returns err unchanged and, when it carries the
+// remote command's own exit status, keeps cobra from printing it:
+// ssh-style, the status is the exit code and nothing else (ADR 0021).
+func silenceRemoteExit(cmd *cobra.Command, err error) error {
+	var ec *service.ExitCodeError
+	if errors.As(err, &ec) && ec.Remote {
+		cmd.SilenceErrors = true
+	}
+	return err
 }
 
 // resolveConnectRetries picks the reconnect budget: an explicit --retry

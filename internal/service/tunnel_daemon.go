@@ -304,8 +304,8 @@ const defaultTunnelRetries = 5
 func (s *Service) tunnelDaemonConnectHooks(childOut *lineWriter) *connectHooks {
 	base := defaultConnectHooks()
 	return &connectHooks{
-		runSession: func(ctx context.Context, payload []byte, disconnectCode int) (int, error) {
-			return spawnSessionRunnerIO(ctx, payload, disconnectCode, sessionRunnerIO{
+		runSession: func(ctx context.Context, req sessionRunRequest) (sessionRunResult, error) {
+			return spawnSessionRunnerIO(ctx, req, sessionRunnerIO{
 				stdin:                nil,
 				stdout:               childOut,
 				stderr:               childOut,

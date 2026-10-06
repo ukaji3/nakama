@@ -28,6 +28,8 @@ type fakeConnectSSM struct {
 	// startErrs[i] is returned by the i-th StartSession call (nil or
 	// beyond the slice => success).
 	startErrs []error
+	// lastCommand is the "command" parameter of the last StartSession.
+	lastCommand string
 }
 
 func (f *fakeConnectSSM) GetParameter(_ context.Context, _ *ssm.GetParameterInput, _ ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
@@ -41,7 +43,10 @@ func (f *fakeConnectSSM) GetParameter(_ context.Context, _ *ssm.GetParameterInpu
 	}, nil
 }
 
-func (f *fakeConnectSSM) StartSession(context.Context, *ssm.StartSessionInput, ...func(*ssm.Options)) (*ssm.StartSessionOutput, error) {
+func (f *fakeConnectSSM) StartSession(_ context.Context, in *ssm.StartSessionInput, _ ...func(*ssm.Options)) (*ssm.StartSessionOutput, error) {
+	if c := in.Parameters["command"]; len(c) == 1 {
+		f.lastCommand = c[0]
+	}
 	i := f.startCalls
 	f.startCalls++
 	if i < len(f.startErrs) && f.startErrs[i] != nil {
@@ -66,6 +71,9 @@ func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 type sessionRun struct {
 	code  int
 	alive time.Duration
+	// remoteExit is the status the child reports on the status pipe
+	// (command mode); nil reports none.
+	remoteExit *int
 }
 
 type connectTestEnv struct {
@@ -77,6 +85,9 @@ type connectTestEnv struct {
 	runs   int
 	// disconnectCodes records the disconnectCode passed to runSession.
 	disconnectCodes []int
+	// requests records every runSession request and the decoded payload.
+	requests []sessionRunRequest
+	payloads []sessionRunnerPayload
 }
 
 func newConnectTestEnv(t *testing.T, script []sessionRun, startErrs []error) *connectTestEnv {
@@ -88,11 +99,13 @@ func newConnectTestEnv(t *testing.T, script []sessionRun, startErrs []error) *co
 	}
 	env.svc = NewService(&awsx.Clients{SSM: env.ssm, Region: "ap-northeast-1"})
 	env.svc.connect = &connectHooks{
-		runSession: func(_ context.Context, payload []byte, disconnectCode int) (int, error) {
+		runSession: func(_ context.Context, req sessionRunRequest) (sessionRunResult, error) {
 			var p sessionRunnerPayload
-			if err := json.Unmarshal(payload, &p); err != nil {
+			if err := json.Unmarshal(req.payload, &p); err != nil {
 				t.Fatalf("runSession payload is not valid JSON: %v", err)
 			}
+			env.requests = append(env.requests, req)
+			env.payloads = append(env.payloads, p)
 			if p.TokenValue != "token-secret" {
 				t.Errorf("payload TokenValue = %q, want %q", p.TokenValue, "token-secret")
 			}
@@ -101,9 +114,9 @@ func newConnectTestEnv(t *testing.T, script []sessionRun, startErrs []error) *co
 			}
 			run := script[env.runs]
 			env.runs++
-			env.disconnectCodes = append(env.disconnectCodes, disconnectCode)
+			env.disconnectCodes = append(env.disconnectCodes, req.disconnectCode)
 			env.clock.advance(run.alive)
-			return run.code, nil
+			return sessionRunResult{code: run.code, remoteExit: run.remoteExit}, nil
 		},
 		sleep: func(ctx context.Context, d time.Duration) error {
 			if err := ctx.Err(); err != nil {
@@ -482,5 +495,120 @@ func TestSuperviseRunnerFailureStabilityReplenishesBudget(t *testing.T) {
 	}
 	if env.runs != 4 {
 		t.Errorf("runSession calls = %d, want 4", env.runs)
+	}
+}
+
+// --- command mode: remote exit status (Issue #75, ADR 0021) ---
+
+func TestConnectSessionMode(t *testing.T) {
+	for _, tc := range []struct {
+		in   ConnectInput
+		want sessionMode
+	}{
+		{ConnectInput{Name: "dev01"}, sessionModeTerminal},
+		{ConnectInput{Name: "dev01", Command: []string{"ls"}}, sessionModeCommand},
+		{ConnectInput{Name: "dev01", Command: []string{"top"}, TTY: true}, sessionModeTerminal},
+	} {
+		if got := connectSessionMode(tc.in); got != tc.want {
+			t.Errorf("connectSessionMode(%+v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestConnectCommandModeReturnsRemoteStatus(t *testing.T) {
+	env := newConnectTestEnv(t, []sessionRun{{code: 0, alive: time.Second, remoteExit: intPtr(3)}}, nil)
+	err := env.svc.Connect(context.Background(), ConnectInput{Name: "dev01", Command: []string{"false"}})
+	var ec *ExitCodeError
+	if !errors.As(err, &ec) || ec.Code != 3 || !ec.Remote {
+		t.Fatalf("Connect = %#v, want the remote status 3 marked remote", err)
+	}
+	if !env.requests[0].reportStatus || env.payloads[0].Mode != sessionModeCommand {
+		t.Errorf("command mode must ask for the status and tell the child: req=%+v mode=%q", env.requests[0], env.payloads[0].Mode)
+	}
+	// The child decodes frames with the marker the remote wrapper was
+	// built with.
+	if m := env.payloads[0].Marker; len(m) != 32 || !strings.Contains(env.ssm.lastCommand, commandFramePrefix+m+" ") {
+		t.Errorf("marker %q must be random (32 hex) and match the wrapper sent to StartSession", m)
+	}
+}
+
+func TestConnectCommandModeRemoteSuccess(t *testing.T) {
+	env := newConnectTestEnv(t, []sessionRun{{code: 0, alive: time.Second, remoteExit: intPtr(0)}}, nil)
+	if err := env.svc.Connect(context.Background(), ConnectInput{Name: "dev01", Command: []string{"true"}}); err != nil {
+		t.Fatalf("Connect = %v, want success", err)
+	}
+}
+
+func TestConnectCommandModeRemote74IsNotADisconnect(t *testing.T) {
+	// Even if the child also exited with DisconnectExitCode, a reported
+	// remote status means the command finished: never re-run it.
+	env := newConnectTestEnv(t, []sessionRun{{code: DisconnectExitCode, alive: time.Second, remoteExit: intPtr(DisconnectExitCode)}}, nil)
+	err := env.svc.Connect(context.Background(), ConnectInput{Name: "dev01", Command: []string{"exit 74"}, MaxRetries: 3})
+	var ec *ExitCodeError
+	if !errors.As(err, &ec) || ec.Code != DisconnectExitCode || !ec.Remote {
+		t.Fatalf("Connect = %#v, want the remote status 74", err)
+	}
+	if env.runs != 1 {
+		t.Errorf("runSession calls = %d, want 1 (a finished command is not re-run)", env.runs)
+	}
+}
+
+func TestConnectCommandModeWithoutStatusIsNotSuccess(t *testing.T) {
+	env := newConnectTestEnv(t, []sessionRun{{code: 0, alive: time.Second}}, nil)
+	err := env.svc.Connect(context.Background(), ConnectInput{Name: "dev01", Command: []string{"ls"}})
+	var ec *ExitCodeError
+	if !errors.As(err, &ec) || ec.Code != localFailureExitCode || ec.Remote || !strings.Contains(err.Error(), "exit status") {
+		t.Fatalf("Connect = %#v, want 255 explaining that no exit status was reported", err)
+	}
+}
+
+func TestConnectCommandModeChildFailureIs255(t *testing.T) {
+	env := newConnectTestEnv(t, []sessionRun{{code: 1, alive: time.Second}}, nil)
+	err := env.svc.Connect(context.Background(), ConnectInput{Name: "dev01", Command: []string{"ls"}})
+	var ec *ExitCodeError
+	if !errors.As(err, &ec) || ec.Code != localFailureExitCode || ec.Remote || !strings.Contains(err.Error(), "code 1") {
+		t.Fatalf("Connect = %#v, want 255 naming the child's code 1", err)
+	}
+}
+
+func TestConnectCommandModeDisconnectStillReconnects(t *testing.T) {
+	// An explicit --retry keeps ADR 0014's behavior for a lost session.
+	env := newConnectTestEnv(t, []sessionRun{
+		{code: DisconnectExitCode, alive: time.Second},
+		{code: 0, alive: time.Second, remoteExit: intPtr(0)},
+	}, nil)
+	if err := env.svc.Connect(context.Background(), ConnectInput{Name: "dev01", Command: []string{"ls"}, MaxRetries: 1}); err != nil {
+		t.Fatalf("Connect = %v", err)
+	}
+	if env.runs != 2 {
+		t.Errorf("runSession calls = %d, want 2", env.runs)
+	}
+}
+
+func TestConnectTerminalModesKeepTheirOutcome(t *testing.T) {
+	for _, in := range []ConnectInput{
+		{Name: "dev01"},
+		{Name: "dev01", Command: []string{"top"}, TTY: true},
+	} {
+		env := newConnectTestEnv(t, []sessionRun{{code: 0, alive: time.Second}}, nil)
+		if err := env.svc.Connect(context.Background(), in); err != nil {
+			t.Errorf("Connect(%+v) = %v, want success (no exit status exists for a PTY)", in, err)
+		}
+		if env.requests[0].reportStatus || env.payloads[0].Mode != sessionModeTerminal {
+			t.Errorf("Connect(%+v): req=%+v mode=%q, want terminal mode without a status pipe", in, env.requests[0], env.payloads[0].Mode)
+		}
+	}
+}
+
+func TestSuperviseRawModeForTunnels(t *testing.T) {
+	env := newConnectTestEnv(t, []sessionRun{{code: 0, alive: time.Second}}, nil)
+	if err := env.svc.superviseSessionWithHooks(context.Background(), superviseSessionInput{InstanceID: "i-1"}, env.svc.connect); err != nil {
+		t.Fatal(err)
+	}
+	if env.requests[0].reportStatus || env.payloads[0].Mode != sessionModeRaw {
+		t.Errorf("tunnel forwards must run the plugin untouched: req=%+v mode=%q", env.requests[0], env.payloads[0].Mode)
+	}
+	if strings.Contains(string(env.requests[0].payload), `"mode"`) {
+		t.Errorf("raw mode must not change the payload: %s", env.requests[0].payload)
 	}
 }
