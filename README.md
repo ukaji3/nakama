@@ -220,7 +220,7 @@ nakama aws kirocrew disable dev01    # 撤去 (delete でも一緒に消えま�
 
 Kiro Crew の Web 画面 (gateway) は、通常はインスタンスの `localhost:5476` でしか開けません。code-server のポート転送 (`/proxy/5476/`) では、Kiro Crew の Host 検査とルートからの絶対パス前提に阻まれて開けないためです。`kirocrew` は、**Kiro Crew を CloudFront に直接さらすことなく、必ず code-server を経由させて**画面を開く仕組みを作ります (ADR 0020)。
 
-- `enable` を実行すると、Kiro Crew 専用の CloudFront distribution、インスタンス上の小さなプロキシ (nginx、127.0.0.1 だけで待ち受け)、code-server の設定がそろいます。code-server は 1 回再起動するので、開いているタブは再接続されます
+- `enable` を実行すると、Kiro Crew 専用の CloudFront distribution、インスタンス上の小さなプロキシ (nginx、127.0.0.1 だけで待ち受け)、code-server の設定がそろいます。code-server は 1 回再起動するので、開いているタブは再接続されます。Ports パネルとターミナルのリンク (`/proxy/<port>/`) は今までどおり使えます
 - `nakama aws kirocrew <名前>` は、code-server へのログインと Kiro Crew のトークンの受け渡しを、1 回のブラウザ起動で済ませます。トークンはインスタンス上で暗号化してから受け取るので、AWS の実行履歴にも画面にも平文では残りません
 - `enable` の後は、ターミナルに出る `http://localhost:5476?token=…` のリンク (code-server が `/proxy/5476/` に書き換えるもの) をクリックしても、Kiro Crew 用のホスト名へ転送されます
 - 防御の層は「WAF の IP 許可リスト → code-server のパスワード → プロキシの Origin 検査 → Kiro Crew のトークン」の 4 段です
