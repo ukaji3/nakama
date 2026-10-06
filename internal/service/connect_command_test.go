@@ -1,0 +1,643 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aws/session-manager-plugin/src/config"
+	smplog "github.com/aws/session-manager-plugin/src/log"
+	"github.com/aws/session-manager-plugin/src/message"
+	smpsession "github.com/aws/session-manager-plugin/src/sessionmanagerplugin/session"
+	"github.com/aws/session-manager-plugin/src/sessionmanagerplugin/session/sessionutil"
+)
+
+func intPtr(n int) *int { return &n }
+
+func TestRemoteExitError(t *testing.T) {
+	if err := remoteExitError(0); err != nil {
+		t.Errorf("status 0 must be success, got %v", err)
+	}
+	for _, code := range []int{1, 7, 74, 255} {
+		var ec *ExitCodeError
+		if err := remoteExitError(code); !errors.As(err, &ec) || ec.Code != code || !ec.Remote {
+			t.Errorf("remoteExitError(%d) = %#v, want the status itself, marked remote", code, err)
+		}
+	}
+	// Statuses a process exit code cannot carry are nakama's 255 with an
+	// explanation, never a silent (and possibly truncated-to-0) code.
+	for code, want := range map[int]string{-1: "killed by a signal", 256: "does not fit"} {
+		var ec *ExitCodeError
+		err := remoteExitError(code)
+		if !errors.As(err, &ec) || ec.Code != localFailureExitCode || ec.Remote || !strings.Contains(err.Error(), want) {
+			t.Errorf("remoteExitError(%d) = %#v, want 255 with %q", code, err, want)
+		}
+	}
+}
+
+func TestExitCodeErrorText(t *testing.T) {
+	for e, want := range map[*ExitCodeError]string{
+		{Code: 1}:                   "session runner exited with code 1",
+		{Code: 3, Remote: true}:     "remote command exited with status 3",
+		{Code: 255, Message: "why"}: "why",
+	} {
+		if got := e.Error(); got != want {
+			t.Errorf("%#v.Error() = %q, want %q", e, got, want)
+		}
+	}
+}
+
+func TestSessionStatusRoundTrip(t *testing.T) {
+	for _, code := range []int{-1, 0, 1, 7, DisconnectExitCode, 255} {
+		got := parseSessionStatus([]byte(formatSessionStatus(code)))
+		if got == nil || *got != code {
+			t.Errorf("round trip of %d = %v", code, got)
+		}
+	}
+	for _, none := range []string{"", "\n", "remote-exit\n", "remote-exit x\n", "other 3\n"} {
+		if got := parseSessionStatus([]byte(none)); got != nil {
+			t.Errorf("parseSessionStatus(%q) = %d, want nil", none, *got)
+		}
+	}
+	if got := parseSessionStatus([]byte("remote-exit 1\nremote-exit 2\n")); got == nil || *got != 2 {
+		t.Errorf("the last status wins, got %v", got)
+	}
+}
+
+// testCommandSession returns a commandSession wired to buffers, with
+// exit recorded instead of ending the test process.
+const testMarker = "0123456789abcdef0123456789abcdef"
+
+func testCommandSession(status io.Writer) (cs *commandSession, stdout, stderr *bytes.Buffer, exits *[]int) {
+	stdout, stderr = &bytes.Buffer{}, &bytes.Buffer{}
+	exits = &[]int{}
+	cs = newCommandSession(testMarker, stdout, stderr, status)
+	cs.exit = func(code int) { *exits = append(*exits, code) }
+	return cs, stdout, stderr, exits
+}
+
+// framed renders what the wrapper prints for the given outputs.
+func framed(marker, stdout, stderr string, exit int) string {
+	h := "\n" + commandFramePrefix + marker + " "
+	return h + "o " + strconv.Itoa(len(stdout)) + "\n" + stdout +
+		h + "e " + strconv.Itoa(len(stderr)) + "\n" + stderr +
+		h + "x " + strconv.Itoa(exit) + "\n"
+}
+
+func payloadMessage(t message.PayloadType, data string) message.ClientMessage {
+	return message.ClientMessage{PayloadType: uint32(t), Payload: []byte(data)}
+}
+
+func TestCommandSessionInitializeWiresTheDataChannel(t *testing.T) {
+	cs, _, _, exits := testCommandSession(&bytes.Buffer{})
+	dc := newRecordingDataChannel()
+	logger := smplog.Logger(false, "nakama-test")
+	cs.Initialize(logger, &smpsession.Session{DataChannel: dc, SessionId: "s-1"})
+	if len(dc.handlers) != 1 {
+		t.Fatalf("want one output handler registered, got %d", len(dc.handlers))
+	}
+	if dc.ws.onMessage == nil {
+		t.Fatal("the websocket message handler must be set")
+	}
+	dc.ws.onMessage([]byte("raw"))
+	if len(dc.stops) != 1 {
+		t.Fatalf("incoming messages must reach OutputMessageHandler with a stop handler, got %d", len(dc.stops))
+	}
+	dc.stops[0]() // the channel closed
+	if len(*exits) != 1 {
+		t.Errorf("the stop handler handed over must be the session's Stop, exits = %v", *exits)
+	}
+}
+
+func TestCommandSessionForwardsControlSignalsAndNeverReadsStdin(t *testing.T) {
+	// Data waiting on stdin must still be there afterwards: command mode
+	// does not read it (#70).
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if _, err := w.WriteString("typed-ahead"); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	oldStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = oldStdin })
+
+	cs, _, _, _ := testCommandSession(&bytes.Buffer{})
+	dc := newRecordingDataChannel()
+	cs.Session = smpsession.Session{DataChannel: dc}
+	registered := make(chan chan<- os.Signal, 1)
+	cs.notify = func(c chan<- os.Signal, sig ...os.Signal) {
+		if len(sig) != len(sessionutil.ControlSignals) {
+			t.Errorf("notify for %v, want %v", sig, sessionutil.ControlSignals)
+		}
+		registered <- c
+	}
+	done := make(chan error, 1)
+	go func() { done <- cs.SetSessionHandlers(smplog.Logger(false, "nakama-test")) }()
+
+	c := <-registered
+	var want []byte
+	for _, sig := range sessionutil.ControlSignals {
+		c <- sig
+		want = append(want, sessionutil.SignalsByteMap[sig])
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !bytes.Equal(dc.sent(message.Output), want) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := dc.sent(message.Output); !bytes.Equal(got, want) {
+		t.Errorf("control bytes sent = %q, want %q", got, want)
+	}
+	close(c)
+	if err := <-done; err != nil {
+		t.Errorf("SetSessionHandlers = %v", err)
+	}
+	rest, _ := io.ReadAll(r)
+	if string(rest) != "typed-ahead" {
+		t.Errorf("stdin was read: %q left of %q", rest, "typed-ahead")
+	}
+}
+
+func TestInstallCommandSessionTakesOverStandardStream(t *testing.T) {
+	prevPlugin := smpsession.SessionRegistry[config.ShellPluginName]
+	prevStdout := os.Stdout
+	t.Cleanup(func() {
+		smpsession.SessionRegistry[config.ShellPluginName] = prevPlugin
+		os.Stdout = prevStdout
+	})
+	status := &bytes.Buffer{}
+	installCommandSession(testMarker, status)
+	cs, ok := smpsession.SessionRegistry[config.ShellPluginName].(*commandSession)
+	if !ok {
+		t.Fatalf("Standard_Stream is %T, want *commandSession", smpsession.SessionRegistry[config.ShellPluginName])
+	}
+	if cs.decoder.stdout != prevStdout || cs.decoder.stderr != os.Stderr || cs.stderr != os.Stderr || cs.status != status {
+		t.Error("the command's stdout must be the real stdout, its stderr stderr, and the status the given writer")
+	}
+	if !bytes.Contains(cs.decoder.header, []byte(testMarker)) {
+		t.Error("the decoder must use the given marker")
+	}
+	if os.Stdout != os.Stderr {
+		t.Error("the plugin's banners (written to os.Stdout) must go to stderr")
+	}
+}
+
+func TestEscapeTerminalInput(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"~.", "~."}, // the stream does not start at a line start, as in ShellSession
+		{"ls\n~.\n", "ls\n~~.\n"},
+		{"a\r~?", "a\r~~?"},
+		{"x~y\n", "x~y\n"},
+		{"\n~~", "\n~~~"},
+		{"\n~-\n~x", "\n~~-\n~~x"},
+	} {
+		atLineStart := false
+		if got := string(escapeTerminalInput([]byte(tc.in), &atLineStart)); got != tc.want {
+			t.Errorf("escapeTerminalInput(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	// The line-start state carries across chunks.
+	atLineStart := false
+	got := string(escapeTerminalInput([]byte("echo\n"), &atLineStart)) + string(escapeTerminalInput([]byte("~."), &atLineStart))
+	if got != "echo\n~~." {
+		t.Errorf("across chunks = %q", got)
+	}
+}
+
+type failingReader struct{ data string }
+
+func (f *failingReader) Read(p []byte) (int, error) {
+	if f.data == "" {
+		return 0, errors.New("boom")
+	}
+	n := copy(p, f.data)
+	f.data = f.data[n:]
+	return n, nil
+}
+
+func TestCopyTerminalInput(t *testing.T) {
+	for in, want := range map[string]string{
+		"":             "\x04",
+		"exit 0\n":     "exit 0\n\x04",
+		"partial":      "partial\n\x04", // a last line without newline is run, not left half-typed
+		"a\r":          "a\r\x04",
+		"x\n~.\nend\n": "x\n~~.\nend\n\x04",
+	} {
+		var dst bytes.Buffer
+		if err := copyTerminalInput(&dst, strings.NewReader(in)); err != nil {
+			t.Errorf("copyTerminalInput(%q) = %v", in, err)
+		}
+		if dst.String() != want {
+			t.Errorf("copyTerminalInput(%q) wrote %q, want %q", in, dst.String(), want)
+		}
+	}
+	// A read error still ends the remote side, and is reported.
+	var dst bytes.Buffer
+	if err := copyTerminalInput(&dst, &failingReader{data: "ls"}); err == nil || dst.String() != "ls\n\x04" {
+		t.Errorf("read error: err=%v wrote %q", err, dst.String())
+	}
+}
+
+func TestPipeTerminalInputNeverReachesEOF(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("terminal mode does not pipe stdin on Windows (the console API reads keystrokes)")
+	}
+	r, err := pipeTerminalInput(strings.NewReader("ls\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	var got []byte
+	buf := make([]byte, 64)
+	for !bytes.HasSuffix(got, []byte{0x04}) {
+		if err := r.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		n, err := r.Read(buf)
+		if err != nil {
+			t.Fatalf("read: %v (got %q)", err, got)
+		}
+		got = append(got, buf[:n]...)
+	}
+	if string(got) != "ls\n\x04" {
+		t.Errorf("got %q", got)
+	}
+	// After the copy finished, the write end must stay open even through
+	// garbage collection (os.File closes on finalization), or ShellSession
+	// would see EOF after all (#70).
+	runtime.GC()
+	runtime.GC()
+	if err := r.SetReadDeadline(time.Now().Add(300 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := r.Read(buf); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("after the input ended: read %q, %v; want no data and no EOF (deadline exceeded)", buf[:n], err)
+	}
+}
+
+// runShellEscape runs the vendored ShellSession on input in a helper
+// process and returns what it would send to the instance.
+func runShellEscape(t *testing.T, input string, raw bool) string {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	dir := t.TempDir()
+	cmd.Env = append(os.Environ(),
+		testHelperEnv+"="+helperShellEscape,
+		"NAKAMA_TEST_SHELL_INPUT_HEX="+hex.EncodeToString([]byte(input)),
+		// If "~." ever reached ShellSession it would call TerminateSession;
+		// make that fail fast and offline.
+		"AWS_PROFILE=nakama-test-no-such-profile",
+		"AWS_CONFIG_FILE="+filepath.Join(dir, "config"),
+		"AWS_SHARED_CREDENTIALS_FILE="+filepath.Join(dir, "credentials"),
+		"AWS_EC2_METADATA_DISABLED=true",
+	)
+	if raw {
+		cmd.Env = append(cmd.Env, "NAKAMA_TEST_SHELL_RAW=1")
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("helper: %v\n%s", err, out)
+	}
+	// "~?" help text, if it ever fires, precedes the hex dump.
+	lines := strings.Split(string(out), "\n")
+	sent, err := hex.DecodeString(strings.TrimSpace(lines[len(lines)-1]))
+	if err != nil {
+		t.Fatalf("helper output %q: %v", out, err)
+	}
+	return string(sent)
+}
+
+func TestTerminalInputSurvivesShellSessionEscapes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Windows ShellSession reads the console, not stdin")
+	}
+	// Without escaping, ShellSession eats "~?" at a line start (and would
+	// terminate the session on "~."), which shows the helper really
+	// exercises its escape handling.
+	if got := runShellEscape(t, "a\n~?\nb\n", true); got == "a\n~?\nb\n" {
+		t.Fatalf("control: ShellSession did not interpret the raw escape (got %q); the test below would prove nothing", got)
+	}
+	input := "echo start\n~.\n~?\n~-\n~~\n~x\nno~escape\r~.\n~"
+	if got := runShellEscape(t, input, false); got != input {
+		t.Errorf("ShellSession delivered %q, want the input unchanged %q", got, input)
+	}
+}
+
+// spawnFakeRunner runs spawnSessionRunnerIO against the test binary in
+// fake-session-runner mode.
+func spawnFakeRunner(t *testing.T, req sessionRunRequest, status string, exit int) (sessionRunResult, string) {
+	t.Helper()
+	t.Setenv(testHelperEnv, helperFakeSessionRunner)
+	t.Setenv("NAKAMA_TEST_FAKE_STATUS", status)
+	t.Setenv("NAKAMA_TEST_FAKE_EXIT", strconv.Itoa(exit))
+	var out bytes.Buffer
+	res, err := spawnSessionRunnerIO(context.Background(), req, sessionRunnerIO{stdout: &out, stderr: &out})
+	if err != nil {
+		t.Fatalf("spawnSessionRunnerIO: %v\n%s", err, out.String())
+	}
+	return res, out.String()
+}
+
+func TestSpawnSessionRunnerReportsRemoteStatus(t *testing.T) {
+	payload := []byte(`{"sessionId":"s-1","mode":"command"}`)
+	res, out := spawnFakeRunner(t, sessionRunRequest{payload: payload, reportStatus: true}, formatSessionStatus(7), 0)
+	if !strings.Contains(out, "payload="+string(payload)) {
+		t.Errorf("the payload must still arrive on its own handle next to the status pipe:\n%s", out)
+	}
+	if !strings.Contains(out, "status=open") || strings.Contains(out, "status-env-still-set") {
+		t.Errorf("the child must open the status pipe and drop the variable:\n%s", out)
+	}
+	if res.code != 0 || res.remoteExit == nil || *res.remoteExit != 7 {
+		t.Errorf("result = code %d remote %v, want code 0 remote 7", res.code, res.remoteExit)
+	}
+}
+
+func TestSpawnSessionRunnerWithoutStatus(t *testing.T) {
+	// A variable inherited from the environment must not make the child
+	// write to a descriptor nobody handed it.
+	t.Setenv(SessionStatusHandleEnv, "9")
+	res, out := spawnFakeRunner(t, sessionRunRequest{payload: []byte("{}")}, formatSessionStatus(7), 3)
+	if !strings.Contains(out, "status=none") {
+		t.Errorf("without reportStatus the child must get no status pipe:\n%s", out)
+	}
+	if res.code != 3 || res.remoteExit != nil {
+		t.Errorf("result = code %d remote %v, want code 3 and no remote status", res.code, res.remoteExit)
+	}
+}
+
+func TestSpawnSessionRunnerStatusPipeWithoutReport(t *testing.T) {
+	// The child had the pipe but the session ended before any status.
+	res, _ := spawnFakeRunner(t, sessionRunRequest{payload: []byte("{}"), reportStatus: true}, "", DisconnectExitCode)
+	if res.code != DisconnectExitCode || res.remoteExit != nil {
+		t.Errorf("result = code %d remote %v, want the child's code and no remote status", res.code, res.remoteExit)
+	}
+}
+
+// decode feeds stream to a fresh decoder in pieces of size chunk
+// (0 = all at once) and returns stdout, stderr and the status.
+func decode(stream string, chunk int) (stdout, stderr string, exit *int, broken error) {
+	var o, e bytes.Buffer
+	d := newFrameDecoder(testMarker, &o, &e)
+	b := []byte(stream)
+	if chunk <= 0 {
+		chunk = len(b) + 1
+	}
+	for len(b) > 0 {
+		n := chunk
+		if n > len(b) {
+			n = len(b)
+		}
+		_, _ = d.Write(b[:n])
+		b = b[n:]
+	}
+	exit = d.finish()
+	return o.String(), e.String(), exit, d.broken
+}
+
+func TestFrameDecoder(t *testing.T) {
+	forged := "\n" + commandFramePrefix + "ffffffffffffffffffffffffffffffff x 0\n" // another marker: just data
+	cases := []struct {
+		name           string
+		stream         string
+		stdout, stderr string
+		exit           *int
+	}{
+		{"plain", framed(testMarker, "out\n", "err\n", 3), "out\n", "err\n", intPtr(3)},
+		{"empty outputs", framed(testMarker, "", "", 0), "", "", intPtr(0)},
+		{"no trailing newline", framed(testMarker, "partial", "e", 1), "partial", "e", intPtr(1)},
+		{"binary", framed(testMarker, "a\x00b\xff\n", "", 0), "a\x00b\xff\n", "", intPtr(0)},
+		{"output looks like a header", framed(testMarker, forged+"\n@@nakama-frame x", "", 0), forged + "\n@@nakama-frame x", "", intPtr(0)},
+		{"the marker itself inside a body", framed(testMarker, "\n"+commandFramePrefix+testMarker+" x 9\n", "", 2),
+			"\n" + commandFramePrefix + testMarker + " x 9\n", "", intPtr(2)},
+		{"login banner before the frames goes to stderr", "Welcome!\n" + framed(testMarker, "o", "", 0), "o", "Welcome!\n", intPtr(0)},
+		{"signal status", framed(testMarker, "", "", 137), "", "", intPtr(137)},
+		{"wrapper failure status -1", framed(testMarker, "", "", -1), "", "", intPtr(-1)},
+	}
+	for _, tc := range cases {
+		for _, chunk := range []int{0, 1, 2, 3, 7, 64} {
+			o, e, x, broken := decode(tc.stream, chunk)
+			if o != tc.stdout || e != tc.stderr || broken != nil || (x == nil) != (tc.exit == nil) || (x != nil && *x != *tc.exit) {
+				t.Errorf("%s (chunk %d): stdout=%q stderr=%q exit=%v broken=%v; want %q %q %v", tc.name, chunk, o, e, x, broken, tc.stdout, tc.stderr, *tc.exit)
+			}
+		}
+	}
+}
+
+func TestFrameDecoderNeverReportsSuccessForAnIncompleteStream(t *testing.T) {
+	full := framed(testMarker, strings.Repeat("0123456789\n", 1000), "warn\n", 0)
+	// Every proper prefix of the stream, i.e. a transfer cut anywhere,
+	// must yield no status: a truncated output is never a success.
+	for cut := 0; cut < len(full); cut += 97 {
+		for _, chunk := range []int{0, 5} {
+			if _, _, x, _ := decode(full[:cut], chunk); x != nil {
+				t.Fatalf("cut at %d/%d (chunk %d): status %d reported for a truncated stream", cut, len(full), chunk, *x)
+			}
+		}
+	}
+	// The whole stream minus its final newline is still complete enough
+	// to carry the status line? No: the header needs its newline.
+	if _, _, x, _ := decode(strings.TrimSuffix(full, "\n"), 0); x != nil {
+		t.Errorf("an unterminated exit header must not count")
+	}
+}
+
+func TestFrameDecoderRejectsMalformedHeaders(t *testing.T) {
+	h := "\n" + commandFramePrefix + testMarker + " "
+	for _, stream := range []string{
+		h + "o -5\n",                             // negative length
+		h + "q 3\nabc" + h + "x 0\n",             // unknown kind
+		h + "o abc\n" + h + "x 0\n",              // not a number
+		h + "x 99999999999\n",                    // out of range status
+		h + strings.Repeat("9", 64),              // header never ends
+		h + "o 3\nabc" + h + "x\n" + h + "x 0\n", // header without a number
+	} {
+		o, e, x, broken := decode(stream, 0)
+		if x != nil || broken == nil {
+			t.Errorf("stream %q: exit=%v broken=%v; want no status and an error (stdout=%q stderr=%q)", stream, x, broken, o, e)
+		}
+	}
+}
+
+func TestCommandSessionDecodesFramesAndReportsStatus(t *testing.T) {
+	status := &bytes.Buffer{}
+	cs, stdout, stderr, exits := testCommandSession(status)
+	logger := smplog.Logger(false, "nakama-test")
+	stream := framed(testMarker, "out-1\nout-2\n", "err-1\n", 3)
+	// The agent splits the stream arbitrarily across messages.
+	for i := 0; i < len(stream); i += 5 {
+		end := i + 5
+		if end > len(stream) {
+			end = len(stream)
+		}
+		if ready, err := cs.ProcessStreamMessagePayload(logger, payloadMessage(message.Output, stream[i:end])); !ready || err != nil {
+			t.Fatalf("ProcessStreamMessagePayload = %v, %v", ready, err)
+		}
+	}
+	// The agent's own error messages are not command output.
+	_, _ = cs.ProcessStreamMessagePayload(logger, payloadMessage(message.StdErr, "agent: something\n"))
+	if got := stdout.String(); got != "out-1\nout-2\n" {
+		t.Errorf("stdout = %q", got)
+	}
+	if got := stderr.String(); got != "err-1\nagent: something\n" {
+		t.Errorf("stderr = %q", got)
+	}
+	if status.Len() != 0 {
+		t.Errorf("the status must wait for the end of the session, got %q", status.String())
+	}
+	cs.Stop()
+	if got := status.String(); got != "remote-exit 3\n" {
+		t.Errorf("status = %q", got)
+	}
+	if len(*exits) != 1 || (*exits)[0] != 0 {
+		t.Errorf("Stop must end the process with 0 (the status travels on the pipe), exits = %v", *exits)
+	}
+}
+
+func TestCommandSessionStopWithoutStatus(t *testing.T) {
+	logger := smplog.Logger(false, "nakama-test")
+	// Truncated: the exit frame never arrived.
+	status := &bytes.Buffer{}
+	cs, stdout, _, exits := testCommandSession(status)
+	full := framed(testMarker, "abcdef", "", 0)
+	_, _ = cs.ProcessStreamMessagePayload(logger, payloadMessage(message.Output, full[:len(full)-12]))
+	cs.Stop()
+	if status.Len() != 0 {
+		t.Errorf("a truncated stream must report no status: %q", status.String())
+	}
+	if stdout.String() != "abcdef" || len(*exits) != 1 {
+		t.Errorf("stdout=%q exits=%v", stdout.String(), *exits)
+	}
+	// Malformed: explained on stderr, no status.
+	status2 := &bytes.Buffer{}
+	cs2, _, stderr2, _ := testCommandSession(status2)
+	_, _ = cs2.ProcessStreamMessagePayload(logger, payloadMessage(message.Output, "\n"+commandFramePrefix+testMarker+" o -1\n"))
+	cs2.Stop()
+	if status2.Len() != 0 || !strings.Contains(stderr2.String(), "nakama: malformed output frame") {
+		t.Errorf("status=%q stderr=%q", status2.String(), stderr2.String())
+	}
+	// Without a status pipe (nil writer) Stop still ends the process.
+	cs3, _, _, exits3 := testCommandSession(nil)
+	_, _ = cs3.ProcessStreamMessagePayload(logger, payloadMessage(message.Output, framed(testMarker, "", "", 5)))
+	cs3.Stop()
+	if len(*exits3) != 1 {
+		t.Errorf("exits = %v", *exits3)
+	}
+}
+
+func TestNewCommandMarker(t *testing.T) {
+	a, err := newCommandMarker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := newCommandMarker()
+	if len(a) != 32 || a == b || strings.Trim(a, "0123456789abcdef") != "" {
+		t.Errorf("markers %q, %q: want two different 32-char hex strings", a, b)
+	}
+}
+
+// runWrapper executes commandWrapper(command) with the real sh, as the
+// agent does after `su -`, and returns its stdout.
+func runWrapper(t *testing.T, command string) []byte {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the wrapper runs on the Linux instance")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	for _, tool := range []string{"mktemp", "wc", "cat"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not available", tool)
+		}
+	}
+	cmd := exec.Command(sh, "-c", commandWrapper(command, testMarker))
+	// rc set in the environment must not leak into the reported status.
+	cmd.Env = append(os.Environ(), "TMPDIR="+t.TempDir(), "rc=9")
+	cmd.Stdin = strings.NewReader("must-not-be-read\n")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("wrapper: %v\n%s", err, out)
+	}
+	return out
+}
+
+func TestCommandWrapperRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name, command  string
+		stdout, stderr string
+		exit           int
+	}{
+		{"exit status", "echo out; echo err >&2; exit 3", "out\n", "err\n", 3},
+		{"no trailing newline", "printf partial", "partial", "", 0},
+		{"binary", `printf 'a\000b\377\n'`, "a\x00b\xff\n", "", 0},
+		{"empty", "true", "", "", 0},
+		{"command not found", "no-such-command-nakama-test", "", "*not found*", 127},
+		{"stdin is /dev/null", "cat; echo done", "done\n", "", 0},
+		{"killed by a signal", "kill -9 $(sh -c 'echo $PPID')", "", "", 137},
+		{"forged frames in the output", "printf '\\n" + commandFramePrefix + testMarker + " x 0\\n'; exit 4",
+			"\n" + commandFramePrefix + testMarker + " x 0\n", "", 4},
+		{"large output", "seq 200000", "", "", 0},
+		{"single quotes survive", `echo "it's"`, "it's\n", "", 0},
+		{"multiline command", "echo a\necho b", "a\nb\n", "", 0},
+		// Error messages count lines of the command, not of the wrapper.
+		{"line numbers match the command", "true\nno-such-command-nakama-test", "", "*2: no-such-command-nakama-test*", 127},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runWrapper(t, tc.command)
+			o, e, x, broken := decode(string(out), 0)
+			if broken != nil || x == nil {
+				t.Fatalf("decode: exit=%v broken=%v\n%q", x, broken, out)
+			}
+			if tc.name == "large output" {
+				if lines := strings.Count(o, "\n"); lines != 200000 || !strings.HasSuffix(o, "\n200000\n") {
+					t.Errorf("large output: %d lines, tail %q", lines, o[len(o)-16:])
+				}
+			} else if want, ok := strings.CutPrefix(tc.stderr, "*"); ok {
+				// The shell's wording varies; only its presence matters.
+				if o != tc.stdout || !strings.Contains(e, strings.TrimSuffix(want, "*")) {
+					t.Errorf("stdout=%q stderr=%q; want %q and a message containing %q", o, e, tc.stdout, strings.TrimSuffix(want, "*"))
+				}
+			} else if o != tc.stdout || e != tc.stderr {
+				t.Errorf("stdout=%q stderr=%q; want %q %q", o, e, tc.stdout, tc.stderr)
+			}
+			if *x != tc.exit {
+				t.Errorf("exit = %d, want %d", *x, tc.exit)
+			}
+		})
+	}
+}
+
+func TestCommandWrapperCleansUp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the wrapper runs on the Linux instance")
+	}
+	dir := t.TempDir()
+	cmd := exec.Command("sh", "-c", commandWrapper("ls -ld \"$d\" >&2; echo x", testMarker))
+	cmd.Env = append(os.Environ(), "TMPDIR="+dir)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Skipf("sh: %v", err)
+	}
+	_, e, x, _ := decode(string(out), 0)
+	if x == nil || *x != 0 || !strings.HasPrefix(e, "drwx------") {
+		t.Errorf("the output directory must be private (0700): %q exit=%v", e, x)
+	}
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Errorf("the wrapper must remove its directory, left %v", left)
+	}
+}

@@ -20,10 +20,11 @@ func TestConnectDocument(t *testing.T) {
 			wantParam: map[string][]string{"command": {"exec sudo su - ubuntu"}},
 		},
 		{
-			name:      "command non-interactive",
-			in:        ConnectInput{Name: "dev01", Command: []string{"ls", "-la"}},
-			wantDoc:   aws.String("AWS-StartNonInteractiveCommand"),
-			wantParam: map[string][]string{"command": {"sudo su - ubuntu -c 'ls -la'"}},
+			name:    "command non-interactive",
+			in:      ConnectInput{Name: "dev01", Command: []string{"ls", "-la"}},
+			wantDoc: aws.String("AWS-StartNonInteractiveCommand"),
+			// Framed by commandWrapper (Issue #75, ADR 0021).
+			wantParam: map[string][]string{"command": {"sudo su - ubuntu -c " + shellQuote(commandWrapper("ls -la", testMarker))}},
 		},
 		{
 			name:      "command tty",
@@ -35,12 +36,12 @@ func TestConnectDocument(t *testing.T) {
 			name:      "command with single quote is escaped",
 			in:        ConnectInput{Name: "dev01", Command: []string{"echo", "it's"}},
 			wantDoc:   aws.String("AWS-StartNonInteractiveCommand"),
-			wantParam: map[string][]string{"command": {`sudo su - ubuntu -c 'echo it'\''s'`}},
+			wantParam: map[string][]string{"command": {"sudo su - ubuntu -c " + shellQuote(commandWrapper("echo it's", testMarker))}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotDoc, gotParam := connectDocument(tt.in)
+			gotDoc, gotParam := connectDocument(tt.in, testMarker)
 			if aws.ToString(gotDoc) != aws.ToString(tt.wantDoc) {
 				t.Errorf("doc = %q, want %q", aws.ToString(gotDoc), aws.ToString(tt.wantDoc))
 			}

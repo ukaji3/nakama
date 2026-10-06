@@ -1,6 +1,14 @@
 package cli
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/ukaji3/nakama/internal/service"
+)
 
 func TestResolveConnectRetries(t *testing.T) {
 	tests := []struct {
@@ -23,5 +31,26 @@ func TestResolveConnectRetries(t *testing.T) {
 					tt.explicit, tt.value, tt.commandMode, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSilenceRemoteExit(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		silent bool
+	}{
+		{nil, false},
+		{errors.New("StartSession: denied"), false},
+		{&service.ExitCodeError{Code: 255, Message: "no status"}, false},
+		{&service.ExitCodeError{Code: 3, Remote: true}, true},
+		{fmt.Errorf("wrapped: %w", &service.ExitCodeError{Code: 1, Remote: true}), true},
+	} {
+		cmd := &cobra.Command{}
+		if got := silenceRemoteExit(cmd, tc.err); !errors.Is(got, tc.err) && got != tc.err {
+			t.Errorf("the error must be returned unchanged: %v", got)
+		}
+		if cmd.SilenceErrors != tc.silent {
+			t.Errorf("silenceRemoteExit(%v): SilenceErrors = %v, want %v", tc.err, cmd.SilenceErrors, tc.silent)
+		}
 	}
 }

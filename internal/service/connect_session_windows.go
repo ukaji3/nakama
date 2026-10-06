@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -43,9 +44,22 @@ func terminateSessionRunner(p *os.Process) error {
 // secret session TokenValue) stays inside the pipe, exactly as in the
 // unix fd 3 scheme.
 func attachSessionPayload(cmd *exec.Cmd, r *os.File) error {
-	h := windows.Handle(r.Fd())
+	return inheritHandle(cmd, r, SessionPayloadHandleEnv, "session payload")
+}
+
+// attachSessionStatus hands the status pipe's write end to the child
+// the same way, announced through SessionStatusHandleEnv.
+func attachSessionStatus(cmd *exec.Cmd, w *os.File) error {
+	return inheritHandle(cmd, w, SessionStatusHandleEnv, "session status")
+}
+
+// inheritHandle marks f's handle inheritable, lists it in
+// AdditionalInheritedHandles (os/exec then passes exactly the listed
+// handles), and announces its numeric value in envName.
+func inheritHandle(cmd *exec.Cmd, f *os.File, envName, what string) error {
+	h := windows.Handle(f.Fd())
 	if err := windows.SetHandleInformation(h, windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
-		return fmt.Errorf("mark session payload handle inheritable: %w", err)
+		return fmt.Errorf("mark %s handle inheritable: %w", what, err)
 	}
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -58,6 +72,36 @@ func attachSessionPayload(cmd *exec.Cmd, r *os.File) error {
 		// child environment.
 		cmd.Env = os.Environ()
 	}
-	cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%d", SessionPayloadHandleEnv, uintptr(h)))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%d", envName, uintptr(h)))
 	return nil
 }
+
+// OpenSessionPayload opens, in the session-runner child, the payload
+// pipe inherited from the Connect supervisor. On Windows ExtraFiles is
+// not supported, so the supervisor marks the pipe's read handle
+// inheritable and announces its numeric value (a non-secret integer)
+// through SessionPayloadHandleEnv; the payload itself, which contains
+// the secret session TokenValue, stays inside the pipe and never
+// travels via argv or the environment.
+func OpenSessionPayload() (*os.File, error) {
+	v := os.Getenv(SessionPayloadHandleEnv)
+	if v == "" {
+		return nil, fmt.Errorf("%s is not set; "+
+			"`nakama aws session-runner` is an internal command spawned by `nakama aws connect`",
+			SessionPayloadHandleEnv)
+	}
+	h, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", SessionPayloadHandleEnv, err)
+	}
+	f := os.NewFile(uintptr(h), "nakama-session-payload")
+	if f == nil {
+		return nil, fmt.Errorf("session payload handle %s is not a valid handle", v)
+	}
+	return f, nil
+}
+
+// closeOnExec is a no-op on Windows: os/exec passes a child only the
+// handles listed in AdditionalInheritedHandles (plus stdio), so an
+// inherited handle cannot leak further.
+func closeOnExec(*os.File) {}

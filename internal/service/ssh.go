@@ -106,7 +106,7 @@ func (s *Service) runSSHSession(ctx context.Context, payload []byte) error {
 	if s.ssh != nil && s.ssh.runSession != nil {
 		return s.ssh.runSession(ctx, payload)
 	}
-	return RunSessionRunner(ctx, s.clients, payload)
+	return RunSessionRunner(ctx, s.clients, payload, nil)
 }
 
 // sshHooks are the injection points used by the ssh tests.

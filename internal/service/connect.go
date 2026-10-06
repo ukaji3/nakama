@@ -52,14 +52,33 @@ func (s *Service) Connect(ctx context.Context, in ConnectInput) error {
 		return fmt.Errorf("nakama instance %q not found", in.Name)
 	}
 
-	docName, params := connectDocument(in)
+	mode := connectSessionMode(in)
+	var marker string
+	if mode == sessionModeCommand {
+		if marker, err = newCommandMarker(); err != nil {
+			return err
+		}
+	}
+	docName, params := connectDocument(in, marker)
 	return s.superviseSession(ctx, superviseSessionInput{
 		InstanceID:         instanceID,
 		DocumentName:       docName,
 		Parameters:         params,
+		Mode:               mode,
+		Marker:             marker,
 		MaxRetries:         in.MaxRetries,
 		ShellReconnectNote: len(in.Command) == 0,
 	})
+}
+
+// connectSessionMode is the session-runner mode for a connect request
+// (ADR 0021): command mode for a non-interactive command, terminal mode
+// for the shell and --tty.
+func connectSessionMode(in ConnectInput) sessionMode {
+	if len(in.Command) > 0 && !in.TTY {
+		return sessionModeCommand
+	}
+	return sessionModeTerminal
 }
 
 // sessionObserver receives lifecycle notifications from
@@ -86,6 +105,14 @@ type superviseSessionInput struct {
 	DocumentName *string
 	Parameters   map[string][]string
 
+	// Mode tells the session-runner child how to drive the plugin
+	// (sessionModeRaw for tunnel forwards). In command mode the outcome
+	// is the remote command's exit status (ADR 0021).
+	Mode sessionMode
+	// Marker is command mode's frame marker, the one the remote wrapper
+	// in Parameters was built with.
+	Marker string
+
 	// MaxRetries is the maximum number of automatic reconnect attempts
 	// after a permanent disconnect. 0 disables reconnection.
 	MaxRetries int
@@ -102,8 +129,9 @@ type superviseSessionInput struct {
 	// dial right after a laptop wake, before the network is back —
 	// surfaces as a generic exit 1, not as the DisconnectExitCode gate
 	// (which only fires after the channel was established). connect
-	// keeps this off so the remote command's exit code propagates
-	// unchanged (ADR 0014).
+	// keeps this off: a failed command must not be re-run behind the
+	// user's back, and its outcome is reported as is (ADR 0014,
+	// ADR 0021).
 	RetryChildFailures bool
 
 	// Observer, when non-nil, receives lifecycle notifications.
@@ -181,6 +209,8 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 			Endpoint:   fmt.Sprintf("https://ssm.%s.amazonaws.com", s.clients.Region),
 			Region:     s.clients.Region,
 			TargetID:   in.InstanceID,
+			Mode:       in.Mode,
+			Marker:     in.Marker,
 		})
 		if err != nil {
 			return fmt.Errorf("encode session payload: %w", err)
@@ -190,14 +220,30 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 			in.Observer.SessionStarted(aws.ToString(out.SessionId))
 		}
 		startedAt := hooks.now()
-		code, err := hooks.runSession(ctx, payload, disconnectCode)
+		res, err := hooks.runSession(ctx, sessionRunRequest{
+			payload:        payload,
+			disconnectCode: disconnectCode,
+			reportStatus:   in.Mode == sessionModeCommand,
+		})
 		if err != nil {
 			return err
 		}
+		if res.remoteExit != nil {
+			// The remote command ran to completion and reported its
+			// status; that is the outcome whatever the child's own exit
+			// code (a remote 74 is not a lost connection).
+			return remoteExitError(*res.remoteExit)
+		}
+		code := res.code
 		alive := hooks.now().Sub(startedAt)
 
 		switch {
 		case code == 0:
+			if in.Mode == sessionModeCommand {
+				// The plugin exits 0 on any channel close; without a
+				// reported status this is not a success (ADR 0021).
+				return errNoRemoteExit
+			}
 			return nil
 		case code == DisconnectExitCode && disconnectCode != 0:
 			if alive >= hooks.stableAfter {
@@ -222,13 +268,18 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 		case code < 0:
 			return errors.New("session runner terminated abnormally (killed by a signal)")
 		default:
-			// Generic child failure. For connect, propagate the exit code
-			// unchanged (see ExitCodeError handling in cmd/nakama): it is
-			// the remote command's exit code. Tunnel forwards instead
-			// consume a reconnect attempt (RetryChildFailures), because a
-			// failed data-channel establishment exits with a generic code
-			// and never reaches the DisconnectExitCode gate.
+			// Generic child failure: the child's own error (it has
+			// printed it), never the remote command's status, which the
+			// plugin does not propagate (ADR 0021). connect returns it;
+			// in command mode as 255, ssh-style, so a script can tell it
+			// from a status the remote command chose. Tunnel forwards
+			// instead consume a reconnect attempt (RetryChildFailures),
+			// because a failed data-channel establishment exits with a
+			// generic code and never reaches the DisconnectExitCode gate.
 			exitErr := &ExitCodeError{Code: code}
+			if in.Mode == sessionModeCommand {
+				exitErr = &ExitCodeError{Code: localFailureExitCode, Message: fmt.Sprintf("session runner exited with code %d", code)}
+			}
 			if !in.RetryChildFailures || disconnectCode == 0 {
 				return exitErr
 			}
@@ -283,7 +334,7 @@ func backoffDelay(attempt int) time.Duration {
 const connectUser = "ubuntu"
 
 // connectDocument maps a ConnectInput to the SSM document name and
-// parameters.
+// parameters. marker is command mode's frame marker (newCommandMarker).
 //
 // Shell and command modes run as the ubuntu user rather than the
 // ssm-user that Session Manager logs in as:
@@ -293,17 +344,22 @@ const connectUser = "ubuntu"
 //     back to).
 //   - Commands run via "sudo su - ubuntu -c '<command>'"; the command
 //     is single-quoted so the outer shell does not re-split or expand
-//     it.
+//     it. A non-interactive command is wrapped (commandWrapper) so its
+//     stdout, stderr and exit status come back as frames (ADR 0021); an
+//     interactive (--tty) command shares one PTY stream and has no exit
+//     status in Session Manager.
 //
 // Port forwarding is handled by `nakama aws tunnel`
 // (portForwardDocument in tunnel.go, ADR 0017).
-func connectDocument(in ConnectInput) (*string, map[string][]string) {
+func connectDocument(in ConnectInput, marker string) (*string, map[string][]string) {
 	if len(in.Command) > 0 {
-		doc := "AWS-StartNonInteractiveCommand"
-		if in.TTY {
-			doc = "AWS-StartInteractiveCommand"
+		remote := strings.Join(in.Command, " ")
+		doc := "AWS-StartInteractiveCommand"
+		if !in.TTY {
+			doc = "AWS-StartNonInteractiveCommand"
+			remote = commandWrapper(remote, marker)
 		}
-		command := fmt.Sprintf("sudo su - %s -c %s", connectUser, shellQuote(strings.Join(in.Command, " ")))
+		command := fmt.Sprintf("sudo su - %s -c %s", connectUser, shellQuote(remote))
 		return aws.String(doc), map[string][]string{"command": {command}}
 	}
 	command := fmt.Sprintf("exec sudo su - %s", connectUser)
