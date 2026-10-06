@@ -247,9 +247,14 @@ nakama aws backup delete dev01 --label before-upgrade
 nakama aws connect dev01                       # 対話シェル (ubuntu ユーザー・exit で切断)
 nakama aws connect dev01 ls -la                # 単発コマンド実行 (ubuntu 実行・ssh 風)
 nakama aws connect --tty dev01 top             # 対話 (PTY) でコマンド実行 (フラグは name より前に置く)
+nakama aws connect dev01 < steps.sh            # 対話シェルにファイルの内容を流し込む
 ```
 
 `connect` は AWS Systems Manager Session Manager を使用します (SSH 不要・受信ポート開放なし)。`session-manager-plugin` の取り込みにより**追加バイナリのインストールは不要**です。呼び出し側のプリンシパルには `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession` 権限が必要です (接続先 EC2 の instance role は `init` が付与する `AmazonSSMManagedInstanceCore` で充足)。ログインユーザーは **ubuntu** (code-server の稼働ユーザー) です。Session Manager は `ssm-user` として接続しますが、既定の passwordless sudo を用いて ubuntu に切り替え、対話シェルは単一の `exit` で切断します (ADR 0009)。
+
+**単発コマンドの実行** (ADR 0021): `connect <名前> <コマンド>` は ssh と同じように使えます。リモートの stdout と stderr はそれぞれ手元の stdout と stderr に出て、nakama は**リモートのコマンドの終了コードで終了**します (`connect dev01 test -d /srv/app || echo 無い` のようにスクリプトから判定できます)。nakama 自身が失敗したときや、終了コードを受け取れないままセッションが終わったときは 255 で終わり、理由を表示します。出力はコマンドが終わってからまとめて届きます (途中経過を見たいときは `--tty`)。コマンドの標準入力は `/dev/null` で、手元からデータを渡すことはできません (Session Manager の仕様。ファイルを送るときは `ssh` / `scp`)。引数は空白でつないでリモートのシェルが解釈するので、`'` や `$` を含むときは ssh と同じようにクォートしてください。`--tty` では終了コードを受け取れません (常に 0)。
+
+**対話シェルへの入力の流し込み**: 対話シェルと `--tty` は、標準入力がファイルやパイプでも動きます (`connect dev01 < steps.sh`)。入力はリモートの端末に表示され、入力の終わりで Ctrl-D が送られてセッションが終わります (Windows ではコンソールが必要です)。
 
 **自動再接続** (ADR 0014): セッションが恒久的に切断された場合 (インスタンスのハイバネートや長時間のネットワーク断など)、`connect` は新規セッションで自動的に再接続します。対話シェルでは既定で有効 (最大 5 回、指数バックオフ)、コマンド実行モードでは非冪等コマンドの再実行を避けるため既定で無効です。`--retry <n>` で回数を明示でき (`--retry 0` で無効化)、明示した値はどのモードでも尊重されます。セッションが 60 秒以上安定してから切断された場合は試行回数がリセットされます。**再接続後のシェルは新しいセッション**であり、以前のシェル状態 (カレントディレクトリ・環境変数・実行中プロセス) は失われます。AWS 資格情報が失効している場合は再試行せず、`aws login` を促してエラー終了します。
 

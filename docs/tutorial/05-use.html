@@ -92,6 +92,13 @@ nakama aws connect dev01 ls -la           # コマンドを 1 つだけ実行す
 nakama aws connect --tty dev01 top        # 画面が動くコマンドを実行する (フラグは名前より前)</code></pre>
 
 <div class="callout note" role="note">
+  <span class="title">コマンド実行の結果はスクリプトから判定できます</span>
+  <p><code>connect dev01 &lt;コマンド&gt;</code> は ssh と同じように、<strong>環境側のコマンドの終了コードで終わります</strong>。エラー出力は手元のエラー出力 (stderr) に出ます。たとえば PowerShell では <code>nakama aws connect dev01 test -d /srv/app; $LASTEXITCODE</code> で、ディレクトリがあれば 0、無ければ 1 が表示されます。nakama 自身がうまく動かなかったときは 255 です。</p>
+  <p>結果はコマンドが終わってからまとめて表示されます。途中経過を見たいときは <code>--tty</code> を付けてください (その代わり、終了コードは受け取れません)。</p>
+  <p>コマンドに手元のデータを渡すこと (<code>| nakama aws connect ...</code>) はできません。ファイルを送るときは、次の節の <code>ssh</code> / <code>scp</code> を使います。一方、対話シェルにはファイルの内容を流し込めます (<code>nakama aws connect dev01 &lt; steps.sh</code>。PowerShell では <code>Get-Content steps.sh | nakama aws connect dev01</code>)。ただし Windows では、この流し込みはコンソールでしか使えません。</p>
+</div>
+
+<div class="callout note" role="note">
   <span class="title">ログインするユーザーは ubuntu です</span>
   <p>code-server と同じユーザーなので、ファイルの権限で悩まずに済みます。管理者権限が必要なときは <code>sudo</code> を使えます (パスワードは不要です)。</p>
 </div>

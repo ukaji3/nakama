@@ -272,7 +272,8 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 | モード | 起動形 | DocumentName | Parameters | session サブタイプ |
 |---|---|---|---|---|
 | 対話シェル | `connect <n>` | `AWS-StartInteractiveCommand` | `command=exec sudo su - ubuntu` | `Standard_Stream` |
-| コマンド | `connect <n> <cmd...>` | `AWS-StartNonInteractiveCommand` (既定) / `AWS-StartInteractiveCommand` (`--tty`) | `command=sudo su - ubuntu -c '<cmd>'` | `Standard_Stream` |
+| コマンド | `connect <n> <cmd...>` | `AWS-StartNonInteractiveCommand` | `command=sudo su - ubuntu -c '<ラッパー(cmd)>'` | nakama の `commandSession` (§8.20) |
+| コマンド (PTY) | `connect --tty <n> <cmd...>` | `AWS-StartInteractiveCommand` | `command=sudo su - ubuntu -c '<cmd>'` | `Standard_Stream` |
 
 ポートフォワードは `nakama aws tunnel` に一本化した (§8.12 / ADR 0017)。
 
@@ -280,8 +281,9 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 2. モード判定 (シェル / コマンドは排他)。`DocumentName` / `Parameters` を組立
 3. `ssm:StartSession`
 4. credential / region / SSM endpoint を解決 (既存 `awsx` の `aws login` fallback を流用) し `session.Session` を構築
-5. シェル・コマンドは端末 raw mode + リサイズ送信 + 制御シグナル転送
-6. Ctrl-C / EOF / リモート切断で `TerminateSession`
+5. 対話シェルと `--tty` は端末 raw mode + リサイズ送信 + 制御シグナル転送。標準入力が端末でなければ、終わらないパイプで ShellSession に渡し、入力の終わりで Ctrl-D を送る (§8.20)
+6. コマンド実行は標準入力を読まず、制御シグナルだけを転送する。stdout / stderr / 終了コードは枠付きの出力から取り出す (§8.20)
+7. Ctrl-C / リモート切断で `TerminateSession`
 
 > ログインユーザーは **ubuntu**(code-server の稼働ユーザー)。Session Manager は `ssm-user` として接続するが、既定で付与される passwordless sudo (`/etc/sudoers.d/ssm-agent-users` の `ssm-user ALL=(ALL) NOPASSWD:ALL`) を用いて ubuntu に切り替える。対話シェルは `exec sudo su - ubuntu` で ssm-user シェルを置換するため、単一の `exit` でセッションが終了・切断する。コマンドは `sudo su - ubuntu -c '<cmd>'`(内側はシングルクォートで安全化)で ubuntu 実行。ポートフォワードはユーザーコンテキスト不要のため対象外。詳細は ADR 0009。
 
@@ -387,7 +389,8 @@ vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` ま�
   │       0  → 正常終了 (ループ終了)
   │       74 → 恒久切断: 60s 以上生存していたら試行カウンタをリセット →
   │            予算内なら通知 + 指数バックオフ (1s,2s,4s,8s,16s,30s cap) → StartSession から再実行
-  │       他 → ExitCodeError としてそのまま伝播 (cmd/nakama が同一コードで exit)
+  │       他 → ExitCodeError として伝播 (cmd/nakama が同一コードで exit。コマンド実行は 255)
+  │       ※ コマンド実行では、子が状態パイプで返したリモートの終了コードを最優先する (§8.20)
   └ StartSession 失敗の分類 (smithy APIError コード):
       認証系 (ExpiredToken 等) → 中断し `aws login` を案内 /
       TargetNotConnected → 予算内でバックオフ再試行 / その他 → 即エラー
@@ -509,6 +512,18 @@ code-server のパス転送 (`/proxy/5476/`) では、Kiro Crew の Host 検査�
 - **Ports パネル**: code-server は、`proxy-domain` があって `VSCODE_PROXY_URI` が未設定だと、`VSCODE_PROXY_URI=//{{port}}.<proxy-domain>` を自分で設定する (`src/node/cli.ts`)。このままでは Ports パネルとターミナルのリンクがすべて `<port>.kirocrew.nakama.internal` を指してしまう。そこで enable では、code-server を再起動する前に drop-in (`/etc/systemd/system/code-server@ubuntu.service.d/nakama-kirocrew.conf`) を置き、`VSCODE_PROXY_URI=./proxy/{{port}}/` (code-server 自身の既定値) に固定する。利用者が `VSCODE_PROXY_URI` を自分で設定していれば触らない。disable は drop-in を消し、code-server の再起動は 1 回にまとめる
 - **メタデータ**: `/nakama/<名前>/meta/kirocrew-distribution-id` と `kirocrew-distribution-domain`。`info` は後者から `kirocrew_url` を表示する
 - **予約名**: `enable` と `disable` はサブコマンド名なので、インスタンス名として予約する
+
+### 8.20 `nakama aws connect <n> <cmd>` のコマンド実行と標準入力 (ADR 0021 / Issue #70、#75)
+
+vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSession) で扱うため、標準入力の EOF でセッションが終わり (#70)、終了コードと stderr も伝わらなかった (#75)。子プロセスに payload の `mode` を渡して動作を切り替える。
+
+- **mode**: 空 (raw) = tunnel / ssh proxy (従来どおり)、`command` = コマンド実行、`terminal` = 対話シェルと `--tty`
+- **ラッパー** (`commandWrapper`): `mktemp -d` (0700) のファイルに `( cmd ) </dev/null` の stdout と stderr を書き、コマンドが終わってから `\n@@nakama-frame <目印> o <長さ>\n` + 本文、`e` も同様、最後に `x <終了コード>` を出す。目印は実行ごとの 32 文字の乱数で、payload の `marker` で子に渡す。コマンドは 1 行目から始まるので、エラーの行番号はコマンドの行番号になる
+- **commandSession**: 子プロセスで `session.Register` により `Standard_Stream` を上書きする (plugin は変更しない)。`Output` を `frameDecoder` に流し (任意の分割に対応、最初の見出しより前は stderr へ)、それ以外の種類 (agent のエラー) は stderr へ。標準入力は読まず、制御シグナル (Ctrl-C / Ctrl-\ / Ctrl-Z) だけを送る。plugin の表示 (`Starting session…`) は `os.Stdout = os.Stderr` で stderr に回す
+- **状態パイプ**: リモートの終了コードは `remote-exit <n>` の 1 行で親に返す。unix は `ExtraFiles` の 2 本目 (fd 4)、Windows は継承ハンドル。番号は `NAKAMA_SESSION_STATUS_HANDLE` で伝え、子は受け取ったら環境変数を消して close-on-exec を付ける。親は要求しないときにこの変数を環境から取り除く
+- **終了コード**: リモートの終了コード (0〜255) をそのまま返し、何も表示しない (`ExitCodeError{Remote}`、cobra の SilenceErrors、main の空行も出さない)。終了コードを受け取れなかったとき・子が失敗したとき・範囲外のときは 255 と理由。リモートの 74 は切断扱いしない。`--retry` の再接続は、終了コードを受け取る前に切れた場合だけ
+- **terminal**: 標準入力が端末でなければ (Windows 以外)、`os.Pipe` に差し替えて `copyTerminalInput` で中継する。行頭の `~` を二重にし (ShellSession のエスケープ回避)、入力が尽きたら Ctrl-D (最後が改行でなければ先に改行)。書き込み側は閉じない (保持して GC で閉じないようにする)
+- **separateOutputStream を使わない理由**: agent 3.3.4793.0 は送信を約 2 秒で打ち切り、約 300 KB を超える出力が途切れる (3.3.4851.0 で修正)。既定のモードは 5 MB まで全部届くことを実機で確認した
 
 ## 9. テスト戦略
 

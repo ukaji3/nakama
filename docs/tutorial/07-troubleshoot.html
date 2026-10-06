@@ -186,6 +186,10 @@
       <td><code>doctor</code> の <code>capability: connect</code> 行を確認します。<code>ssm:StartSession</code> などが必要です</td>
     </tr>
     <tr>
+      <td><code>connect &lt;名前&gt; &lt;コマンド&gt;</code> が 255 で終わる</td>
+      <td>nakama 自身が失敗したか、終了コードを受け取る前にセッションが切れています。表示された理由を確認してください。<code>'</code> や <code>$</code> を含むコマンドは環境側のシェルが解釈するので、ssh と同じようにクォートします (例: <code>nakama aws connect dev01 "echo \"it's\""</code>)</td>
+    </tr>
+    <tr>
       <td>環境が起動しているのにつながらない</td>
       <td>起動直後は環境側の準備 (SSM エージェントの起動) に 1〜2 分かかります。少し待ってやり直してください</td>
     </tr>
