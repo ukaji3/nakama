@@ -1,14 +1,22 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"encoding/xml"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	cftypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 )
 
@@ -231,5 +239,234 @@ func TestKirocrewNamesFitCloudFrontLimits(t *testing.T) {
 	long := strings.Repeat("a", 32) // the longest instance name nakama accepts
 	if n := len(kirocrewFunctionName(long)); n > 64 {
 		t.Errorf("function name is %d chars, CloudFront allows 64", n)
+	}
+}
+
+// apiDefaultCacheBehaviorJSON is the default behavior exactly as
+// GetDistributionConfig returned it for a nakama-created distribution in
+// production (2026-10-06, only the VPC origin id replaced). The API
+// fills fields nakama never set, such as SmoothStreaming; Issue #73.
+const apiDefaultCacheBehaviorJSON = `{
+    "TargetOriginId": "vpc-origin-vo_abc",
+    "TrustedSigners": {"Enabled": false, "Quantity": 0},
+    "TrustedKeyGroups": {"Enabled": false, "Quantity": 0},
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "AllowedMethods": {
+        "Quantity": 7,
+        "Items": ["HEAD", "DELETE", "POST", "GET", "OPTIONS", "PUT", "PATCH"],
+        "CachedMethods": {"Quantity": 2, "Items": ["HEAD", "GET"]}
+    },
+    "SmoothStreaming": false,
+    "Compress": false,
+    "LambdaFunctionAssociations": {"Quantity": 0},
+    "FunctionAssociations": {"Quantity": 0},
+    "FieldLevelEncryptionId": "",
+    "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+    "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+    "GrpcConfig": {"Enabled": false}
+}`
+
+// apiShapedDistributionConfig is the code-server distribution as the API
+// returns it on read.
+func apiShapedDistributionConfig(t *testing.T) *cftypes.DistributionConfig {
+	t.Helper()
+	cfg := distributionConfig(distributionParams{
+		callerReference: "nakama-ref", comment: "nakama-dev01",
+		vpcOriginID: testVPCOriginID, originDomain: testOriginDNS, wafWebACLARN: testWAFARN,
+	})
+	var def cftypes.DefaultCacheBehavior
+	if err := json.Unmarshal([]byte(apiDefaultCacheBehaviorJSON), &def); err != nil {
+		t.Fatal(err)
+	}
+	cfg.DefaultCacheBehavior = &def
+	return cfg
+}
+
+func exportedFieldNames(t reflect.Type, skip ...string) []string {
+	var names []string
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.IsExported() && !slices.Contains(skip, f.Name) {
+			names = append(names, f.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func TestKirocrewCacheBehaviorCopiesEveryField(t *testing.T) {
+	defType := reflect.TypeOf(cftypes.DefaultCacheBehavior{})
+	// The SDK's two behavior types must keep the same fields (plus
+	// PathPattern); a field CloudFront adds to both must be handled.
+	if d, c := exportedFieldNames(defType), exportedFieldNames(reflect.TypeOf(cftypes.CacheBehavior{}), "PathPattern"); !slices.Equal(d, c) {
+		t.Fatalf("DefaultCacheBehavior and CacheBehavior diverged:\n default: %v\nbehavior: %v", d, c)
+	}
+
+	// Give every field of the default a value that neither the zero value
+	// nor kirocrewCacheBehavior's fallbacks could produce.
+	var def cftypes.DefaultCacheBehavior
+	dv := reflect.ValueOf(&def).Elem()
+	for i := 0; i < dv.NumField(); i++ {
+		f, sf := dv.Field(i), defType.Field(i)
+		if !sf.IsExported() {
+			continue
+		}
+		switch {
+		case f.Kind() == reflect.String: // enums such as ViewerProtocolPolicy
+			f.SetString("marker-" + sf.Name)
+		case f.Kind() == reflect.Pointer && f.Type().Elem().Kind() == reflect.String:
+			f.Set(reflect.ValueOf(aws.String("marker-" + sf.Name)))
+		case f.Kind() == reflect.Pointer && f.Type().Elem().Kind() == reflect.Bool:
+			f.Set(reflect.ValueOf(aws.Bool(true)))
+		case f.Kind() == reflect.Pointer && f.Type().Elem().Kind() == reflect.Int64:
+			f.Set(reflect.ValueOf(aws.Int64(4242)))
+		case f.Kind() == reflect.Pointer && f.Type().Elem().Kind() == reflect.Struct:
+			f.Set(reflect.New(f.Type().Elem())) // an empty struct, unlike every fallback
+		default:
+			t.Fatalf("field %s has a kind (%s) this test does not know how to fill; extend it", sf.Name, f.Type())
+		}
+	}
+
+	const fnARN = "arn:aws:cloudfront::111122223333:function/nakama-dev01-kirocrew"
+	b := kirocrewCacheBehavior(&def, "/proxy/5476*", fnARN)
+	bv := reflect.ValueOf(b)
+	for _, name := range exportedFieldNames(defType, "FunctionAssociations", "LambdaFunctionAssociations") {
+		if got, want := bv.FieldByName(name).Interface(), dv.FieldByName(name).Interface(); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s is not copied from the default behavior: got %#v, want %#v", name, got, want)
+		}
+	}
+	if aws.ToString(b.PathPattern) != "/proxy/5476*" {
+		t.Errorf("PathPattern = %q", aws.ToString(b.PathPattern))
+	}
+	// The edge code is nakama's own, whatever the default carries.
+	if fa := b.FunctionAssociations; fa == nil || aws.ToInt32(fa.Quantity) != 1 || len(fa.Items) != 1 ||
+		aws.ToString(fa.Items[0].FunctionARN) != fnARN || fa.Items[0].EventType != cftypes.EventTypeViewerRequest {
+		t.Errorf("FunctionAssociations must be exactly the redirect on viewer-request: %+v", b.FunctionAssociations)
+	}
+	if la := b.LambdaFunctionAssociations; la == nil || aws.ToInt32(la.Quantity) != 0 || len(la.Items) != 0 {
+		t.Errorf("LambdaFunctionAssociations must be empty: %+v", b.LambdaFunctionAssociations)
+	}
+}
+
+func TestKirocrewCacheBehaviorFillsWhatTheAPIRequires(t *testing.T) {
+	// A default behavior nakama built itself leaves these unset; the API
+	// accepts that on create but not on update.
+	sparse := distributionConfig(distributionParams{callerReference: "r", comment: "c", vpcOriginID: "v", originDomain: "d", wafWebACLARN: "w"}).DefaultCacheBehavior
+	b := kirocrewCacheBehavior(sparse, "/proxy/5476*", "arn:fn")
+	if b.SmoothStreaming == nil || aws.ToBool(b.SmoothStreaming) {
+		t.Errorf("SmoothStreaming = %v, want false", b.SmoothStreaming)
+	}
+	if b.Compress == nil || aws.ToBool(b.Compress) {
+		t.Errorf("Compress = %v, want the default's false", b.Compress)
+	}
+	if b.FieldLevelEncryptionId == nil || *b.FieldLevelEncryptionId != "" {
+		t.Errorf("FieldLevelEncryptionId = %v, want \"\"", b.FieldLevelEncryptionId)
+	}
+	if ts := b.TrustedSigners; ts == nil || aws.ToBool(ts.Enabled) || aws.ToInt32(ts.Quantity) != 0 || ts.Enabled == nil || ts.Quantity == nil {
+		t.Errorf("TrustedSigners = %+v, want disabled with Quantity 0", ts)
+	}
+	if kg := b.TrustedKeyGroups; kg == nil || aws.ToBool(kg.Enabled) || kg.Enabled == nil || kg.Quantity == nil || aws.ToInt32(kg.Quantity) != 0 {
+		t.Errorf("TrustedKeyGroups = %+v, want disabled with Quantity 0", kg)
+	}
+	if g := b.GrpcConfig; g == nil || g.Enabled == nil || aws.ToBool(g.Enabled) {
+		t.Errorf("GrpcConfig = %+v, want disabled", g)
+	}
+	// Signed URLs on the default must carry over rather than be dropped:
+	// the redirect paths keep the distribution's protection.
+	signed := *sparse
+	signed.TrustedKeyGroups = &cftypes.TrustedKeyGroups{Enabled: aws.Bool(true), Quantity: aws.Int32(1), Items: []string{"kg-1"}}
+	if got := kirocrewCacheBehavior(&signed, "/p*", "arn:fn").TrustedKeyGroups; got == nil || !aws.ToBool(got.Enabled) || len(got.Items) != 1 || got.Items[0] != "kg-1" {
+		t.Errorf("TrustedKeyGroups of the default must be kept: %+v", got)
+	}
+}
+
+// xmlElement is a generic XML tree, enough to compare which elements the
+// SDK serializes.
+type xmlElement struct {
+	XMLName  xml.Name
+	Children []xmlElement `xml:",any"`
+}
+
+func (e xmlElement) child(name string) *xmlElement {
+	for i := range e.Children {
+		if e.Children[i].XMLName.Local == name {
+			return &e.Children[i]
+		}
+	}
+	return nil
+}
+
+func (e xmlElement) childNames() []string {
+	var names []string
+	for _, c := range e.Children {
+		names = append(names, c.XMLName.Local)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// capturingTransport records a request body and fails the call, so the
+// SDK serializes a real request without anything leaving the process.
+type capturingTransport struct{ body []byte }
+
+func (c *capturingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Body != nil {
+		c.body, _ = io.ReadAll(r.Body)
+	}
+	return &http.Response{StatusCode: http.StatusInternalServerError, Body: http.NoBody, Header: http.Header{}, Request: r}, nil
+}
+
+// serializedUpdateDistribution returns the XML body the SDK sends for
+// UpdateDistribution with cfg.
+func serializedUpdateDistribution(t *testing.T, cfg *cftypes.DistributionConfig) xmlElement {
+	t.Helper()
+	rt := &capturingTransport{}
+	client := cloudfront.New(cloudfront.Options{
+		Region: "us-east-1", Credentials: aws.AnonymousCredentials{},
+		HTTPClient: &http.Client{Transport: rt}, RetryMaxAttempts: 1,
+	})
+	_, _ = client.UpdateDistribution(context.Background(), &cloudfront.UpdateDistributionInput{
+		Id: aws.String("E1"), IfMatch: aws.String("etag"), DistributionConfig: cfg,
+	})
+	if len(rt.body) == 0 {
+		t.Fatal("the SDK sent no request body")
+	}
+	var root xmlElement
+	if err := xml.Unmarshal(rt.body, &root); err != nil {
+		t.Fatalf("parse the request body: %v\n%s", err, rt.body)
+	}
+	return root
+}
+
+func TestKirocrewBehaviorsSerializeLikeTheAPIDefault(t *testing.T) {
+	// What the API returns for the default behavior is what it expects
+	// back for every behavior on update.
+	apiCfg := apiShapedDistributionConfig(t)
+	want := append(serializedUpdateDistribution(t, apiCfg).child("DefaultCacheBehavior").childNames(), "PathPattern")
+	sort.Strings(want)
+
+	for name, cfg := range map[string]*cftypes.DistributionConfig{
+		// enable reads the distribution back from the API...
+		"read back from the API": apiCfg,
+		// ...but the builder must not depend on that.
+		"built by nakama": distributionConfig(distributionParams{
+			callerReference: "r", comment: "c", vpcOriginID: testVPCOriginID, originDomain: testOriginDNS, wafWebACLARN: testWAFARN,
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			next, err := withKirocrewBehaviors(cfg, "arn:aws:cloudfront::111122223333:function/nakama-dev01-kirocrew")
+			if err != nil {
+				t.Fatal(err)
+			}
+			items := serializedUpdateDistribution(t, next).child("CacheBehaviors").child("Items")
+			if items == nil || len(items.Children) != len(kirocrewPathPatterns) {
+				t.Fatalf("want %d serialized behaviors, got %+v", len(kirocrewPathPatterns), items)
+			}
+			for _, b := range items.Children {
+				if got := b.childNames(); !slices.Equal(got, want) {
+					t.Errorf("serialized behavior elements differ from the API's default behavior:\n got: %v\nwant: %v", got, want)
+				}
+			}
+		})
 	}
 }
