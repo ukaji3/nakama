@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -117,6 +118,147 @@ func TestKirocrewScriptsAreSafeBash(t *testing.T) {
 		if !strings.Contains(enable, want) {
 			t.Errorf("enable script lacks %q", want)
 		}
+	}
+	// The drop-in has to be in place before code-server restarts with
+	// proxy-domain, or code-server derives VSCODE_PROXY_URI from it.
+	pin, restart := strings.Index(enable, kirocrewPinProxyURIStep()), strings.Index(enable, "systemctl restart code-server@ubuntu")
+	if pin < 0 || pin > restart {
+		t.Errorf("enable must write the VSCODE_PROXY_URI drop-in before restarting code-server (pin at %d, restart at %d)", pin, restart)
+	}
+	unpin, restart := strings.Index(disable, kirocrewUnpinProxyURIStep()), strings.Index(disable, "systemctl restart code-server@ubuntu")
+	if unpin < 0 || unpin > restart || !strings.Contains(disable, `if [ "$restart" = 1 ]; then`) {
+		t.Error("disable must remove the drop-in and restart code-server once afterwards")
+	}
+}
+
+func TestKirocrewDropInPinsThePathProxy(t *testing.T) {
+	d := kirocrewDropIn()
+	if !strings.Contains(d, "\n[Service]\nEnvironment=\"VSCODE_PROXY_URI=./proxy/{{port}}/\"\n") {
+		t.Errorf("unexpected drop-in:\n%s", d)
+	}
+	// systemd expands % specifiers in Environment=; the value must not
+	// contain any.
+	if strings.Contains(d, "%") {
+		t.Errorf("the drop-in must not contain systemd %% specifiers:\n%s", d)
+	}
+	if !strings.HasPrefix(kirocrewCodeServerDropIn, "/etc/systemd/system/code-server@ubuntu.service.d/") {
+		t.Errorf("the drop-in must apply to code-server@ubuntu only: %s", kirocrewCodeServerDropIn)
+	}
+}
+
+// runDropInStep runs a pin/unpin fragment with bash against a temporary
+// directory and a stub systemctl that records its calls and reports
+// unitEnv as the unit's Environment=.
+func runDropInStep(t *testing.T, fragment, dropIn, unitEnv string) (calls []string, restart, stderr string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub systemctl is a shebang script, which Windows cannot execute; the step only runs on Ubuntu")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	stub := "#!/bin/bash\necho \"$*\" >> " + log + "\nif [ \"$1\" = show ]; then printf '%s\\n' \"$STUB_ENV\"; fi\n"
+	if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "set -euo pipefail\nfail() { echo \"FAIL $*\"; exit 1; }\nrestart=0\n" +
+		strings.ReplaceAll(fragment, kirocrewCodeServerDropIn, dropIn) + "echo \"restart=$restart\"\n"
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "STUB_ENV="+unitEnv)
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("fragment failed: %v\nstdout: %s\nstderr: %s", err, out, errBuf.String())
+	}
+	if b, err := os.ReadFile(log); err == nil {
+		calls = strings.Split(strings.TrimSpace(string(b)), "\n")
+	}
+	return calls, strings.TrimSpace(string(out)), errBuf.String()
+}
+
+func TestKirocrewPinProxyURIStep(t *testing.T) {
+	t.Run("writes the drop-in and reloads systemd", func(t *testing.T) {
+		dropIn := filepath.Join(t.TempDir(), "code-server@ubuntu.service.d", "nakama-kirocrew.conf")
+		calls, _, _ := runDropInStep(t, kirocrewPinProxyURIStep(), dropIn, "")
+		got, err := os.ReadFile(dropIn)
+		if err != nil || string(got) != kirocrewDropIn() {
+			t.Fatalf("drop-in content = %q (%v), want %q", got, err, kirocrewDropIn())
+		}
+		if st, _ := os.Stat(dropIn); st.Mode().Perm() != 0o644 {
+			t.Errorf("drop-in mode = %v, want 0644", st.Mode().Perm())
+		}
+		if !slices.Contains(calls, "daemon-reload") {
+			t.Errorf("systemctl calls = %v, want daemon-reload", calls)
+		}
+	})
+	t.Run("rewrites its own drop-in on a re-run", func(t *testing.T) {
+		dropIn := filepath.Join(t.TempDir(), "nakama-kirocrew.conf")
+		if err := os.WriteFile(dropIn, []byte("stale\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// systemd now reports nakama's own value; that must not count as
+		// the user's.
+		runDropInStep(t, kirocrewPinProxyURIStep(), dropIn, "VSCODE_PROXY_URI="+kirocrewProxyURI)
+		if got, _ := os.ReadFile(dropIn); string(got) != kirocrewDropIn() {
+			t.Errorf("drop-in not refreshed: %q", got)
+		}
+	})
+	t.Run("leaves a user's own VSCODE_PROXY_URI alone", func(t *testing.T) {
+		dropIn := filepath.Join(t.TempDir(), "nakama-kirocrew.conf")
+		calls, _, stderr := runDropInStep(t, kirocrewPinProxyURIStep(), dropIn, "LANG=C.UTF-8 VSCODE_PROXY_URI=https://{{port}}.dev.example")
+		if _, err := os.Stat(dropIn); !os.IsNotExist(err) {
+			t.Error("must not write a drop-in over the user's VSCODE_PROXY_URI")
+		}
+		if slices.Contains(calls, "daemon-reload") {
+			t.Error("nothing changed, so no daemon-reload")
+		}
+		if !strings.Contains(stderr, "leaving it as it is") {
+			t.Errorf("the skip must be explained, stderr = %q", stderr)
+		}
+	})
+}
+
+func TestKirocrewUnpinProxyURIStep(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "code-server@ubuntu.service.d")
+	dropIn := filepath.Join(dir, "nakama-kirocrew.conf")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dropIn, []byte(kirocrewDropIn()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	calls, restart, _ := runDropInStep(t, kirocrewUnpinProxyURIStep(), dropIn, "")
+	if _, err := os.Stat(dropIn); !os.IsNotExist(err) {
+		t.Error("the drop-in must be removed")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("the now-empty drop-in directory should be removed")
+	}
+	if !slices.Contains(calls, "daemon-reload") || restart != "restart=1" {
+		t.Errorf("calls=%v %s, want daemon-reload and restart=1", calls, restart)
+	}
+
+	// Nothing to remove: no reload, no restart (disable stays idempotent).
+	calls, restart, _ = runDropInStep(t, kirocrewUnpinProxyURIStep(), dropIn, "")
+	if len(calls) != 0 || restart != "restart=0" {
+		t.Errorf("second run: calls=%v %s, want none and restart=0", calls, restart)
+	}
+
+	// A directory holding the user's own drop-ins is kept.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"nakama-kirocrew.conf", "override.conf"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("[Service]\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runDropInStep(t, kirocrewUnpinProxyURIStep(), dropIn, "")
+	if _, err := os.Stat(filepath.Join(dir, "override.conf")); err != nil {
+		t.Errorf("the user's drop-in must survive: %v", err)
 	}
 }
 
