@@ -167,8 +167,8 @@ nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れな�
 <div class="callout warn" role="note">
   <span class="title">初回だけ認証が必要です</span>
   <p>導入はされますが、<strong>サインインは自動化できません</strong>。最初に 1 回だけ、環境の中で次を実行してください。</p>
-  <pre><code>nakama aws connect dev01</code></pre>
-  <p>入ったあと、環境側で <code>kiro-cli login --use-device-flow</code> を実行し、表示される指示に従います。</p>
+  <pre><code>nakama aws connect --tty dev01 kiro-cli login --use-device-flow</code></pre>
+  <p>表示される確認コードとURLで承認します。<strong><code>--tty</code> を付けるのが大切です</strong>。付けないと、出力がコマンドの終了後まで表示されず、コードが見えないまま止まって見えます (その場合は Ctrl-C で中断し、<code>--tty</code> を付けて実行し直してください)。先に <code>nakama aws connect dev01</code> で環境に入ってから <code>kiro-cli login --use-device-flow</code> を実行しても構いません。</p>
 </div>
 
 <div class="callout note" role="note">

@@ -178,7 +178,7 @@ nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れな�
 3. `kirocrew service install` で gateway を systemd に登録
 
 - `~/.bashrc` に `export PATH="$HOME/.local/bin:$PATH"` が追記されます (既にあれば追記しません)
-- 初回ログイン時に `kiro-cli login --use-device-flow` での認証が別途必要です (プロビジョニング時には自動化できません)
+- 初回ログイン時に `kiro-cli login --use-device-flow` での認証が別途必要です (プロビジョニング時には自動化できません)。このコマンドは確認コードを表示して承認を待つので、**`nakama aws connect --tty dev01 kiro-cli login --use-device-flow` のように `--tty` を付けて**実行してください (付けないと、出力がコマンド終了後まで表示されず、コードが見えません)
 - **導入の失敗で create は失敗しません**。警告が出るだけで、インスタンスはそのまま使えます。`nakama aws setup rerun <名前> --preset kiro` で同じ手順を再実行できます
 - Crew の gateway は `localhost:5476` のみで待ち受けます。ブラウザから開くには `nakama aws kirocrew enable <名前>` の後に `nakama aws kirocrew <名前>` (後述)、手元のループバックから直接開く場合は `nakama aws tunnel <名前> -L 5476:5476`
 
@@ -252,7 +252,7 @@ nakama aws connect dev01 < steps.sh            # 対話シェルにファイル�
 
 `connect` は AWS Systems Manager Session Manager を使用します (SSH 不要・受信ポート開放なし)。`session-manager-plugin` の取り込みにより**追加バイナリのインストールは不要**です。呼び出し側のプリンシパルには `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession` 権限が必要です (接続先 EC2 の instance role は `init` が付与する `AmazonSSMManagedInstanceCore` で充足)。ログインユーザーは **ubuntu** (code-server の稼働ユーザー) です。Session Manager は `ssm-user` として接続しますが、既定の passwordless sudo を用いて ubuntu に切り替え、対話シェルは単一の `exit` で切断します (ADR 0009)。
 
-**単発コマンドの実行** (ADR 0021): `connect <名前> <コマンド>` は ssh と同じように使えます。リモートの stdout と stderr はそれぞれ手元の stdout と stderr に出て、nakama は**リモートのコマンドの終了コードで終了**します (`connect dev01 test -d /srv/app || echo 無い` のようにスクリプトから判定できます)。nakama 自身が失敗したときや、終了コードを受け取れないままセッションが終わったときは 255 で終わり、理由を表示します。出力はコマンドが終わってからまとめて届きます (途中経過を見たいときは `--tty`)。コマンドの標準入力は `/dev/null` で、手元からデータを渡すことはできません (Session Manager の仕様。ファイルを送るときは `ssh` / `scp`)。引数は空白でつないでリモートのシェルが解釈するので、`'` や `$` を含むときは ssh と同じようにクォートしてください。`--tty` では終了コードを受け取れません (常に 0)。
+**単発コマンドの実行** (ADR 0021): `connect <名前> <コマンド>` は ssh と同じように使えます。リモートの stdout と stderr はそれぞれ手元の stdout と stderr に出て、nakama は**リモートのコマンドの終了コードで終了**します (`connect dev01 test -d /srv/app || echo 無い` のようにスクリプトから判定できます)。nakama 自身が失敗したときや、終了コードを受け取れないままセッションが終わったときは 255 で終わり、理由を表示します。出力はコマンドが終わってからまとめて届きます。そのため、**入力や確認コードを待つコマンド (`kiro-cli login` など) は `--tty` を付けて**ください (付けないと、コードが表示されず止まって見えます)。途中経過を見たいときも `--tty` です。中断したいときは Ctrl-C で、それまでの出力と終了コードが表示され、リモートのコマンドも停止します。コマンドの標準入力は `/dev/null` で、手元からデータを渡すことはできません (Session Manager の仕様。ファイルを送るときは `ssh` / `scp`)。引数は空白でつないでリモートのシェルが解釈するので、`'` や `$` を含むときは ssh と同じようにクォートしてください。`--tty` では終了コードを受け取れません (常に 0)。
 
 **対話シェルへの入力の流し込み**: 対話シェルと `--tty` は、標準入力がファイルやパイプでも動きます (`connect dev01 < steps.sh`)。入力はリモートの端末に表示され、入力の終わりで Ctrl-D が送られてセッションが終わります (Windows ではコンソールが必要です)。
 

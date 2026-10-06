@@ -186,6 +186,10 @@
       <td><code>doctor</code> の <code>capability: connect</code> 行を確認します。<code>ssm:StartSession</code> などが必要です</td>
     </tr>
     <tr>
+      <td><code>connect &lt;名前&gt; &lt;コマンド&gt;</code> が止まって見える (出力が出ない)</td>
+      <td>このモードでは、出力はコマンドが終わってからまとめて表示されます。<code>kiro-cli login</code> のように入力や確認コードを待つコマンドは、コードが見えないまま止まって見えます。Ctrl-C で中断する (それまでの出力と終了コードが出ます) か、<code>--tty</code> を付けて実行し直してください: <code>nakama aws connect --tty &lt;名前&gt; &lt;コマンド&gt;</code>。10 秒以上かかると、この案内が自動でも表示されます</td>
+    </tr>
+    <tr>
       <td><code>connect &lt;名前&gt; &lt;コマンド&gt;</code> が 255 で終わる</td>
       <td>nakama 自身が失敗したか、終了コードを受け取る前にセッションが切れています。表示された理由を確認してください。<code>'</code> や <code>$</code> を含むコマンドは環境側のシェルが解釈するので、ssh と同じようにクォートします (例: <code>nakama aws connect dev01 "echo \"it's\""</code>)</td>
     </tr>
