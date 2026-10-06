@@ -664,22 +664,27 @@ func TestCommandWrapperInterrupt(t *testing.T) {
 		name, command string
 		wantExit      int // -1 => just assert non-zero
 	}{
-		{"bare command dies from SIGINT", "echo OUT; sleep 30; echo LATE", 130},
-		{"command handles SIGINT", `trap 'echo BYE; exit 42' INT; echo OUT; sleep 30; echo LATE`, 42},
-		{"command ignores SIGINT (force-killed)", `trap '' INT; echo OUT; sleep 30; echo LATE`, -1},
+		// Each case sleeps a distinct number of seconds so that
+		// waitForCommandToSleep finds exactly its own sleep.
+		{"bare command dies from SIGINT", "echo OUT; sleep 731; echo LATE", 130},
+		{"command handles SIGINT", `trap 'echo BYE; exit 42' INT; echo OUT; sleep 732; echo LATE`, 42},
+		{"command ignores SIGINT (force-killed)", `trap '' INT; echo OUT; sleep 733; echo LATE`, -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
 			cmd := exec.Command("bash", "-c", commandWrapper(tc.command, testMarker))
-			cmd.Env = append(os.Environ(), "TMPDIR="+t.TempDir(), "LC_ALL=C")
+			cmd.Env = append(os.Environ(), "TMPDIR="+tmp, "LC_ALL=C")
 			cmd.Stdin = strings.NewReader("")
 			var out bytes.Buffer
 			cmd.Stdout = &out
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
-			// Let the command print and reach the sleep, then interrupt the
-			// wrapper as su would (SIGTERM) — the trap handles INT/TERM/HUP.
-			time.Sleep(500 * time.Millisecond)
+			// Interrupt only once the command has printed OUT and is in its
+			// sleep, as when a user presses Ctrl-C on a running command. A
+			// fixed delay raced on a loaded machine: the signal could land
+			// before the command had installed its own trap or printed.
+			waitForCommandToSleep(t, tmp, tc.command)
 			start := time.Now()
 			_ = cmd.Process.Signal(os.Interrupt)
 			done := make(chan error, 1)
@@ -708,6 +713,36 @@ func TestCommandWrapperInterrupt(t *testing.T) {
 			}
 		})
 	}
+}
+
+// waitForCommandToSleep blocks until the wrapper started under tmp has
+// captured the command's "OUT" line and the command's own `sleep <n>`
+// (taken from command) is running, i.e. the command has passed its
+// trap and print. Without pgrep it settles for the OUT line plus a
+// short grace period.
+func waitForCommandToSleep(t *testing.T, tmp, command string) {
+	t.Helper()
+	sleepCmd := ""
+	if i := strings.Index(command, "sleep "); i >= 0 {
+		sleepCmd = strings.Fields(command[i:])[0] + " " + strings.TrimSuffix(strings.Fields(command[i:])[1], ";")
+	}
+	_, pgrepErr := exec.LookPath("pgrep")
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if matches, _ := filepath.Glob(filepath.Join(tmp, "tmp.*", "o")); len(matches) == 1 {
+			if b, err := os.ReadFile(matches[0]); err == nil && strings.HasPrefix(string(b), "OUT\n") {
+				if pgrepErr != nil || sleepCmd == "" {
+					time.Sleep(300 * time.Millisecond)
+					return
+				}
+				if exec.Command("pgrep", "-fx", sleepCmd).Run() == nil {
+					return
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the command did not reach %q in time", sleepCmd)
 }
 
 // syncBuffer is a bytes.Buffer safe for the hint goroutine to write
