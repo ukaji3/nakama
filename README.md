@@ -174,12 +174,13 @@ nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れな�
 導入内容は次のとおりです (すべて ubuntu ユーザーとして実行されます)。
 
 1. 公式インストーラ (`curl -fsSL https://cli.kiro.dev/install | bash`) で Kiro CLI を `~/.local/bin` へ導入
-2. `kiro-cli crew -y install` で Kiro Crew を導入
+2. `kiro-cli crew -y -- --version` で Kiro Crew を導入 (`kiro-cli crew` は未導入なら Kiro Crew を入れてから、残りの引数を Kiro Crew に渡します)
 3. `kirocrew service install` で gateway を systemd に登録
 
 - `~/.bashrc` に `export PATH="$HOME/.local/bin:$PATH"` が追記されます (既にあれば追記しません)
 - 初回ログイン時に `kiro-cli login --use-device-flow` での認証が別途必要です (プロビジョニング時には自動化できません)。このコマンドは確認コードを表示して承認を待つので、**`nakama aws connect --tty dev01 kiro-cli login --use-device-flow` のように `--tty` を付けて**実行してください (付けないと、出力がコマンド終了後まで表示されず、コードが見えません)
 - **導入の失敗で create は失敗しません**。警告が出るだけで、インスタンスはそのまま使えます。`nakama aws setup rerun <名前> --preset kiro` で同じ手順を再実行できます
+- **v0.18.0〜v0.19.1 で作ったインスタンス**では、手順 2 のコマンドの誤りのため gateway が登録されていません (Issue #79)。v0.19.2 以降の nakama で `nakama aws setup rerun <名前> --preset kiro` を実行してください。`kirocrew enable` が `the Kiro Crew gateway is not answering` で止まるのはこのためです
 - Crew の gateway は `localhost:5476` のみで待ち受けます。ブラウザから開くには `nakama aws kirocrew enable <名前>` の後に `nakama aws kirocrew <名前>` (後述)、手元のループバックから直接開く場合は `nakama aws tunnel <名前> -L 5476:5476`
 
 ### 環境構築の自動化 (`create --setup` / `--dotfiles` / `--preset`)

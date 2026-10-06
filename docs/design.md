@@ -490,6 +490,7 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 Issue #20 の内容を `--preset kiro` (§8.16) として一般化していたが、常用構成であるため user-data での既定導入に変更した。
 
 - **単一の情報源**: 導入手順は `internal/kiro/install.sh` に 1 つだけ置き、`go:embed` で `internal/kiro.InstallScript()` として公開する。user-data (通常・bare の両テンプレート) と `--preset kiro` の双方がこの同一文字列を使う。テストが「preset == InstallScript()」を固定しているため、片方だけが更新されることがない
+- **Kiro Crew の導入コマンド** (Issue #79 で訂正): `kiro-cli crew -y -- --version`。`kiro-cli crew` は未導入なら Kiro Crew を入れ (`-y` で確認を省く)、残りの引数を Kiro Crew の CLI にそのまま渡す。最初の版の `crew -y install` は `kirocrew install` (存在しないサブコマンド) になって exit 2 で止まり、gateway の service install まで進まなかった。文字列だけを見るテストでは見つからなかったため、kiro-cli と kirocrew の引数処理を模したスタブで本物の bash を使ってスクリプトを実行し、service install まで到達することを確かめるテスト (`internal/kiro/install_run_test.go`) を加えた
 - **実行経路**: cloud-init は root で動くため、スクリプト自身が `sudo -u ubuntu -H bash -lc` で ubuntu に降りる。インストール先が `$HOME/.local/bin` (公式インストーラの `LINUX_INSTALL_DIR`) であり、`kirocrew service install` 内部の sudo も Ubuntu AMI の passwordless sudo で非対話に通る
 - **PATH**: 公式インストーラは shell の rc を変更せず PATH 行を表示するだけなので、`~/.bashrc` への追記をこちらで行う (`grep -qF` による冪等化)
 - **必要パッケージ**: インストーラは Linux で `unzip` を必須依存としてチェックする。通常テンプレートには無かったため `unzip unar` を追加した (bare テンプレートは `unzip` があったので `unar` を追加)
