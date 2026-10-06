@@ -47,6 +47,12 @@ const (
 	// Markers the remote scripts print for the CLI to parse.
 	kirocrewMarkerOK    = "NAKAMA_KIROCREW_OK"
 	kirocrewMarkerError = "NAKAMA_KIROCREW_ERROR"
+
+	// The two precondition failures that mean Kiro Crew itself is not
+	// set up on the instance; EnableKiroCrewWeb adds the remedy to them
+	// (kirocrewSetupAdvice).
+	kirocrewErrNotInstalled = "kirocrew is not installed for the ubuntu user"
+	kirocrewErrNoGateway    = "the Kiro Crew gateway is not answering on 127.0.0.1:"
 )
 
 // kirocrewForwardedHost is the X-Forwarded-Host value the crew
@@ -234,12 +240,12 @@ func kirocrewEnableScript(crewDomain string) (string, error) {
 	fmt.Fprintf(&b, `
 # 1. Preconditions: the gateway must be installed and answering.
 sudo -u ubuntu -H bash -lc 'export PATH="$HOME/.local/bin:$PATH"; command -v kirocrew' >/dev/null 2>&1 \
-  || fail "kirocrew is not installed for the ubuntu user"
+  || fail "%s"
 curl -fsS --max-time 10 http://127.0.0.1:%d/api/health >/dev/null 2>&1 \
-  || fail "the Kiro Crew gateway is not answering on 127.0.0.1:%d"
+  || fail "%s%d"
 [ -f %s ] || fail "code-server config not found"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
-`, kirocrewGatewayPort, kirocrewGatewayPort, kirocrewCodeServerConf)
+`, kirocrewErrNotInstalled, kirocrewGatewayPort, kirocrewErrNoGateway, kirocrewGatewayPort, kirocrewCodeServerConf)
 
 	b.WriteString(`
 # 2. nginx, without the stock site (it would listen on 0.0.0.0:80).

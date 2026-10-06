@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"sort"
@@ -411,6 +412,10 @@ func TestEnableKiroCrewWebResumesAfterRemoteFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not answering") {
 		t.Fatalf("the remote reason must surface, got %v", err)
 	}
+	// ...with the way out (Issue #79).
+	if !strings.Contains(err.Error(), "nakama aws setup rerun dev01 --preset kiro") {
+		t.Errorf("a missing gateway must point at the kiro preset, got %v", err)
+	}
 	if got := sm.param(ssmKirocrewDistributionIDPath("dev01")); got != testCrewDistID {
 		t.Fatal("the created distribution must stay recorded after a later failure")
 	}
@@ -603,6 +608,39 @@ func TestDeleteInstanceWithoutKiroCrewTouchesNoFunction(t *testing.T) {
 	for _, c := range cf.callLog() {
 		if strings.Contains(c, "Function") {
 			t.Errorf("a delete without Kiro Crew web access called %s", c)
+		}
+	}
+}
+
+func TestKirocrewSetupAdvice(t *testing.T) {
+	for _, reason := range []string{kirocrewErrNotInstalled, kirocrewErrNoGateway + "5476"} {
+		err := kirocrewSetupAdvice("dev01", fmt.Errorf("instance-side setup failed: %s", reason))
+		msg := err.Error()
+		for _, want := range []string{reason, "nakama aws setup rerun dev01 --preset kiro", "nakama aws kirocrew enable dev01", "kirocrew service install"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("advice for %q lacks %q:\n%s", reason, want, msg)
+			}
+		}
+	}
+	// Unrelated failures are returned untouched.
+	other := errors.New("instance-side setup failed: nginx rejected the generated configuration")
+	if got := kirocrewSetupAdvice("dev01", other); got != other {
+		t.Errorf("an unrelated failure must be returned as is, got %v", got)
+	}
+}
+
+func TestKirocrewEnableScriptPreconditionMessages(t *testing.T) {
+	// The messages the instance prints must be the ones the advice keys on.
+	script, err := kirocrewEnableScript(testCrewDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`fail "` + kirocrewErrNotInstalled + `"`,
+		`fail "` + kirocrewErrNoGateway + `5476"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("enable script lacks %q", want)
 		}
 	}
 }
