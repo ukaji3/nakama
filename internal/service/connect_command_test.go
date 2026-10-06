@@ -715,6 +715,61 @@ func TestCommandWrapperInterrupt(t *testing.T) {
 	}
 }
 
+// TestCommandWrapperInterruptKeepsTheStatusOfAFastExit pins the race CI
+// hit (Issue #79): the command handles SIGINT and exits at once, so it
+// is gone and reaped by the time the wrapper's trap returns and wait
+// comes back early. The wrapper must still report the command's own
+// status (42), not the 130 of the interrupted wait. Without a sleep in
+// the command the window is wide open on every run, so this fails
+// deterministically against the old liveness-only loop.
+func TestCommandWrapperInterruptKeepsTheStatusOfAFastExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the wrapper runs on the Linux instance")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	// The command busy-waits on a marker file instead of sleeping, so the
+	// only thing between SIGINT and its exit is its own trap.
+	const command = `trap 'exit 42' INT; echo OUT; while :; do :; done`
+	for i := 0; i < 5; i++ {
+		tmp := t.TempDir()
+		cmd := exec.Command("bash", "-c", commandWrapper(command, testMarker))
+		cmd.Env = append(os.Environ(), "TMPDIR="+tmp, "LC_ALL=C")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			matches, _ := filepath.Glob(filepath.Join(tmp, "tmp.*", "o"))
+			if len(matches) == 1 {
+				if b, _ := os.ReadFile(matches[0]); strings.HasPrefix(string(b), "OUT\n") {
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		_ = cmd.Process.Signal(os.Interrupt)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			_ = cmd.Process.Kill()
+			t.Fatal("the wrapper did not exit after the interrupt")
+		}
+		_, _, x, broken := decode(out.String(), 0)
+		if broken != nil || x == nil {
+			t.Fatalf("run %d: decode: exit=%v broken=%v\n%q", i, x, broken, out.String())
+		}
+		if *x != 42 {
+			t.Fatalf("run %d: exit = %d, want 42: the command's own status after it handled SIGINT", i, *x)
+		}
+	}
+}
+
 // waitForCommandToSleep blocks until the wrapper started under tmp has
 // captured the command's "OUT" line and the command's own `sleep <n>`
 // (taken from command) is running, i.e. the command has passed its

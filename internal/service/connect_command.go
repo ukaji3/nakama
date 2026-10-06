@@ -147,10 +147,17 @@ func commandWrapper(command, marker string) string {
 	// INT/TERM/HUP the wrapper forwards SIGINT to that group and, as a
 	// backstop for a command that ignores it, SIGKILLs the group after a
 	// second — comfortably inside the ~2 s su waits before it SIGKILLs
-	// the wrapper itself. The wait loop re-waits because a trapped signal
-	// makes wait return early; it ends with the command's real status, so
-	// Ctrl-C yields 130 (or whatever the command chose). The frames are
-	// then emitted as before, so the output collected so far survives.
+	// the wrapper itself. A trapped signal makes wait return early with
+	// 128+signal while the command may still be running, so the loop
+	// tells the two cases apart: without a signal, wait returned the
+	// command's own status; after one, it waits again for a command that
+	// is still alive, or, when the command already ended inside the trap,
+	// waits once more to collect its real status (bash keeps it; 127 only
+	// if it is gone). Checking liveness alone was racy: a command that
+	// handled SIGINT and exited 42 was reported as 130 whenever it ended
+	// before the liveness check (Issue #79 CI). So Ctrl-C yields 130 for a
+	// bare command, or whatever the command chose. The frames are then
+	// emitted as before, so the output collected so far survives.
 	//
 	// exec 2>/dev/null silences the wrapper shell's own job-control
 	// notices ("[1] Killed ..."); the command's stderr is captured
@@ -162,8 +169,8 @@ func commandWrapper(command, marker string) string {
 	return `d=$(mktemp -d) || exit 255; trap 'rm -rf "$d"' EXIT; exec 2>/dev/null; set -m; ( ` + command + `
 ) </dev/null >"$d/o" 2>"$d/e" &
 cmdpid=$!; set +m
-trap 'kill -INT -"$cmdpid" 2>/dev/null; ( sleep 1; kill -KILL -"$cmdpid" 2>/dev/null ) &' INT TERM HUP
-rc=0; while :; do wait "$cmdpid"; rc=$?; kill -0 "$cmdpid" 2>/dev/null || break; done
+trap 'sig=1; kill -INT -"$cmdpid" 2>/dev/null; ( sleep 1; kill -KILL -"$cmdpid" 2>/dev/null ) >/dev/null &' INT TERM HUP
+rc=0; sig=; while :; do wait "$cmdpid"; rc=$?; [ -n "$sig" ] || break; sig=; kill -0 "$cmdpid" 2>/dev/null && continue; wait "$cmdpid"; r=$?; [ "$r" -ne 127 ] && rc=$r; break; done
 printf '\n` + h + ` ` + frameStdout + ` %s\n' "$(wc -c <"$d/o" | tr -d ' ')"; cat "$d/o"
 printf '\n` + h + ` ` + frameStderr + ` %s\n' "$(wc -c <"$d/e" | tr -d ' ')"; cat "$d/e"
 printf '\n` + h + ` ` + frameExit + ` %s\n' "$rc"
