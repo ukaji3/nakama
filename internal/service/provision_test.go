@@ -137,7 +137,7 @@ func TestBuildProvisionScriptPresetKiro(t *testing.T) {
 	}
 	for _, want := range []string{
 		"cli.kiro.dev/install",
-		"crew -y install",
+		"crew -y -- --version",
 		"kirocrew service install",
 		"sudo -u ubuntu -H",
 	} {

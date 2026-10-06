@@ -29,7 +29,14 @@ if sudo -u ubuntu -H bash -lc '
     curl -fsSL https://cli.kiro.dev/install | bash
 
     echo "nakama: installing Kiro Crew"
-    "$HOME/.local/bin/kiro-cli" crew -y install
+    # `kiro-cli crew` installs Kiro Crew when it is missing and then runs
+    # the Kiro Crew CLI with the remaining arguments ("Arguments forwarded
+    # to the Kiro Crew CLI"). `-y` answers the install prompt; after `--`,
+    # `--version` goes to kirocrew, which just prints its version, so the
+    # step installs (or finds) Kiro Crew and exits 0. An earlier version
+    # passed `install` there, which kirocrew rejects ("invalid choice"),
+    # so the gateway service was never installed (Issue #79).
+    "$HOME/.local/bin/kiro-cli" crew -y -- --version
 
     # `kirocrew service install` ships an AppArmor profile that carries
     # an unprivileged userns grant, and it refuses to install while

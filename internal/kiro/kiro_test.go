@@ -30,7 +30,7 @@ func TestInstallScriptStepOrder(t *testing.T) {
 	s := InstallScript()
 	steps := []string{
 		`curl -fsSL https://cli.kiro.dev/install | bash`,
-		`"$HOME/.local/bin/kiro-cli" crew -y install`,
+		`"$HOME/.local/bin/kiro-cli" crew -y -- --version`,
 		`chmod -R go-w "$HOME/.kiro"`,
 		`kirocrew service install`,
 	}
