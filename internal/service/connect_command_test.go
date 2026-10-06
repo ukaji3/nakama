@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,7 +82,7 @@ const testMarker = "0123456789abcdef0123456789abcdef"
 func testCommandSession(status io.Writer) (cs *commandSession, stdout, stderr *bytes.Buffer, exits *[]int) {
 	stdout, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 	exits = &[]int{}
-	cs = newCommandSession(testMarker, stdout, stderr, status)
+	cs = newCommandSession(testMarker, stdout, stderr, status, nil, 0) // hint off by default
 	cs.exit = func(code int) { *exits = append(*exits, code) }
 	return cs, stdout, stderr, exits
 }
@@ -556,18 +557,22 @@ func runWrapper(t *testing.T, command string) []byte {
 	if runtime.GOOS == "windows" {
 		t.Skip("the wrapper runs on the Linux instance")
 	}
-	sh, err := exec.LookPath("sh")
+	// On the instance `su - ubuntu` runs the wrapper under bash; the
+	// wrapper relies on bash job control (set -m), so test it under bash.
+	sh, err := exec.LookPath("bash")
 	if err != nil {
-		t.Skip("sh not available")
+		t.Skip("bash not available")
 	}
-	for _, tool := range []string{"mktemp", "wc", "cat"} {
+	for _, tool := range []string{"mktemp", "wc", "cat", "setsid"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not available", tool)
 		}
 	}
 	cmd := exec.Command(sh, "-c", commandWrapper(command, testMarker))
 	// rc set in the environment must not leak into the reported status.
-	cmd.Env = append(os.Environ(), "TMPDIR="+t.TempDir(), "rc=9")
+	// LC_ALL=C: stable English diagnostics regardless of the test host
+	// locale (the instance agent sets LANG=C.UTF-8).
+	cmd.Env = append(os.Environ(), "TMPDIR="+t.TempDir(), "rc=9", "LC_ALL=C")
 	cmd.Stdin = strings.NewReader("must-not-be-read\n")
 	out, err := cmd.Output()
 	if err != nil {
@@ -640,4 +645,146 @@ func TestCommandWrapperCleansUp(t *testing.T) {
 	if left, _ := os.ReadDir(dir); len(left) != 0 {
 		t.Errorf("the wrapper must remove its directory, left %v", left)
 	}
+}
+
+func TestCommandWrapperInterrupt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the wrapper runs on the Linux instance")
+	}
+	for _, tool := range []string{"bash", "mktemp", "sleep"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not available", tool)
+		}
+	}
+	// A command that prints, then sleeps far longer than the test, then
+	// would print again. If the interrupt works, the second line never
+	// appears, the exit status is non-zero, and the wrapper returns long
+	// before the sleep would.
+	for _, tc := range []struct {
+		name, command string
+		wantExit      int // -1 => just assert non-zero
+	}{
+		{"bare command dies from SIGINT", "echo OUT; sleep 30; echo LATE", 130},
+		{"command handles SIGINT", `trap 'echo BYE; exit 42' INT; echo OUT; sleep 30; echo LATE`, 42},
+		{"command ignores SIGINT (force-killed)", `trap '' INT; echo OUT; sleep 30; echo LATE`, -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("bash", "-c", commandWrapper(tc.command, testMarker))
+			cmd.Env = append(os.Environ(), "TMPDIR="+t.TempDir(), "LC_ALL=C")
+			cmd.Stdin = strings.NewReader("")
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			// Let the command print and reach the sleep, then interrupt the
+			// wrapper as su would (SIGTERM) — the trap handles INT/TERM/HUP.
+			time.Sleep(500 * time.Millisecond)
+			start := time.Now()
+			_ = cmd.Process.Signal(os.Interrupt)
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				_ = cmd.Process.Kill()
+				t.Fatal("the wrapper did not exit after the interrupt")
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("the wrapper took %v after the interrupt; the command was not cut short", elapsed)
+			}
+			o, e, x, broken := decode(out.String(), 0)
+			if broken != nil || x == nil {
+				t.Fatalf("decode: exit=%v broken=%v\n%q", x, broken, out.String())
+			}
+			if !strings.HasPrefix(o, "OUT\n") || strings.Contains(o, "LATE") {
+				t.Errorf("stdout = %q, want the output printed before the interrupt and nothing from after the sleep", o)
+			}
+			if tc.wantExit >= 0 && *x != tc.wantExit {
+				t.Errorf("exit = %d, want %d (stderr %q)", *x, tc.wantExit, e)
+			}
+			if *x == 0 {
+				t.Errorf("an interrupted command must not report success (stderr %q)", e)
+			}
+		})
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for the hint goroutine to write
+// while the test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
+// hintSession builds a commandSession with the hint armed to hintDelay,
+// writing to a synchronized buffer; exit is recorded.
+func hintSession(hintDelay time.Duration) (cs *commandSession, hint *syncBuffer) {
+	hint = &syncBuffer{}
+	cs = newCommandSession(testMarker, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, hint, hintDelay)
+	cs.exit = func(int) {}
+	cs.notify = func(chan<- os.Signal, ...os.Signal) {} // no real signals in tests
+	return cs, hint
+}
+
+func TestCommandSessionHint(t *testing.T) {
+	logger := smplog.Logger(false, "nakama-test")
+
+	t.Run("fires when nothing arrives in time", func(t *testing.T) {
+		cs, hint := hintSession(30 * time.Millisecond)
+		go func() { _ = cs.SetSessionHandlers(logger) }() // arms the timer
+		deadline := time.Now().Add(2 * time.Second)
+		for hint.Len() == 0 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !strings.Contains(hint.String(), "--tty") || !strings.Contains(hint.String(), "still running") {
+			t.Errorf("hint = %q, want advice to use --tty", hint.String())
+		}
+	})
+
+	t.Run("output cancels the hint", func(t *testing.T) {
+		cs, hint := hintSession(50 * time.Millisecond)
+		cs.armHint()
+		_, _ = cs.ProcessStreamMessagePayload(logger, payloadMessage(message.Output, "data"))
+		time.Sleep(150 * time.Millisecond)
+		if hint.Len() != 0 {
+			t.Errorf("output arrived, so no hint should print; got %q", hint.String())
+		}
+	})
+
+	t.Run("a quick Stop cancels the hint", func(t *testing.T) {
+		cs, hint := hintSession(50 * time.Millisecond)
+		cs.armHint()
+		cs.Stop()
+		time.Sleep(150 * time.Millisecond)
+		if hint.Len() != 0 {
+			t.Errorf("the session ended before the delay; got %q", hint.String())
+		}
+	})
+
+	t.Run("off when not armed", func(t *testing.T) {
+		cs, _, _, _ := testCommandSession(&bytes.Buffer{}) // hint nil
+		cs.armHint()
+		if cs.hintTimer != nil {
+			t.Error("the hint must not be armed without a hint writer")
+		}
+	})
 }

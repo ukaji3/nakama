@@ -52,6 +52,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/term"
 
@@ -140,15 +141,29 @@ const (
 // appear only after the command is done.
 func commandWrapper(command, marker string) string {
 	h := commandFramePrefix + marker
-	// If the output files cannot be created the command does not run and
-	// the frames report empty outputs with status 255; a header always
-	// carries a number, so the stream stays well-formed.
+	// The command runs in its own process group (set -m gives the
+	// background job a new group) so that Ctrl-C can take down the whole
+	// subtree, not just the login shell su kills (Issue #77). On
+	// INT/TERM/HUP the wrapper forwards SIGINT to that group and, as a
+	// backstop for a command that ignores it, SIGKILLs the group after a
+	// second — comfortably inside the ~2 s su waits before it SIGKILLs
+	// the wrapper itself. The wait loop re-waits because a trapped signal
+	// makes wait return early; it ends with the command's real status, so
+	// Ctrl-C yields 130 (or whatever the command chose). The frames are
+	// then emitted as before, so the output collected so far survives.
+	//
+	// exec 2>/dev/null silences the wrapper shell's own job-control
+	// notices ("[1] Killed ..."); the command's stderr is captured
+	// separately in $d/e. The redirections create $d/o and $d/e before
+	// the command runs, so wc/cat always succeed.
 	//
 	// The command starts on the first line, so the shell's error messages
 	// ("line 2: ...") count lines of the command itself.
-	return `d=$(mktemp -d) || exit 255; trap 'rm -rf "$d"' EXIT; rc=0; ( ` + command + `
-) </dev/null >"$d/o" 2>"$d/e" || rc=$?
-[ -f "$d/o" ] && [ -f "$d/e" ] || { : >"$d/o"; : >"$d/e"; rc=255; }
+	return `d=$(mktemp -d) || exit 255; trap 'rm -rf "$d"' EXIT; exec 2>/dev/null; set -m; ( ` + command + `
+) </dev/null >"$d/o" 2>"$d/e" &
+cmdpid=$!; set +m
+trap 'kill -INT -"$cmdpid" 2>/dev/null; ( sleep 1; kill -KILL -"$cmdpid" 2>/dev/null ) &' INT TERM HUP
+rc=0; while :; do wait "$cmdpid"; rc=$?; kill -0 "$cmdpid" 2>/dev/null || break; done
 printf '\n` + h + ` ` + frameStdout + ` %s\n' "$(wc -c <"$d/o" | tr -d ' ')"; cat "$d/o"
 printf '\n` + h + ` ` + frameStderr + ` %s\n' "$(wc -c <"$d/e" | tr -d ' ')"; cat "$d/e"
 printf '\n` + h + ` ` + frameExit + ` %s\n' "$rc"
@@ -327,6 +342,15 @@ type commandSession struct {
 	mu      sync.Mutex
 	decoder *frameDecoder
 
+	// hint, when non-nil, receives a one-line notice if the command
+	// produces nothing for hintDelay: in command mode the output arrives
+	// only once the command finishes, which looks like a hang for a
+	// command that waits for input or prints a code (Issue #77).
+	hint      io.Writer
+	hintDelay time.Duration
+	hintTimer *time.Timer
+	hintOnce  sync.Once
+
 	// notify and exit are signal.Notify and os.Exit outside tests.
 	notify func(c chan<- os.Signal, sig ...os.Signal)
 	exit   func(code int)
@@ -334,22 +358,38 @@ type commandSession struct {
 
 var _ smpsession.ISessionPlugin = (*commandSession)(nil)
 
-func newCommandSession(marker string, stdout, stderr, status io.Writer) *commandSession {
+// commandHintDelay is how long a command may produce nothing before the
+// hint is printed.
+const commandHintDelay = 10 * time.Second
+
+// commandHintText tells the user why nothing is showing and what to do.
+const commandHintText = "nakama: the remote command is still running; in this mode its output appears only after it finishes.\n" +
+	"If it is waiting for input or showing a code (e.g. kiro-cli login), press Ctrl-C and re-run with --tty.\n"
+
+func newCommandSession(marker string, stdout, stderr, status, hint io.Writer, hintDelay time.Duration) *commandSession {
 	return &commandSession{
-		stderr:  stderr,
-		status:  status,
-		decoder: newFrameDecoder(marker, stdout, stderr),
-		notify:  signal.Notify,
-		exit:    os.Exit,
+		stderr:    stderr,
+		status:    status,
+		decoder:   newFrameDecoder(marker, stdout, stderr),
+		hint:      hint,
+		hintDelay: hintDelay,
+		notify:    signal.Notify,
+		exit:      os.Exit,
 	}
 }
 
 // installCommandSession makes command mode take over Standard_Stream in
 // this process. The plugin prints its own banners ("Starting session
 // with SessionId: ...") to os.Stdout; pointing os.Stdout at stderr
-// keeps the command's stdout clean, like ssh.
+// keeps the command's stdout clean, like ssh. The hint is armed only on
+// an interactive terminal, where a human is watching and could be
+// misled by the delayed output.
 func installCommandSession(marker string, status io.Writer) {
-	smpsession.Register(newCommandSession(marker, os.Stdout, os.Stderr, status))
+	var hint io.Writer
+	if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stderr.Fd())) {
+		hint = os.Stderr
+	}
+	smpsession.Register(newCommandSession(marker, os.Stdout, os.Stderr, status, hint, commandHintDelay))
 	os.Stdout = os.Stderr
 }
 
@@ -367,11 +407,38 @@ func (c *commandSession) Initialize(log smplog.T, sessionVar *smpsession.Session
 	})
 }
 
+// armHint starts the hint timer once the session is running. The hint
+// fires only if nothing arrives before hintDelay; the first payload or
+// Stop cancels it (cancelHint).
+func (c *commandSession) armHint() {
+	if c.hint == nil || c.hintDelay <= 0 {
+		return
+	}
+	t := time.AfterFunc(c.hintDelay, func() {
+		c.hintOnce.Do(func() { _, _ = io.WriteString(c.hint, commandHintText) })
+	})
+	c.mu.Lock()
+	c.hintTimer = t
+	c.mu.Unlock()
+}
+
+// cancelHint stops the hint timer; output is arriving or the session
+// ended, so the command is not stuck waiting.
+func (c *commandSession) cancelHint() {
+	c.mu.Lock()
+	t := c.hintTimer
+	c.mu.Unlock()
+	if t != nil {
+		t.Stop()
+	}
+}
+
 // SetSessionHandlers forwards Ctrl-C, Ctrl-\ and (on unix) Ctrl-Z as
 // the control bytes the agent turns into signals for the command, and
 // blocks for the life of the session, which ends in Stop. Standard
 // input is never read: the agent would discard it (#70).
 func (c *commandSession) SetSessionHandlers(log smplog.T) error {
+	c.armHint()
 	signals := make(chan os.Signal, 1)
 	c.notify(signals, sessionutil.ControlSignals...)
 	for sig := range signals {
@@ -390,6 +457,7 @@ func (c *commandSession) SetSessionHandlers(log smplog.T) error {
 // framed output goes through the decoder, anything else (the agent's
 // own error messages) to stderr.
 func (c *commandSession) ProcessStreamMessagePayload(_ smplog.T, msg message.ClientMessage) (bool, error) {
+	c.cancelHint() // data is arriving: the command has finished and is sending
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if message.PayloadType(msg.PayloadType) == message.Output {
@@ -403,6 +471,7 @@ func (c *commandSession) ProcessStreamMessagePayload(_ smplog.T, msg message.Cli
 // Stop runs when the channel is closed: it hands the remote exit status
 // to the parent and ends the process, as the plugin's handlers do.
 func (c *commandSession) Stop() {
+	c.cancelHint()
 	c.mu.Lock()
 	code := c.decoder.finish()
 	broken := c.decoder.broken
