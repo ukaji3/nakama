@@ -33,6 +33,17 @@ const (
 	kirocrewNginxConfPath  = "/etc/nginx/conf.d/nakama-kirocrew.conf"
 	kirocrewCodeServerConf = "/home/ubuntu/.config/code-server/config.yaml"
 
+	// kirocrewCodeServerDropIn pins VSCODE_PROXY_URI for code-server.
+	// Without it, setting proxy-domain makes code-server derive
+	// VSCODE_PROXY_URI=//{{port}}.<proxy-domain> (src/node/cli.ts), and
+	// the Ports panel and every terminal localhost link would point at a
+	// host name only the crew distribution can reach (Issue #73).
+	kirocrewCodeServerDropIn = "/etc/systemd/system/code-server@ubuntu.service.d/nakama-kirocrew.conf"
+	// kirocrewProxyURI is code-server's own default without proxy-domain
+	// (rootBase + "/proxy/{{port}}/", rootBase being "." at the root);
+	// relative values are documented in code-server's docs/guide.md.
+	kirocrewProxyURI = "./proxy/{{port}}/"
+
 	// Markers the remote scripts print for the CLI to parse.
 	kirocrewMarkerOK    = "NAKAMA_KIROCREW_OK"
 	kirocrewMarkerError = "NAKAMA_KIROCREW_ERROR"
@@ -247,8 +258,13 @@ systemctl enable nginx >/dev/null 2>&1
 systemctl reload-or-restart nginx || fail "nginx failed to start"
 `, kirocrewNginxConfPath, nginx)
 
+	b.WriteString(`
+# 4. Keep the Ports panel on the path-based proxy (must precede the restart).
+`)
+	b.WriteString(kirocrewPinProxyURIStep())
+
 	fmt.Fprintf(&b, `
-# 4. code-server: host-based proxy for the crew distribution only.
+# 5. code-server: host-based proxy for the crew distribution only.
 if ! python3 - %s set %s <<'NAKAMA_KIROCREW_EDIT'
 %s
 NAKAMA_KIROCREW_EDIT
@@ -261,6 +277,49 @@ echo "%s"
 	return b.String(), nil
 }
 
+// kirocrewDropIn is the systemd drop-in kirocrewPinProxyURIStep writes.
+func kirocrewDropIn() string {
+	return `# Managed by ` + "`nakama aws kirocrew enable`" + ` (ADR 0020); removed by ` + "`kirocrew disable`" + `.
+# proxy-domain in config.yaml would otherwise make code-server set
+# VSCODE_PROXY_URI to //{{port}}.<proxy-domain>, sending the Ports panel and
+# terminal localhost links to a host name only the Kiro Crew distribution uses.
+# This keeps code-server's own default, the path-based /proxy/<port>/.
+[Service]
+Environment="VSCODE_PROXY_URI=` + kirocrewProxyURI + `"
+`
+}
+
+// kirocrewPinProxyURIStep writes the drop-in before code-server is
+// restarted with proxy-domain. A VSCODE_PROXY_URI the user configured
+// for the unit is left alone: code-server never overrides an existing
+// value, so proxy-domain cannot change it either.
+func kirocrewPinProxyURIStep() string {
+	return fmt.Sprintf(`dropin=%s
+if [ ! -f "$dropin" ] && systemctl show -p Environment --value code-server@ubuntu 2>/dev/null | grep -q 'VSCODE_PROXY_URI='; then
+  echo "note: VSCODE_PROXY_URI is already set for code-server@ubuntu; leaving it as it is" >&2
+else
+  mkdir -p "$(dirname "$dropin")"
+  cat > "$dropin" <<'NAKAMA_KIROCREW_DROPIN'
+%sNAKAMA_KIROCREW_DROPIN
+  chmod 0644 "$dropin"
+  systemctl daemon-reload || fail "systemctl daemon-reload failed"
+fi
+`, kirocrewCodeServerDropIn, kirocrewDropIn())
+}
+
+// kirocrewUnpinProxyURIStep removes the drop-in and sets restart=1 when
+// it did, so the caller restarts code-server once for all changes.
+func kirocrewUnpinProxyURIStep() string {
+	return fmt.Sprintf(`dropin=%s
+if [ -f "$dropin" ]; then
+  rm -f "$dropin"
+  rmdir --ignore-fail-on-non-empty "$(dirname "$dropin")" 2>/dev/null || true
+  systemctl daemon-reload || fail "systemctl daemon-reload failed"
+  restart=1
+fi
+`, kirocrewCodeServerDropIn)
+}
+
 // kirocrewDisableScript removes what kirocrewEnableScript added. It is
 // idempotent; the nginx package itself is left installed.
 func kirocrewDisableScript() string {
@@ -269,6 +328,8 @@ func kirocrewDisableScript() string {
 	b.WriteString("set -euo pipefail\n")
 	fmt.Fprintf(&b, `fail() { echo "%s $*"; exit 1; }
 `, kirocrewMarkerError)
+	b.WriteString("restart=0\n")
+	b.WriteString(kirocrewUnpinProxyURIStep())
 	fmt.Fprintf(&b, `
 rm -f %s
 if command -v nginx >/dev/null 2>&1; then
@@ -285,6 +346,9 @@ NAKAMA_KIROCREW_EDIT
   then
     fail "could not update the code-server config"
   fi
+  restart=1
+fi
+if [ "$restart" = 1 ]; then
   systemctl restart code-server@ubuntu || fail "code-server failed to restart"
 fi
 echo "%s"
