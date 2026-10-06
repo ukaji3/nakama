@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-06
-- Issue: [#70](https://github.com/ukaji3/nakama/issues/70)、[#75](https://github.com/ukaji3/nakama/issues/75)
+- Issue: [#70](https://github.com/ukaji3/nakama/issues/70)、[#75](https://github.com/ukaji3/nakama/issues/75)、[#77](https://github.com/ukaji3/nakama/issues/77)
 
 ## Context
 
@@ -29,9 +29,11 @@ session-runner の子プロセスに、セッションの種類ごとの動作 (
 
 ### コマンド実行 (`command`)
 
-- **ラッパー**: リモートのコマンドを、次の小さなシェルスクリプトで包む (`commandWrapper`)。コマンドの stdout と stderr を、`mktemp -d` で作った本人だけが読めるディレクトリのファイルに書く。コマンドが終わったら、それぞれの長さを書いた見出しの後に本文を出し、最後に終了コードを出す。見出しは `\n@@nakama-frame <目印> o|e|x <数>\n` の形で、目印は実行のたびに作る 32 文字の乱数 (`newCommandMarker`) なので、コマンドの出力が見出しを偽装することはできない。ディレクトリは終了時に消す。
+- **ラッパー**: リモートのコマンドを、次の小さなシェルスクリプトで包む (`commandWrapper`)。コマンドを `set -m` の背景ジョブ (`( コマンド ) &`) として**独自のプロセスグループ**で起動し、stdout と stderr を `mktemp -d` で作った本人だけが読めるディレクトリのファイルに書く。コマンドが終わったら、それぞれの長さを書いた見出しの後に本文を出し、最後に終了コードを出す。見出しは `\n@@nakama-frame <目印> o|e|x <数>\n` の形で、目印は実行のたびに作る 32 文字の乱数 (`newCommandMarker`) なので、コマンドの出力が見出しを偽装することはできない。ディレクトリは終了時に消す。コマンドは `su - ubuntu` のログインシェル (bash) で動くので、ラッパーも bash を前提にする (`set -m` のジョブ制御)。
+- **Ctrl-C (#77)**: 手元で Ctrl-C を押すと、plugin が制御バイトを agent に送り、agent は `execCmd.Signal` で `sudo` 1 プロセスにだけ SIGINT を送る。sudo→su と伝わり、su は直接の子 (ラッパーの bash) にだけ SIGTERM を送って約 2 秒後に SIGKILL する (実測)。素朴に `( コマンド )` を実行すると、su がラッパーを殺し、ラッパーは出力を出す前に死に、その下のコマンドは孤児として残る。そこでラッパーは INT/TERM/HUP を trap し、コマンドのプロセスグループに SIGINT を転送 (無視するコマンド向けに 1 秒後 SIGKILL のバックストップ) してから、収集済みの出力と終了コードを出す。`wait` はトラップで早期復帰するので、`kill -0` でコマンドの実際の終了まで待ち直し、終了コードはコマンドが選んだ値 (素のコマンドは SIGINT で 130) になる。ラッパー自身のジョブ制御通知は `exec 2>/dev/null` で消す (コマンドの stderr は別に捕まえている)。su の「Session terminated, killing shell…」は su 自身の出力で、stderr に残る。
 - **受け取り**: 子プロセスでは、`Standard_Stream` を nakama の `commandSession` に差し替える (`session.Register` は同名の登録を上書きするので、vendor した plugin は変更しない)。`commandSession` は受け取ったデータを `frameDecoder` に流して、stdout / stderr / 終了コードに戻す。見出しより前の出力 (ログイン時のメッセージなど) は stderr に出す。plugin が出す `Starting session…` などの表示も stderr に回し、stdout にはコマンドの出力だけが出るようにする。
 - **標準入力**: 読まない (agent が捨てるため)。Ctrl-C / Ctrl-\ / Ctrl-Z は、従来どおりシグナルとしてリモートに送る。
+- **止まって見えることへの案内 (#77)**: このモードでは出力がコマンドの終了後にしか届かないので、`kiro-cli login` のように入力や確認コードを待つコマンドは止まって見える。手元の標準入力と stderr がどちらも端末のとき、コマンドが 10 秒経っても何も出さなければ、`commandSession` が stderr に 1 行の案内を出す (「終了後に出力が出る。入力やコードを待つなら `--tty` で」)。最初の出力が届いた時点、またはセッション終了で取り消す。端末でないとき (スクリプト) やすぐ終わるコマンドでは出さない。
 - **終了コードの受け渡し**: 子プロセス自身の終了コードは、nakama の内部の都合 (1 = 子のエラー、74 = 切断。ADR 0014) に使っているので、リモートの終了コードは別のパイプで親に返す。unix では fd 4、Windows では継承ハンドルで渡し、番号を環境変数 `NAKAMA_SESSION_STATUS_HANDLE` で伝える。子は受け取ったらすぐ環境変数を消し、descriptor に close-on-exec を付ける。
 - **nakama の終了コード** (ssh と同じ約束):
   - リモートのコマンドの終了コード (0〜255) を、そのまま nakama の終了コードにする。このときは何も表示しない。
@@ -65,6 +67,10 @@ session-runner の子プロセスに、セッションの種類ごとの動作 (
 3. **Run Command (`AWS-RunShellScript`) で実行する**: 終了コードと stdout / stderr を分けて取れる。ただし実行結果が SSM に最大 30 日残り、`GetCommandInvocation` で読める出力は 24,000 文字まで、Ctrl-C も届かない。connect で必要な `ssm:StartSession` 以外の権限も要る。
 4. **手元の標準入力を読んでリモートに送る**: agent がコマンド実行モードの入力を捨てるので、意味が無い。
 5. **終了コードを子プロセスの終了コードで返す**: 1 と 74 は nakama の内部で使っているので、リモートの終了コードと区別できなくなる。
+
+## 追記: Ctrl-C とヒント (#77)
+
+最初の版 (PR #76) では、Ctrl-C で出力が消え、リモートのコマンドが孤児として残っていた。原因は、ラッパーをそのまま `( コマンド )` で実行していたため、su がラッパーを殺すと出力前に死に、下のコマンドが残ること。上の「Ctrl-C」の項のとおり、コマンドを独自のプロセスグループで起動し、trap でグループごと止めてから出力を出すようにした。あわせて、長く無出力のときに `--tty` を促すヒントを追加した。mega と developer で、素のコマンド (130)・SIGINT を処理するコマンド (そのコマンドの終了コード)・SIGINT を無視するコマンド (強制終了) のいずれでも、出力が残り孤児が出ないことを確かめた。
 
 ## References
 
