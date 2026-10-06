@@ -62,7 +62,7 @@
 | バックアップ | `nakama aws backup delete <n> --label <label>` | ラベルで指定したバックアップを削除 |
 | バックアップ | `nakama aws restore <n> [--label <label>] [--yes]` | インプレース復元。`--label` 省略時は最新バックアップへ復元。インスタンスを停止しスナップショットから作成したボリュームをルートに差し替え (旧ルートは削除) |
 | 接続 | `nakama aws connect <n>` | AWS Systems Manager Session Manager 経由で対話シェルにログイン (SSH 不要・受信ポート開放なし) |
-| 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY) |
+| 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY)。非対話では stdout と stderr を分けて出し、リモートの終了コードで終わる (受け取れなければ 255)。標準入力は読まない |
 | 接続 | `nakama aws tunnel [start] <n> -L <spec> [-L <spec>...]` | バックグラウンドに常駐してポート転送 (ADR 0017)。`start` は省略可。複数 `-L` 可 (転送ごとに SSM セッション)。既に転送中なら転送一覧を表示して exit 1 |
 | 接続 | `nakama aws tunnel stop <n>` | ポート転送を停止し、常駐デーモンも終了する |
 | 接続 | `nakama aws tunnel status [<n>]` | 転送ごとの状態 (active / reconnecting / dead) を表示する。名前を省略するとこのマシンに記録された全インスタンスの転送を NAME 列付きで一覧し、デーモン不応答のものは stale として表示して残骸の状態ファイルを掃除する |
@@ -100,7 +100,7 @@
 - `--label <label>`: バックアップの人間可読な識別子。`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$`。当該 `<name>` 内で一意 (重複はエラー)。`restore` / `backup delete` での選択に使用。利用者は AWS の snapshot-id を意識しない
 - `--note <text>`: バックアップの自由記述メモ。最大 255 文字、Unicode 可 (日本語・空白可)。`backup note` では必須で、空文字の明示指定でメモ消去 (省略による無警告消去を防ぐ)。識別子ではないため一意性は不要
 - `-L <spec>` (tunnel 専用): `<localPort>:<remotePort>` または `<localPort>:<host>:<remotePort>`。各ポートは 1–65535。`<host>` 省略時は接続先 instance 自身。複数指定可 (転送ごとに SSM セッションを 1 本張る)。start 系呼び出しでは 1 つ以上必須
-- `--tty` (connect 専用): コマンド実行を対話 (PTY) モードにする。省略時は非対話
+- `--tty` (connect 専用): コマンド実行を対話 (PTY) モードにする。省略時は非対話。PTY ではリモートの終了コードを受け取れない (Session Manager の制約) ため、終了コードは 0 になる
 - `--retry <n>` (connect 専用): セッションが恒久的に切断された際の自動再接続の最大試行回数。0 以上の整数。省略時の既定は対話シェル = 5、コマンド実行モード (`--tty` 含む) = 0 (非冪等コマンドの再実行を避けるため)。明示指定した値はモード不問で尊重。`0` で無効。再接続は新規セッション (シェル状態は失われる) で、指数バックオフ (1s〜30s cap)。セッションが 60 秒以上安定してから切断された場合は試行回数をリセット。資格情報失効時は再試行せず `aws login` を促してエラー (詳細は ADR 0014)。`tunnel` の転送はフラグなしで同じポリシー (予算 5・バックオフ・安定リセット) を常に適用 (ADR 0017)
 - `open` のフラグ: `--no-auth` はパスワード取得と one-shot サーバを完全にスキップ。`--print-url` はブラウザを起動せず URL を表示 (auth 有効時は one-shot ログイン URL も表示し、timeout までローカルサーバを維持。headless / SSH 向け)。`--browser <cmd>` はブラウザ起動コマンドの上書き (URL は末尾引数として付加。`$BROWSER` 環境変数も尊重、優先度は `--browser` > `$BROWSER` > OS 既定)。`--timeout <duration>` は one-shot ページの取得待ち上限 (既定 30s)
 - connect の位置引数: `<name>` の後続をすべてリモートコマンドとして扱う (cobra `SetInterspersed(false)`)。`--retry` 等の nakama フラグは `<name>` より前に置く
@@ -180,7 +180,7 @@
 7. `nakama aws backup create <n> --keep 1` を 2 回実行後、保持されるスナップショットは直近 1 件のみ
 8. `nakama aws restore <n> --yes` 後、インスタンスを start すると最新バックアップ取得時点のファイルが復元されている (snapshot-id を一切指定していない)
 9. `nakama aws connect <n>` で対話シェルのプロンプトが表示され、コマンドが実行できる
-10. `nakama aws connect <n> ls` でリモートの実行結果が表示され、セッションが終了する
+10. `nakama aws connect <n> ls` でリモートの実行結果が表示され、セッションが終了する。標準入力が端末・`/dev/null`・パイプのどれでも同じ結果になる。`connect <n> false` は 1、`connect <n> sh -c 'exit 7'` は 7 で終わり、リモートの stderr は手元の stderr に出る。数 MB の出力も欠けずに届き、途中で切れた場合は成功扱いにせず 255 で終わる。対話シェルは標準入力をファイルにしても動き、入力の終わりでセッションが終わる (Issue #70、#75、ADR 0021)
 11. `nakama aws tunnel <n> -L 8080:8080 -L 5432:db.internal:5432` 実行後プロンプトが即返り、`localhost:8080` / `localhost:5432` への接続がそれぞれの宛先に到達する。同じ `<n>` への再実行は「既に転送中」+ 転送一覧を表示して exit 1。`tunnel status <n>` が転送ごとの状態を表示し、`tunnel restart <n>` が記録済みの転送スペックのまま再接続し (状態ファイルが無ければエラー)、`tunnel stop <n>` でデーモンと全転送が終了して状態ファイルが消える。`tunnel status` (名前省略) は全インスタンスの転送を NAME 列付きで一覧し、転送が無ければ「転送なし」を表示して終了コード 0。`tunnel suggest <n>` は listen 中ポートと `-L` 案を表示する (8080=code-server が含まれる)。一時的なセッション確立失敗 (session-runner の一般エラー終了) は再接続枠内で自動再試行され、枠の枯渇時のみ dead になる (Detail に exit code と枯渇を明記)
 12. `nakama aws edit <n> --instance-type <t>` 後、`nakama aws info <n>` の instance_type が `<t>` になり、変更前に running だったインスタンスは再び running になる。存在しないタイプ指定時はインスタンスを停止せず即時エラー。現インスタンスとアーキの異なるタイプ指定時も停止せず即時エラー
 13. `nakama aws update <n>` 実行で、更新前にバックアップが1件作成され (`backup list` に出現)、code-server が latest へ更新され (`info` の code_server_version が更新)、`apt-get dist-upgrade` が適用される。実行前 stopped のインスタンスは実行後も stopped に戻る。元 running でカーネル更新があった場合のみ reboot される
