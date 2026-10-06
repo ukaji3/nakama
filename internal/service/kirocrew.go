@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -158,7 +159,7 @@ func (s *Service) EnableKiroCrewWeb(ctx context.Context, name string) (*EnableKi
 	slog.Info("kirocrew: configuring the instance (nginx, code-server proxy-domain)", "instance", m.instanceID)
 	stdout, runErr := s.runRemoteScript(ctx, m.instanceID, script, "nakama: kirocrew enable "+name, kirocrewRemoteTimeout)
 	if err := parseKirocrewScriptResult(stdout, runErr); err != nil {
-		return nil, err
+		return nil, kirocrewSetupAdvice(name, err)
 	}
 
 	// 3. Redirect function, published to LIVE.
@@ -476,6 +477,24 @@ func (s *Service) GetKiroCrewWeb(ctx context.Context, name string) (*KiroCrewWeb
 	}
 	out.Deployed = dist.Distribution != nil && aws.ToString(dist.Distribution.Status) == "Deployed"
 	return out, nil
+}
+
+// kirocrewSetupAdvice adds the remedy to the precondition failures that
+// mean Kiro Crew itself is missing or not running as a service. create
+// installs it by default, but the install can fail without failing
+// create (it is best-effort), and before v0.19.2 it always stopped short
+// of the gateway service (Issue #79). Other errors are returned as is.
+func kirocrewSetupAdvice(name string, err error) error {
+	msg := err.Error()
+	if !strings.Contains(msg, kirocrewErrNotInstalled) && !strings.Contains(msg, kirocrewErrNoGateway) {
+		return err
+	}
+	return fmt.Errorf("%w\n"+
+		"Kiro Crew and its gateway service must be running on the instance first. Install (or repair) them with:\n"+
+		"  nakama aws setup rerun %s --preset kiro\n"+
+		"then run `nakama aws kirocrew enable %s` again; it continues where it stopped.\n"+
+		"If Kiro Crew is installed but only the service is missing: nakama aws connect %s 'chmod -R go-w ~/.kiro && kirocrew service install'",
+		err, name, name, name)
 }
 
 // deleteKirocrewDistributionForInstance is DeleteInstance's first step when Kiro
