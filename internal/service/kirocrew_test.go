@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -64,8 +67,73 @@ func (f *fakeKirocrewCF) GetDistributionConfig(_ context.Context, in *cloudfront
 	if !ok {
 		return nil, apiErr("NoSuchDistribution")
 	}
+	return &cloudfront.GetDistributionConfigOutput{DistributionConfig: apiShaped(cfg), ETag: aws.String("etag-" + aws.ToString(in.Id))}, nil
+}
+
+// behaviorFieldsAPIFills are the behavior fields GetDistributionConfig
+// always returns, set or not, and UpdateDistribution requires back
+// (the real API rejected a behavior without SmoothStreaming; Issue #73).
+var behaviorFieldsAPIFills = map[string]func() any{
+	"Compress":                   func() any { return aws.Bool(false) },
+	"SmoothStreaming":            func() any { return aws.Bool(false) },
+	"FieldLevelEncryptionId":     func() any { return aws.String("") },
+	"TrustedSigners":             func() any { return &cftypes.TrustedSigners{Enabled: aws.Bool(false), Quantity: aws.Int32(0)} },
+	"TrustedKeyGroups":           func() any { return &cftypes.TrustedKeyGroups{Enabled: aws.Bool(false), Quantity: aws.Int32(0)} },
+	"LambdaFunctionAssociations": func() any { return &cftypes.LambdaFunctionAssociations{Quantity: aws.Int32(0)} },
+	"FunctionAssociations":       func() any { return &cftypes.FunctionAssociations{Quantity: aws.Int32(0)} },
+	"GrpcConfig":                 func() any { return &cftypes.GrpcConfig{Enabled: aws.Bool(false)} },
+}
+
+// apiShaped returns a copy of cfg the way the API returns it on read:
+// every behavior has every field in behaviorFieldsAPIFills.
+func apiShaped(cfg *cftypes.DistributionConfig) *cftypes.DistributionConfig {
+	fill := func(behavior any) {
+		v := reflect.ValueOf(behavior).Elem()
+		for name, value := range behaviorFieldsAPIFills {
+			if f := v.FieldByName(name); f.IsNil() {
+				f.Set(reflect.ValueOf(value()))
+			}
+		}
+	}
 	cp := *cfg
-	return &cloudfront.GetDistributionConfigOutput{DistributionConfig: &cp, ETag: aws.String("etag-" + aws.ToString(in.Id))}, nil
+	if cfg.DefaultCacheBehavior != nil {
+		def := *cfg.DefaultCacheBehavior
+		fill(&def)
+		cp.DefaultCacheBehavior = &def
+	}
+	if cfg.CacheBehaviors != nil {
+		list := *cfg.CacheBehaviors
+		list.Items = slices.Clone(cfg.CacheBehaviors.Items)
+		for i := range list.Items {
+			fill(&list.Items[i])
+		}
+		cp.CacheBehaviors = &list
+	}
+	return &cp
+}
+
+// missingBehaviorFields lists the fields UpdateDistribution would reject
+// cfg for, as "<behavior>.<field>".
+func missingBehaviorFields(cfg *cftypes.DistributionConfig) []string {
+	var missing []string
+	check := func(label string, behavior any) {
+		v := reflect.ValueOf(behavior).Elem()
+		for name := range behaviorFieldsAPIFills {
+			if v.FieldByName(name).IsNil() {
+				missing = append(missing, label+"."+name)
+			}
+		}
+	}
+	if cfg.DefaultCacheBehavior != nil {
+		check("DefaultCacheBehavior", cfg.DefaultCacheBehavior)
+	}
+	if cfg.CacheBehaviors != nil {
+		for i := range cfg.CacheBehaviors.Items {
+			check(aws.ToString(cfg.CacheBehaviors.Items[i].PathPattern), &cfg.CacheBehaviors.Items[i])
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func (f *fakeKirocrewCF) GetDistribution(_ context.Context, in *cloudfront.GetDistributionInput, _ ...func(*cloudfront.Options)) (*cloudfront.GetDistributionOutput, error) {
@@ -96,6 +164,10 @@ func (f *fakeKirocrewCF) UpdateDistribution(_ context.Context, in *cloudfront.Up
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	id := aws.ToString(in.Id)
+	if missing := missingBehaviorFields(in.DistributionConfig); len(missing) > 0 {
+		f.record("UpdateDistribution(rejected):" + id)
+		return nil, &smithy.GenericAPIError{Code: "InvalidArgument", Message: "missing behavior fields: " + strings.Join(missing, ", ")}
+	}
 	if aws.ToString(in.IfMatch) != "etag-"+id {
 		return nil, apiErr("PreconditionFailed")
 	}
