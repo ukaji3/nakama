@@ -208,6 +208,15 @@ func (d *Detector) verifyConfiguration(ctx context.Context, proxyURL *url.URL, b
 // connectionState performs one HTTPS request and returns the TLS
 // state. A non-2xx HTTP status is fine: the TLS handshake is what is
 // being tested.
+//
+// Redirects are not followed. The STS root answers
+// `302 Location: https://aws.amazon.com/iam`; following it made the
+// probe connect to the AWS website (CloudFront, reachable over IPv6
+// where STS is IPv4-only) and fail when that second connection broke,
+// although STS itself had answered (Issue #83). It also meant the TLS
+// state came from the website's certificate rather than the endpoint's.
+// Any HTTP response from the endpoint proves it is reachable through
+// the resolved proxy, and resp.TLS is then the endpoint's own.
 func (d *Detector) connectionState(ctx context.Context, proxyURL *url.URL, pool *x509.CertPool) (*tls.ConnectionState, error) {
 	transport := &http.Transport{
 		Proxy: func(*http.Request) (*url.URL, error) { return proxyURL, nil },
@@ -217,7 +226,13 @@ func (d *Detector) connectionState(ctx context.Context, proxyURL *url.URL, pool 
 		},
 	}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: d.timeout}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   d.timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.endpoint, nil)
 	if err != nil {
 		return nil, err

@@ -5,9 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -19,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -412,5 +415,126 @@ func TestEnvDirectNoBundle(t *testing.T) {
 	}
 	if !strings.Contains(joined, "NAKAMA_AWS_CLI_SHELL=1") {
 		t.Errorf("marker must always be set: %v", env)
+	}
+}
+
+// startResettingTarget serves TLS with ca's leaf and drops every
+// request without answering, like the connection the report shows
+// being reset on aws.amazon.com. It counts the requests it saw.
+func startResettingTarget(t *testing.T, ca *testCA) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("no hijacker")
+			return
+		}
+		c, _, err := hj.Hijack()
+		if err == nil {
+			_ = c.Close()
+		}
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{ca.tlsCert}, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+// startRedirectingTarget answers every request with 302 to location,
+// as the STS root does (`302 Location: https://aws.amazon.com/iam`).
+func startRedirectingTarget(t *testing.T, ca *testCA, location string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, location, http.StatusFound)
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{ca.tlsCert}, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// startAnsweringTarget serves TLS with ca's leaf, answers 200 and counts
+// the requests it saw.
+func startAnsweringTarget(t *testing.T, ca *testCA) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{ca.tlsCert}, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+// TestDetectDoesNotFollowTheEndpointRedirect pins Issue #83: the STS
+// root redirects to the AWS website. The probe must stop at the
+// endpoint's own response, so a failing redirect target cannot fail
+// doctor, and the TLS classification uses the endpoint's certificate.
+func TestDetectDoesNotFollowTheEndpointRedirect(t *testing.T) {
+	endpointCA := newTestCA(t, "127.0.0.1")
+	elsewhereCA := newTestCA(t, "127.0.0.1")
+	resetting, resetHits := startResettingTarget(t, elsewhereCA)
+	answering, answerHits := startAnsweringTarget(t, elsewhereCA)
+	proxyURL := startConnectProxy(t, nil).URL
+
+	// Both chains are "OS-trusted", so following the redirect would not
+	// fail on verification.
+	pool := x509.NewCertPool()
+	pool.AddCert(endpointCA.caCert)
+	pool.AddCert(elsewhereCA.caCert)
+
+	for _, tc := range []struct {
+		name   string
+		target *httptest.Server
+		hits   *atomic.Int32
+		proxy  string
+	}{
+		// The reported failure: the redirect target drops the connection.
+		{"target resets, direct", resetting, resetHits, ""},
+		{"target resets, through a proxy", resetting, resetHits, proxyURL},
+		// The quieter failure: following succeeds but classifies TLS on
+		// the target's chain instead of the endpoint's.
+		{"target answers, direct", answering, answerHits, ""},
+		{"target answers, through a proxy", answering, answerHits, proxyURL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.hits.Store(0)
+			endpoint := startRedirectingTarget(t, endpointCA, tc.target.URL+"/iam")
+			hits := tc.hits
+			d := newTestDetector(t, endpoint, tc.proxy, endpointCA)
+			d.rootCAs = pool
+			var root *x509.Certificate
+			d.isPublicRoot = func(c *x509.Certificate) (bool, error) {
+				root = c
+				return true, nil
+			}
+
+			det, err := d.Detect(context.Background())
+			if err != nil {
+				t.Fatalf("Detect: %v (the endpoint answered; its redirect target must not matter)", err)
+			}
+			if n := hits.Load(); n != 0 {
+				t.Errorf("the redirect target was contacted %d time(s); the probe must stop at the endpoint", n)
+			}
+			if root == nil || !root.Equal(endpointCA.caCert) {
+				// Both test CAs share a subject; tell them apart by fingerprint.
+				fp := func(c *x509.Certificate) string {
+					if c == nil {
+						return "<none>"
+					}
+					sum := sha256.Sum256(c.Raw)
+					return hex.EncodeToString(sum[:6])
+				}
+				t.Errorf("TLS was classified on root %s, want the endpoint's root %s (the redirect target's is %s)",
+					fp(root), fp(endpointCA.caCert), fp(elsewhereCA.caCert))
+			}
+			if det.CheckErr != nil {
+				t.Errorf("the verification probe must not follow the redirect either: %v", det.CheckErr)
+			}
+		})
 	}
 }
