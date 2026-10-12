@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/wafv2"
@@ -89,7 +90,7 @@ func (s *Service) upsertWebACL(ctx context.Context, ipSetARN string) (string, st
 	}
 
 	tags := tagging.ForShared(tagging.ComponentWAF, name)
-	c, err := s.clients.WAF.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+	in := &wafv2.CreateWebACLInput{
 		Name:        aws.String(name),
 		Scope:       scopeCloudFront,
 		Description: aws.String("nakama-managed CloudFront web ACL"),
@@ -121,15 +122,60 @@ func (s *Service) upsertWebACL(ctx context.Context, ipSetARN string) (string, st
 			},
 		},
 		Tags: awshelper.WAFv2Tags(tags),
-	})
+	}
+	c, err := s.createWebACLAwaitingIPSet(ctx, in)
 	if err != nil {
-		return "", "", fmt.Errorf("CreateWebACL: %w", err)
+		return "", "", err
 	}
 	if c.Summary == nil || c.Summary.Id == nil || c.Summary.ARN == nil {
 		return "", "", errors.New("CreateWebACL returned nil summary")
 	}
 	slog.Info("waf web acl: created", "id", *c.Summary.Id, "arn", *c.Summary.ARN)
 	return *c.Summary.Id, *c.Summary.ARN, nil
+}
+
+// wafPropagationErrorCodes are the CreateWebACL errors AWS documents as
+// "if you've just created a resource that you're using in this
+// operation, you might just need to wait a few minutes" (CreateWebACL,
+// Errors). The web ACL references the IP set, which the same init run
+// may have created a second earlier (Issue #81).
+var wafPropagationErrorCodes = []string{"WAFUnavailableEntityException", "WAFNonexistentItemException"}
+
+// Retry pacing for wafPropagationErrorCodes. AWS gives "from a few
+// seconds to a number of minutes"; variables so tests can shorten them.
+var (
+	wafPropagationInterval = 5 * time.Second
+	wafPropagationMaxWait  = 3 * time.Minute
+)
+
+// createWebACLAwaitingIPSet calls CreateWebACL and, while WAF reports
+// that the referenced IP set is not visible yet, retries every
+// wafPropagationInterval until wafPropagationMaxWait has passed. Any
+// other error is returned at once. A failed CreateWebACL creates
+// nothing, so retrying cannot produce a duplicate.
+func (s *Service) createWebACLAwaitingIPSet(ctx context.Context, in *wafv2.CreateWebACLInput) (*wafv2.CreateWebACLOutput, error) {
+	start := time.Now()
+	for attempt := 1; ; attempt++ {
+		out, err := s.clients.WAF.CreateWebACL(ctx, in)
+		if err == nil {
+			return out, nil
+		}
+		if !awshelper.IsAPIError(err, wafPropagationErrorCodes...) {
+			return nil, fmt.Errorf("CreateWebACL: %w", err)
+		}
+		waited := time.Since(start)
+		if waited+wafPropagationInterval > wafPropagationMaxWait {
+			return nil, fmt.Errorf("CreateWebACL: %w (the IP set was still not visible to WAF after %s and %d attempts; "+
+				"run `nakama aws init` again, it reuses everything already created)", err, waited.Round(time.Second), attempt)
+		}
+		slog.Info("waf web acl: waiting for the IP set to propagate",
+			"attempt", attempt, "error", err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wafPropagationInterval):
+		}
+	}
 }
 
 // listAllIPSets pages through ListIPSets. WAFv2 caps each page at
