@@ -158,6 +158,12 @@ func ctrlBreakOutcome(t *testing.T, mode string) (int, string) {
 	if err := windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, uint32(c.Process.Pid)); err != nil { // #nosec G115 -- a process ID fits in uint32
 		_ = c.Process.Kill()
 		<-waited
+		// Skipping is for local runs without a console (wine, a service).
+		// In CI it would hide the very check, so there it fails instead:
+		// the job passing then proves the event was delivered.
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatalf("GenerateConsoleCtrlEvent: %v (CI must be able to deliver the event)", err)
+		}
 		t.Skipf("GenerateConsoleCtrlEvent: %v (no console to deliver the event)", err)
 	}
 	select {
