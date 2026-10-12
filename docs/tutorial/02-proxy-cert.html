@@ -127,24 +127,31 @@
 <p class="cmd-caption">PowerShell で実行 (Windows 専用)</p>
 <pre><code>nakama aws cli shell</code></pre>
 
+<div class="callout tip" role="note">
+  <span class="title">nakama.exe をダブルクリックして開いたウィンドウでは不要です</span>
+  <p>ダブルクリックで開いたウィンドウ (<a href="01-install.html#install">第 1 章</a>) には、この節の設定が最初から入っています。そのまま aws コマンドを使えます。そこで <code>nakama aws cli shell</code> を実行すると、「すでに設定済みのシェルの中にいる」という案内が出て終わります。</p>
+</div>
+
 <figure>
   <img width="900" height="520" src="img/cli-shell.svg" alt="cli shell は、会社のプロキシ設定を読み、AWS に試しに接続して実際に届く証明書を観測し、Windows 証明書ストアで検証し、会社の CA と Amazon の公式ルート証明書を含むファイルを作り、環境変数を設定した新しいシェルを起動する。シェル内では HTTP_PROXY、HTTPS_PROXY、NO_PROXY、AWS_CA_BUNDLE が設定される。exit で元に戻り痕跡は残らない。">
   <figcaption><strong>図 2-3: <code>nakama aws cli shell</code> の動作。</strong> 会社の証明書を「Windows が信頼していると確認できたものだけ」書き出すので、偽の証明書を信頼してしまう事故が起きません。</figcaption>
 </figure>
 
 <p>実行すると、まず何を検出したかが表示され、続いて新しいシェルが開きます。</p>
-<pre class="output"><code>proxy:  http://proxy.example.co.jp:8080 (auto-detected from the Windows proxy settings)
+<pre class="output"><code>path:   C:\Users\you\bin added in front of PATH
+proxy:  http://proxy.example.co.jp:8080 (auto-detected from the Windows proxy settings)
 ca:     TLS interception detected (re-signed by CN=Example Corp Proxy CA,O=Example Corp)
         AWS_CA_BUNDLE=C:\Users\you\.config\nakama\aws-ca-bundle.pem
 check:  AWS endpoint reachable with these settings
 starting a configured shell (type `exit` to return)</code></pre>
-<p>2 行目の <code>CN=</code> は証明書に書かれた発行者の名前、<code>O=</code> は組織名です。<code>.pem</code> は証明書を文字として保存したファイル形式です。</p>
+<p>3 行目の <code>CN=</code> は証明書に書かれた発行者の名前、<code>O=</code> は組織名です。<code>.pem</code> は証明書を文字として保存したファイル形式です。</p>
 
-<p>この 3 行の読み方です。</p>
+<p>各行の読み方です。</p>
 <div class="table-wrap">
 <table>
   <thead><tr><th scope="col">行</th><th scope="col">意味</th></tr></thead>
   <tbody>
+    <tr><td><code>path:</code></td><td>nakama.exe の場所。開いたシェルの PATH の先頭に入るので、そのシェルでは <code>nakama</code> とだけ打てば動きます</td></tr>
     <tr><td><code>proxy:</code></td><td>使うプロキシ。<code>none (direct connection)</code> ならプロキシなし、<code>(from environment variables)</code> なら環境変数の値、<code>(auto-detected ...)</code> なら Windows の設定から見つけたものです</td></tr>
     <tr><td><code>ca:</code></td><td><code>TLS interception detected</code> なら監査プロキシがあり、証明書ファイルを作ったという意味です。かっこ内は「誰が再署名したか」。<code>no TLS interception detected</code> なら aws CLI の標準の証明書リストで足りるので、ファイルは作りません</td></tr>
     <tr><td><code>check:</code></td><td>作った設定で実際に AWS につながるかを試した結果です。<code>WARNING</code> が出た場合は、その内容を IT 部門に相談する材料になります</td></tr>

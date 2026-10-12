@@ -155,7 +155,8 @@
   <thead><tr><th scope="col">コマンド</th><th scope="col">説明</th><th scope="col">主なオプション</th></tr></thead>
   <tbody>
     <tr><td><code>nakama aws doctor</code></td><td>環境を読み取り専用で点検</td><td>共通の <code>-o json</code> が使えます</td></tr>
-    <tr><td><code>nakama aws cli shell</code></td><td>aws CLI が動くシェルを開く (Windows 専用)</td><td><code>--shell &lt;実行ファイル&gt;</code></td></tr>
+    <tr><td><code>nakama aws cli shell</code></td><td>aws CLI が動くシェルを開く (Windows 専用)。nakama.exe の場所も PATH の先頭に入ります</td><td><code>--shell &lt;実行ファイル&gt;</code></td></tr>
+    <tr><td>nakama.exe をダブルクリック</td><td>PowerShell のウィンドウを開き、<code>nakama</code> を打てるようにする (Windows 専用)。<code>cli shell</code> と同じプロキシの設定も入ります。設定はそのウィンドウの中だけです</td><td>—</td></tr>
     <tr><td><code>nakama completion &lt;シェル&gt;</code></td><td><kbd>Tab</kbd> キーでコマンドを補完できるようにする設定を出力します (PowerShell の例: <code>nakama completion powershell | Out-String | Invoke-Expression</code>)</td><td>—</td></tr>
   </tbody>
 </table>
@@ -173,7 +174,7 @@
     <tr><td><code>AWS_CONFIG_FILE</code></td><td>AWS の設定ファイルの場所 (サインインセッションの読み取りに使われます)</td></tr>
     <tr><td><code>XDG_CONFIG_HOME</code></td><td>nakama の設定の置き場所を変えたい場合に指定します (既定はホームの <code>.config</code>)</td></tr>
     <tr><td><code>AWS_LOGIN_CACHE_DIRECTORY</code></td><td>サインイン情報のキャッシュ場所を変えたい場合 (通常は不要)</td></tr>
-    <tr><td><code>NAKAMA_AWS_CLI_SHELL</code></td><td><code>cli shell</code> の中にいることを示す目印 (二重起動の防止に使われます。自分で設定するものではありません)</td></tr>
+    <tr><td><code>NAKAMA_AWS_CLI_SHELL</code></td><td><code>cli shell</code> か、ダブルクリックで開いたウィンドウの中にいることを示す目印 (二重起動の防止に使われます。自分で設定するものではありません)</td></tr>
   </tbody>
 </table>
 </div>
@@ -196,7 +197,7 @@
 </div>
 <div class="callout note" role="note">
   <span class="title">nakama が触らないもの</span>
-  <p><code>~/.aws/config</code>、<code>~/.ssh/config</code>、Windows のレジストリ、ユーザー環境変数は<strong>いずれも書き換えません</strong>。ssh の設定は「スニペットを作るので、取り込むなら 1 行足してください」という方式です。</p>
+  <p><code>~/.aws/config</code>、<code>~/.ssh/config</code>、Windows のレジストリ、ユーザー環境変数は<strong>いずれも書き換えません</strong> (ダブルクリックで開くウィンドウの PATH も、そのウィンドウの中だけの設定です)。ssh の設定は「スニペットを作るので、取り込むなら 1 行足してください」という方式です。</p>
 </div>
 
 <h2 id="cheatsheet">5. よく使う組み合わせ</h2>

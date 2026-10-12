@@ -447,6 +447,16 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 - **env 注入**: `HTTP_PROXY`/`HTTPS_PROXY` (解決したプロキシ。直結なら設定しない)、`NO_PROXY` (既存値へ localhost 系をマージ)、`AWS_CA_BUNDLE` (インスペクション時のみ)、`NAKAMA_AWS_CLI_SHELL=1` (ネスト防止マーカー)。既存の同名変数は大文字小文字を無視して置換する
 - **サブシェル**: 親プロセスの実体 (`QueryFullProcessImageName`) が powershell.exe / pwsh.exe / cmd.exe ならそれを、不明なら `ComSpec` を起動 (`--shell` で明示指定可)。stdio 継承で同一ウィンドウ内、シェルの exit code は伝搬。親シェル・レジストリ・ユーザー環境変数・`~/.aws/config` (ADR 0011/0016 の不変条件) には一切変更を残さない
 - **プロキシ認証の診断**: CONNECT が 407 を返す場合は `Proxy-Authenticate` のスキームを読み、Basic あり → プロキシ URL への資格情報埋め込みを案内 / NTLM・Negotiate のみ → ローカル認証リレー (px / Cntlm) を案内してエラー終了 (aws CLI は Basic のみ対応のため)
+- **PATH** (ADR 0022): サブシェルの PATH の先頭に nakama.exe のフォルダー (`os.Executable` を `EvalSymlinks` したもの) を入れる。結合は Windows の規則 (`prependWindowsPath`: 変数名は大文字小文字を区別しない、`;` 区切り、同じフォルダーの重複は大文字小文字・末尾の `\`・引用符を無視して除去、`;` を含む名前は引用符で囲む)
+- **Ctrl-C** (ADR 0022): シェルの実行中は `signal.Notify(os.Interrupt)` で受けて捨てる (`runShell`)。Windows の Go は Notify が無いと Ctrl-C / Ctrl-Break で終了し、`signal.Ignore` は効かない (`sigignore` が空実装) ため
+
+### 8.13.1 nakama.exe のダブルクリック — 設定済みの PowerShell (ADR 0022 / Issue #85)
+
+- **判定** (`main` で cobra より先): 引数なし、かつ親プロセスの実体が `explorer.exe` (`isDoubleClick`)。それ以外は cobra に任せる (エクスプローラーから引数付きで起動した場合は、今までどおり cobra の mousetrap が「This is a command line tool.」を表示して 1 で終わる)
+- **シェル**: `GetSystemDirectory` 配下の `WindowsPowerShell\v1.0\powershell.exe -NoLogo`。無ければ `ComSpec`、それも無ければ `cmd.exe` (`launcherShell`)。PATH からは探さない。開始フォルダーはホーム。終了コードは伝える。起動に失敗したらエラーを表示し、Enter を待ってから 1 で終わる
+- **流れ** (`doubleClickLauncher.launch`。依存はフィールドで注入し、どの OS でもテストする): 版と PATH の行を表示 → `cliproxy.Detector` で検出 (Ctrl-C で取り消せる) → 成功なら `printDetection` と `cliShellEnv` (cli shell と同じ環境 + PATH)、失敗なら理由 (`explainDetectionError`) と再試行の案内を表示し、PATH だけを足した環境 (ネスト防止の印なし。ウィンドウ内で `cli shell` をやり直せる) → シェルを起動
+- **Ctrl-C**: プロセスの最初から最後まで `os.Interrupt` を Notify する。ウィンドウを閉じるイベント (`CTRL_CLOSE_EVENT`) は既定の処理のままで、nakama とシェルが一緒に終わる
+- レジストリ・ユーザー環境変数は変更しない
 
 ### 8.14 `nakama aws ssh` — ssh over Session Manager (ADR 0019)
 
