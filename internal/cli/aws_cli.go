@@ -31,9 +31,13 @@ corporate CA chain — verified against the Windows certificate store —
 as an AWS_CA_BUNDLE file. Then start a new shell (same kind as the
 parent shell; override with --shell) with HTTP_PROXY, HTTPS_PROXY,
 NO_PROXY and AWS_CA_BUNDLE set so that the aws CLI works without any
-manual setup. Type "exit" to return; nothing is changed outside the
-subshell: no registry values, no ~/.aws/config edits, no parent-shell
-variables.
+manual setup, and with nakama's own folder first on PATH so that
+"nakama" runs from any directory. Type "exit" to return; nothing is
+changed outside the subshell: no registry values, no ~/.aws/config
+edits, no parent-shell variables.
+
+Double-clicking nakama.exe in Explorer opens the same kind of shell
+(Windows PowerShell) in a new window (ADR 0022).
 
 This command is Windows-only: on other systems nakama relies on
 HTTP(S)_PROXY being set conventionally, and the aws CLI can be pointed
@@ -55,7 +59,8 @@ func runCLIShell(cmd *cobra.Command, _ []string) error {
 			"On %s, set HTTP_PROXY/HTTPS_PROXY and AWS_CA_BUNDLE manually instead", runtime.GOOS)
 	}
 	if os.Getenv("NAKAMA_AWS_CLI_SHELL") == "1" {
-		return errors.New("already inside a `nakama aws cli shell` session; type `exit` first")
+		return errors.New("already inside a shell configured by nakama (`nakama aws cli shell`, or the window " +
+			"opened by double-clicking nakama.exe): the proxy settings are applied here; type `exit` first")
 	}
 	shellOverride, err := cmd.Flags().GetString("shell")
 	if err != nil {
@@ -66,40 +71,22 @@ func runCLIShell(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	det, err := cliproxy.NewDetector().Detect(ctx)
 	if err != nil {
-		var authErr *cliproxy.ProxyAuthError
-		if errors.As(err, &authErr) {
-			if authErr.SupportsBasic() {
-				return fmt.Errorf("%w\nThe aws CLI supports HTTP Basic proxy authentication only as credentials "+
-					"embedded in the proxy URL; set HTTPS_PROXY=http://user:password@proxy:port yourself and retry", authErr)
-			}
-			return fmt.Errorf("%w\nThe aws CLI cannot authenticate to NTLM/Negotiate proxies. Run a local "+
-				"authenticating relay (e.g. px or Cntlm) and set HTTP(S)_PROXY to it, then retry", authErr)
-		}
-		return err
+		return explainDetectionError(err)
 	}
 
-	switch {
-	case det.ProxyURL == "":
-		_, _ = fmt.Fprintf(out, "proxy:  none (direct connection)\n")
-	case det.ProxyFromEnv:
-		_, _ = fmt.Fprintf(out, "proxy:  %s (from environment variables)\n", det.ProxyURL)
-	default:
-		_, _ = fmt.Fprintf(out, "proxy:  %s (auto-detected from the Windows proxy settings)\n", det.ProxyURL)
-	}
-	if det.Intercepted {
-		_, _ = fmt.Fprintf(out, "ca:     TLS interception detected (re-signed by %s)\n", det.RootSubject)
-		_, _ = fmt.Fprintf(out, "        AWS_CA_BUNDLE=%s\n", det.BundlePath)
+	exeDir, err := executableDir()
+	if err != nil {
+		// Only the convenience is lost: the shell still gets the proxy
+		// settings, and nakama can be run by its full path.
+		_, _ = fmt.Fprintf(out, "path:   WARNING: nakama's folder is unknown (%v); PATH is unchanged\n", err)
+		exeDir = ""
 	} else {
-		_, _ = fmt.Fprintf(out, "ca:     no TLS interception detected; the aws CLI's default CA bundle works\n")
+		_, _ = fmt.Fprintf(out, "path:   %s added in front of PATH\n", exeDir)
 	}
-	if det.CheckErr != nil {
-		_, _ = fmt.Fprintf(out, "check:  WARNING: verification with these settings failed: %v\n", det.CheckErr)
-	} else {
-		_, _ = fmt.Fprintf(out, "check:  AWS endpoint reachable with these settings\n")
-	}
+	printDetection(out, det)
 	_, _ = fmt.Fprintf(out, "starting a configured shell (type `exit` to return)\n")
 
-	code, err := spawnConfiguredShell(cliproxy.Env(os.Environ(), det), shellOverride)
+	code, err := spawnConfiguredShell(cliShellEnv(os.Environ(), det, exeDir), shellOverride)
 	if err != nil {
 		return err
 	}

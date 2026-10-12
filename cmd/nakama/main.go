@@ -16,6 +16,11 @@ import (
 )
 
 func main() {
+	// Double-clicked in Explorer (Windows): open a ready-to-use shell
+	// instead of cobra's "This is a command line tool" splash (ADR 0022).
+	if code, handled := cli.HandleDoubleClick(); handled {
+		os.Exit(code)
+	}
 	if err := cli.NewRootCommand().Execute(); err != nil {
 		var ec *service.ExitCodeError
 		isExitCode := errors.As(err, &ec)
