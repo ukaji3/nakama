@@ -18,7 +18,7 @@ nakama aws open dev01     # ブラウザが開き、パスワードログイン�
 - **止めればコストほぼゼロ**: egress は NAT Gateway ではなく小型 NAT インスタンス (`t4g.nano`) を使い、その電源は code-server の稼働に自動連動。全停止時は固定費がほぼ発生しません ([アーキテクチャとコスト](#アーキテクチャとコスト))
 - **aws CLI 不要**: サインイン (`login`) は OAuth 2.0 + PKCE + DPoP のネイティブ実装 (ADR 0016)。複数 AWS アカウントの切り替え (`profile`) も内蔵
 - **SSH 不要・受信ポート開放なし**: シェルログイン (`connect`) もポート転送 (`tunnel`) も SSM Session Manager 経由。`session-manager-plugin` の追加インストールも不要
-- **企業プロキシにそのまま対応**: 環境変数 → Windows の WinHTTP/PAC の順で自動解決し、TLS 検証は OS 証明書ストアを使用 (ADR 0015)。aws CLI 本体を使いたい場合も `nakama aws cli shell` で設定済みサブシェルを提供 (ADR 0018)
+- **企業プロキシにそのまま対応**: 環境変数 → Windows の WinHTTP/PAC の順で自動解決し、TLS 検証は OS 証明書ストアを使用 (ADR 0015)。aws CLI 本体を使いたい場合も `nakama aws cli shell` で設定済みサブシェルを提供 (ADR 0018)。Windows では nakama.exe をダブルクリックするだけで、PATH とプロキシ設定済みの PowerShell が開きます (ADR 0022)
 - **安全側の既定**: アクセスは WAF の IP 許可リスト制、パスワードは SSM SecureString 管理でディスクに残さず、`~/.aws/config` には一切手を触れません
 - **Kiro CLI と Kiro Crew を既定で導入**: 作成したインスタンスには Kiro CLI・Kiro Crew と gateway サービスが自動で入ります (不要なら `create --no-kiro`)
 - **運用コマンド一式**: バックアップ/復元 (`backup` / `restore`)、OS と code-server の一括更新 (`update`)、インスタンスタイプ/EBS の変更 (`edit`)
@@ -45,12 +45,24 @@ sudo install -m 0755 /tmp/nakama/nakama /usr/local/bin/nakama
 nakama version
 ```
 
+**Windows** では、zip を展開して `nakama.exe` を好きな場所に置き、**ダブルクリック**するだけで使い始められます。PATH の設定は不要です (後述)。
+
 `checksums.txt` で SHA-256 を検証してください:
 
 ```sh
 curl -fsSLO "https://github.com/ukaji3/nakama/releases/download/v${VERSION}/checksums.txt"
 sha256sum -c checksums.txt --ignore-missing
 ```
+
+### Windows: ダブルクリックで使い始める
+
+`nakama.exe` をエクスプローラーからダブルクリックすると、Windows PowerShell のウィンドウが開きます (ADR 0022)。
+
+- nakama.exe のフォルダーが **PATH の先頭**に入るので、どのフォルダーからでも `nakama` と打てます
+- `nakama aws cli shell` と同じく、OS のプロキシ設定と企業 CA を自動で検出し、`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` / `AWS_CA_BUNDLE` を設定します。aws CLI もそのまま使えます
+- 検出に失敗しても (オフライン、NTLM プロキシなど)、理由を表示したうえで、PATH だけを設定したウィンドウが開きます
+- 設定はそのウィンドウの中だけです。**レジストリとユーザー環境変数は変更しません**。別に開いた PowerShell からも使いたい場合は、ユーザーの PATH に自分で登録してください ([チュートリアル第 1 章](docs/tutorial/01-install.html))
+- 対象は引数なしで起動したときだけです。引数付きのショートカットなどからエクスプローラー経由で起動した場合は、今までどおり「This is a command line tool.」の案内が出て終わります
 
 ### ソースから (`go install`)
 
@@ -333,7 +345,8 @@ nakama aws cli shell
 ```
 
 - OS のプロキシ設定 (WinHTTP / PAC) を自動解決し、TLS インスペクションを検出すると **Windows 証明書ストアで検証済み**の企業 CA チェーン + Amazon Trust Services ルートを `AWS_CA_BUNDLE` 用 PEM (`~/.config/nakama/aws-ca-bundle.pem`) に書き出します
-- `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` / `AWS_CA_BUNDLE` を注入した新しいシェル (親シェルと同種を自動判別、`--shell` で指定可) を同じウィンドウ内に開きます。中では `aws s3 ls` などが追加設定なしで動きます
+- `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` / `AWS_CA_BUNDLE` を注入した新しいシェル (親シェルと同種を自動判別、`--shell` で指定可) を同じウィンドウ内に開きます。中では `aws s3 ls` などが追加設定なしで動きます。nakama.exe のフォルダーも PATH の先頭に入ります
+- nakama.exe をダブルクリックして開いたウィンドウには、この設定が最初から入っています ([前述](#windows-ダブルクリックで使い始める))
 - `exit` で元のシェルへ戻ります。レジストリ・ユーザー環境変数・`~/.aws/config`・親シェルには**何も残しません**
 - プロキシが NTLM/Negotiate 認証を要求する場合は検出して回避策 (px / Cntlm などのローカル認証リレー) を案内します (aws CLI は Basic 認証のみ対応のため)
 - Windows 以外の OS では Windows 専用オプションである旨を表示します (Linux/macOS は環境変数 `HTTP(S)_PROXY` / `AWS_CA_BUNDLE` を直接設定してください)

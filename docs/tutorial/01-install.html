@@ -45,7 +45,7 @@
 <p class="lead">nakama 本体をパソコンに置き、AWS にサインインするところまでを行います。ここまで済めば、以降の章のコマンドが実行できます。</p>
 
 <h2 id="install">1. Windows にインストールする</h2>
-<p>nakama は <strong>1 つの実行ファイル (nakama.exe) だけ</strong>で動きます。インストーラーはありません。ファイルを好きな場所に置いて、そこを Windows に教えるだけです。</p>
+<p>nakama は <strong>1 つの実行ファイル (nakama.exe) だけ</strong>で動きます。インストーラーはありません。ファイルを好きな場所に置いて、ダブルクリックするだけです。</p>
 
 <ol class="steps" role="list">
   <li>
@@ -67,36 +67,55 @@ Select-String -Path .\checksums.txt -Pattern windows_amd64.zip</code></pre>
     <p><strong>展開する。</strong> zip ファイルを右クリックして「すべて展開」を選びます。中に <code>nakama.exe</code> が入っています。</p>
   </li>
   <li>
-    <p><strong>置き場所を決めて移動する。</strong> 例として、自分のユーザーフォルダーの下に <code>bin</code> というフォルダーを作って置きます。管理者権限が要らないので安全です。</p>
-    <p>「すべて展開」を使うと <code>nakama_0.17.0_windows_amd64</code> のような<strong>フォルダーが新しく作られ、その中に <code>nakama.exe</code> が入っています</strong>。まずそのフォルダーへ移動してください。</p>
-    <p class="cmd-caption">PowerShell で実行 (展開先へ移動 → 置き場所を作る → 移動)</p>
-    <pre><code>cd .\nakama_0.17.0_windows_amd64
-New-Item -ItemType Directory -Force "$env:USERPROFILE\bin"
+    <p><strong>置き場所を決めて移動する。</strong> 例として、自分のユーザーフォルダー (<code>C:\Users\&lt;あなたの名前&gt;</code>) の下に <code>bin</code> というフォルダーを作り、展開してできたフォルダーの中の <code>nakama.exe</code> をそこへ移動します。エクスプローラーでのドラッグで構いません。管理者権限は要りません。</p>
+    <p>場所はどこでも動きますが、<strong>あとから動かさない場所</strong>にしてください。ssh の設定 (<a href="05-use.html">第 5 章</a>) には nakama.exe の場所が書き込まれるので、動かすと作り直しになります。zip ファイルの中から直接ダブルクリックするのは避けてください (Windows が一時フォルダーに取り出して動かすため、場所が毎回変わります)。</p>
+    <div class="callout note" role="note">
+      <span class="title">PowerShell で移動する場合</span>
+      <p>展開してできたフォルダー (<code>nakama_0.17.0_windows_amd64</code> のような名前) で PowerShell を開き、次を実行します。<code>cd .\nakama_</code> まで打って <kbd>Tab</kbd> キーを押すと、フォルダー名が補完されます。</p>
+      <pre><code>New-Item -ItemType Directory -Force "$env:USERPROFILE\bin"
 Move-Item .\nakama.exe "$env:USERPROFILE\bin\nakama.exe"</code></pre>
-    <p>フォルダー名はバージョンによって変わります。<code>cd .\nakama_</code> まで打って <kbd>Tab</kbd> キーを押すと、残りが自動で補完されます。「パスが見つかりません」と出る場合は、<code>dir</code> と打って、いまいる場所に何があるかを確認してください。</p>
-  </li>
-  <li>
-    <p><strong>置き場所を Windows に教える (PATH に追加)。</strong> これをしておくと、どのフォルダーからでも <code>nakama</code> と打つだけで実行できます。</p>
-    <p class="cmd-caption">PowerShell で実行 (自分のユーザーにだけ設定します)</p>
-    <pre><code>[Environment]::SetEnvironmentVariable(
-  "Path",
-  [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\bin",
-  "User")</code></pre>
-    <div class="callout warn" role="note">
-      <span class="title">設定後は新しいウィンドウを開いてください</span>
-      <p>この設定は<strong>今開いているウィンドウには反映されません</strong>。PowerShell を閉じて、もう一度開いてから次の手順に進みます。</p>
-      <p>画面から設定したい場合は、<kbd>Windows</kbd> キーで「環境変数」と検索 →「環境変数を編集」→ ユーザー環境変数の <code>Path</code> を選んで「編集」→「新規」で <code>C:\Users\&lt;あなたの名前&gt;\bin</code> を追加します。</p>
-      <p>上のコマンドを実行したあと、値の先頭に <code>;</code> が付くことがあります (もともと Path が空だった場合)。動作に影響はありません。</p>
     </div>
   </li>
   <li>
-    <p><strong>動作を確認する。</strong> 新しい PowerShell で次を実行します。</p>
-    <p class="cmd-caption">PowerShell で実行</p>
+    <p><strong>nakama.exe をダブルクリックする。</strong> PowerShell のウィンドウが開き、次のように表示されます。</p>
+    <pre class="output"><code>nakama &lt;バージョン&gt; (&lt;コミット&gt;, &lt;日時&gt;)
+path:   C:\Users\you\bin added in front of PATH (this window only)
+detecting the proxy settings for the aws CLI (Ctrl-C skips this)...
+proxy:  none (direct connection)
+ca:     no TLS interception detected; the aws CLI's default CA bundle works
+check:  AWS endpoint reachable with these settings
+
+Type `nakama --help` to see the commands, and `exit` to close this window.</code></pre>
+    <p>このウィンドウでは、どのフォルダーにいても <code>nakama</code> と打つだけで実行できます (<code>path:</code> の行のとおり、nakama.exe の場所が PATH = コマンドを探す場所の一覧の先頭に入っています)。会社のプロキシの設定も自動で入ります (<code>proxy:</code> 以降の行。読み方は<a href="02-proxy-cert.html#cli-shell">第 2 章</a>)。ウィンドウは自分のユーザーフォルダーで開きます。<code>exit</code> と打つか、ウィンドウを閉じれば終わります。</p>
+    <div class="callout warn" role="note">
+      <span class="title">「Windows によって PC が保護されました」と出た場合</span>
+      <p>インターネットから取得したプログラムを初めて開くと、この画面が出ることがあります。<code>nakama.exe</code> を自分で Releases ページから取得し、手順 2 でファイルを確認したなら、「詳細情報」を押してから「実行」を押します。会社のパソコンで「実行」が表示されない場合は、IT 部門の規則に従ってください。</p>
+    </div>
+    <div class="callout note" role="note">
+      <span class="title">設定が入るのはこのウィンドウの中だけです</span>
+      <p>nakama は、Windows のレジストリやユーザー環境変数を書き換えません。そのため、スタートメニューなどから<strong>別に開いた PowerShell では <code>nakama</code> は見つかりません</strong>。使うときは nakama.exe をダブルクリックして開いてください。プロキシを検出できなかった場合は、理由を表示したうえで、PATH だけを設定したウィンドウが開きます (nakama 自身は、その場合もプロキシを自分で見つけて動きます)。</p>
+    </div>
+  </li>
+  <li>
+    <p><strong>動作を確認する。</strong> 開いたウィンドウで次を実行します。</p>
+    <p class="cmd-caption">ダブルクリックで開いたウィンドウで実行</p>
     <pre><code>nakama version</code></pre>
     <pre class="output"><code>0.17.0 (6c34716, 2026-09-03T17:35:42Z)</code></pre>
-    <p>バージョンが表示されれば成功です。<code>用語 'nakama' は、コマンドレット...として認識されません</code> と出る場合は、PATH の設定か、ウィンドウの開き直しができていません。</p>
+    <p>バージョンが表示されれば成功です。以降の章のコマンドは、すべてこのウィンドウで実行できます。</p>
   </li>
 </ol>
+
+<div class="callout tip" role="note" id="path-register">
+  <span class="title">どの PowerShell からでも nakama を使いたい場合 (任意)</span>
+  <p>nakama.exe の場所を、自分のユーザーの PATH に登録します。登録は自分で行います (nakama は登録しません)。次のコマンドは <code>C:\Users\&lt;あなたの名前&gt;\bin</code> に置いた場合の例です。</p>
+  <p class="cmd-caption">PowerShell で実行 (自分のユーザーにだけ設定します)</p>
+  <pre><code>[Environment]::SetEnvironmentVariable(
+  "Path",
+  [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\bin",
+  "User")</code></pre>
+  <p>この設定は<strong>今開いているウィンドウには反映されません</strong>。PowerShell を開き直してから <code>nakama version</code> で確認してください。画面から設定する場合は、<kbd>Windows</kbd> キーで「環境変数」と検索 →「環境変数を編集」→ ユーザー環境変数の <code>Path</code> を選んで「編集」→「新規」で <code>C:\Users\&lt;あなたの名前&gt;\bin</code> を追加します。もともと Path が空だった場合は、値の先頭に <code>;</code> が付くことがありますが、動作に影響はありません。</p>
+  <p>こうして開いた PowerShell には、会社のプロキシの設定は入りません。aws コマンドを使うときは <code>nakama aws cli shell</code> を実行してください (<a href="02-proxy-cert.html#cli-shell">第 2 章</a>)。</p>
+</div>
 
 <div class="callout tip" role="note">
   <span class="title">どんなコマンドがあるかを見る</span>
@@ -203,7 +222,15 @@ nakama aws profile delete personal        # 登録を削除</code></pre>
   <tbody>
     <tr>
       <td><code>用語 'nakama' は ... 認識されません</code></td>
-      <td>PATH の設定が反映されていません。PowerShell を閉じて開き直してください。それでも駄目なら、置き場所を絶対パスで実行して確認します (例: <code>&amp; "$env:USERPROFILE\bin\nakama.exe" version</code>)</td>
+      <td>nakama.exe をダブルクリックして開いたウィンドウではありません。nakama.exe をダブルクリックして開き直してください。どの PowerShell からでも使いたい場合は、<a href="#path-register">PATH に登録</a>してから PowerShell を開き直します</td>
+    </tr>
+    <tr>
+      <td>ダブルクリックすると <code>This is a command line tool.</code> と出て閉じる</td>
+      <td>ダブルクリックで開く機能が入る前の nakama です。<a href="https://github.com/ukaji3/nakama/releases">Releases ページ</a>から最新版を取得してください</td>
+    </tr>
+    <tr>
+      <td>ダブルクリックすると <code>error:</code> と <code>Press Enter to close this window.</code> が出て止まる</td>
+      <td>PowerShell を起動できませんでした。エラーの内容を控えてから <kbd>Enter</kbd> で閉じます。会社のパソコンで PowerShell の利用が制限されていないか、IT 部門に確認してください (Windows PowerShell が見つからないだけなら、代わりにコマンドプロンプトが開きます)</td>
     </tr>
     <tr>
       <td>ブラウザが開かない</td>

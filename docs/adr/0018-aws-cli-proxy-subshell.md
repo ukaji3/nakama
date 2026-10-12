@@ -64,6 +64,7 @@ CONNECT が 407 を返す場合は `Proxy-Authenticate` のスキームを読み
 ## References
 
 - ADR 0015 (プロキシ自動解決と platform verifier)、ADR 0011/0016 (`~/.aws/config` 不変条件)
+- ADR 0022 (nakama.exe のダブルクリックで同じ設定のシェルを開く。サブシェルの PATH に nakama のフォルダーを足し、実行中の Ctrl-C で nakama が終わらないようにした)
 - AWS CLI User Guide: cli-configure-proxy / cli-chap-troubleshooting (SSL certificate errors)
 - aws/aws-cli#6193 (Use System Root CA Store on Windows — closed-for-staleness)
 - Microsoft Learn: setx (現在のウィンドウには反映されない仕様)
