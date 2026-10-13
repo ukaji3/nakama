@@ -124,6 +124,7 @@ nakama aws profile delete b-account
 ```bash
 # 基盤 (VPC / Subnet / NAT インスタンス / WAF) の作成 (冪等)
 # 既存の NAT Gateway があれば削除し EIP を解放して NAT インスタンスへ移行する
+# 最後に NAT インスタンスの転送を点検し、壊れていれば直す (セキュリティ更新を含む)
 nakama aws init
 
 # アクセス元 IP の許可リスト操作 (未登録 IP からは code-server に到達できない)

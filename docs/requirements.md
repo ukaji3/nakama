@@ -39,7 +39,7 @@
 
 | カテゴリ | サブコマンド | 機能 |
 |---|---|---|
-| 基盤 | `nakama aws init` | nakama 環境基盤 (VPC / Subnet / NAT インスタンス / WAF / IP set / IAM) を作成または再利用。既存の NAT Gateway があれば削除し EIP を解放して NAT インスタンスへ移行 |
+| 基盤 | `nakama aws init` | nakama 環境基盤 (VPC / Subnet / NAT インスタンス / WAF / IP set / IAM) を作成または再利用。既存の NAT Gateway があれば削除し EIP を解放して NAT インスタンスへ移行。最後に NAT インスタンスの転送を確認し、壊れていれば直す。直らなければ失敗する (Issue #87) |
 | アクセス制御 | `nakama aws acl add [IP\|CIDR]` | アクセス元 IP を WAFv2 IP set に追加 (省略時は `https://checkip.amazonaws.com/` で自動取得) |
 | アクセス制御 | `nakama aws acl list` | IP set の内容を一覧 |
 | アクセス制御 | `nakama aws acl delete <IP\|CIDR>` | IP set からエントリ削除 |
@@ -138,7 +138,7 @@
 
 ### 5.4 性能
 
-- `init` 所要時間: 約 2〜4 分 (NAT インスタンスの起動待機が主。NAT Gateway より短い)
+- `init` 所要時間: 約 2〜4 分 (NAT インスタンスの起動待機が主。NAT Gateway より短い)。NAT インスタンスの転送の確認に、正常なら約 10 秒、停止中なら 1〜2 分、修理が要るなら数分を足す
 - `create` 所要時間: 約 15〜20 分 (CloudFront propagation がボトルネック)
 - `delete` 所要時間: 約 15〜20 分 (CloudFront disable + delete)
 
@@ -201,6 +201,8 @@
 21. `nakama aws kirocrew enable <n>` を実行すると、Kiro Crew 専用の CloudFront distribution (オリジンのカスタムヘッダー `X-Forwarded-Host: 15476.kirocrew.nakama.internal`、既存の VPC Origin と WAF を共用)、インスタンス上の nginx (127.0.0.1:15476 だけで待ち受け、Origin を検査し、Host と Origin を書き換え、X-Forwarded-Proto を付与し、X-Forwarded-For は残す)、code-server の管理ブロック (proxy-domain と、crew だけの trusted-origins)、`VSCODE_PROXY_URI` を既定のパス方式 (`./proxy/{{port}}/`) に固定する systemd drop-in、既存の distribution の `/proxy/5476*` と `/absproxy/5476*` を crew へ 302 で転送する設定 (既定の behavior の全項目を写したもの) が用意される。何度実行しても結果は同じで、途中で失敗しても再実行で続きから進み、distribution が重複しない。既存の distribution の構成、`open` の動作、Ports パネルとターミナルのリンクの書き換え先 (`/proxy/<port>/`) は変わらない。`nakama aws kirocrew <n>` は、code-server のパスワード入力なしで Kiro Crew の画面を開く (トークンは暗号化して受け取り、画面にもログにも出さない)。`kirocrew disable <n>` と `delete <n>` は、Kiro Crew 用 distribution を VPC Origin より先に消し、関連するものをすべて取り除く (手動 E2E)
 
 22. (手動 E2E) Windows で nakama.exe をエクスプローラーからダブルクリックすると、Windows PowerShell のウィンドウが開き、nakama.exe のフォルダーが PATH の先頭にあることと、プロキシ・CA・疎通確認の結果が表示される。そのウィンドウでは、どのフォルダーからでも `nakama version` が動き、検出に成功していれば `aws s3 ls` も追加設定なしで動く。オフラインでもウィンドウは開き、`nakama` を打てる。`exit` でウィンドウが閉じ、レジストリ・ユーザー環境変数に変更は残らない。シェルの中で Ctrl-C を押しても nakama は終わらない (自動テストでは Ctrl-Break を受けた `runShell` の生存を確認する)
+
+23. `nakama aws init` で作った NAT インスタンス (t4g.nano、最新の AL2023 AMI) では、初回起動の設定が OOM なしで完了する。`dnf --releasever=latest upgrade` が適用され、`iptables-nft` だけが入り、MASQUERADE のルールが入る。init は最後に NAT インスタンスの転送を確かめる。転送が壊れた NAT インスタンス (`iptables` が無い、`nakama-nat.service` が失敗) では、init が修理して `nat forwarding: repaired` と表示する。直らなければ init は失敗する。停止中の NAT インスタンスは、確認の後に停止に戻る。`connect` / `ssh` が `TargetNotConnected` で失敗したときは、NAT インスタンスと init を案内する (Issue #87)
 
 ## 付録 A. 機能別 IAM 権限マトリクス
 

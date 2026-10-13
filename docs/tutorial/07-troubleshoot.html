@@ -178,6 +178,10 @@
   <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
+      <td><code>connect</code> / <code>ssh</code> が <code>TargetNotConnected</code> (<code>is not connected</code>) で失敗する</td>
+      <td>開発環境の SSM エージェントが AWS につながっていません。<code>start</code> や <code>create</code> の直後なら 1〜2 分待ってから、もう一度試します。続く場合は、開発環境がインターネットに出られていない可能性があります (通信は NAT インスタンスを通ります)。<code>nakama aws list --show-nat</code> で NAT インスタンスが <code>running</code> かを確かめ、<code>nakama aws init</code> を実行してください。<code>init</code> は NAT インスタンスを点検し、壊れていれば直します。直した後は、開発環境を <code>stop</code> と <code>start</code> で再起動します (作成直後に失敗した環境は、初期設定が途中で止まっているので、<code>delete</code> して作り直してください)</td>
+    </tr>
+    <tr>
       <td><code>connect</code> だけがつながらない (他のコマンドは動く)</td>
       <td>会社のプロキシが WebSocket を遮断している可能性があります (<a href="02-proxy-cert.html#websocket">第 2 章「WebSocket が遮断されている場合」</a>)。プロキシ管理者に許可を依頼してください</td>
     </tr>
