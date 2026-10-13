@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	_ "embed" // natSetupScript
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -214,49 +215,17 @@ func (s *Service) resolveNATInstanceAMI(ctx context.Context) (string, error) {
 	return *out.Parameter.Value, nil
 }
 
+// natSetupScript configures the NAT instance: security updates,
+// iptables (nf_tables) and the forwarding rules, with the memory limits
+// of a t4g.nano in mind (Issue #87). It is the instance's user-data and
+// also what `nakama aws init` runs to repair an instance whose
+// forwarding is not set up.
+//
+//go:embed nat_setup.sh
+var natSetupScript string
+
 func natInstanceUserData() string {
-	return `#!/bin/bash
-set -euxo pipefail
-cat >/etc/sysctl.d/99-nakama-nat.conf <<'EOF'
-net.ipv4.ip_forward = 1
-EOF
-sysctl --system
-
-dnf install -y iptables-services || true
-
-cat >/usr/local/sbin/nakama-nat-setup <<'EOF'
-#!/bin/bash
-set -euxo pipefail
-IFACE="$(ip route show default 0.0.0.0/0 | awk '{print $5; exit}')"
-if [ -z "${IFACE}" ]; then
-  IFACE="$(ip -o link show | awk -F': ' '$2 != "lo" {print $2; exit}')"
-fi
-iptables -t nat -C POSTROUTING -o "${IFACE}" -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o "${IFACE}" -j MASQUERADE
-iptables -C FORWARD -i "${IFACE}" -j ACCEPT 2>/dev/null || iptables -A FORWARD -i "${IFACE}" -j ACCEPT
-iptables -C FORWARD -o "${IFACE}" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -A FORWARD -o "${IFACE}" -m state --state RELATED,ESTABLISHED -j ACCEPT
-if command -v service >/dev/null 2>&1; then
-  service iptables save || true
-fi
-EOF
-chmod 0755 /usr/local/sbin/nakama-nat-setup
-
-cat >/etc/systemd/system/nakama-nat.service <<'EOF'
-[Unit]
-Description=nakama NAT instance forwarding rules
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/nakama-nat-setup
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload
-systemctl enable --now nakama-nat.service
-`
+	return natSetupScript
 }
 
 func (s *Service) findNATInstance(ctx context.Context, vpcID string) (natInstanceInfo, error) {

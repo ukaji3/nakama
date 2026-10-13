@@ -172,8 +172,14 @@ func featurePermissionMatrix() []FeaturePermission {
 					"wafv2:ListIPSets",
 					"wafv2:ListWebACLs",
 				},
+				// The NAT instance is created here, and started for
+				// the forwarding check when it is stopped.
+				natLifecycleActions,
+				// The forwarding check and repair (Issue #87).
+				remoteScriptActions,
 			),
-			Note:     "冪等。既存 NAT Gateway の削除と EIP 解放を含む",
+			Note: "冪等。既存 NAT Gateway の削除と EIP 解放を含む。最後に NAT インスタンスの転送を " +
+				"Run Command で確認し、壊れていれば直す (停止中なら確認のために起動して戻す)",
 			Simulate: true,
 		},
 		{

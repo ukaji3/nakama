@@ -61,6 +61,7 @@ func initSummary(r *service.InitResult) string {
 		"  nat instance       : " + r.NATInstanceID + "\n" +
 		"  nat instance eni   : " + r.NATInstanceENIID + "\n" +
 		"  nat instance sg    : " + r.NATInstanceSGID + "\n" +
+		"  nat forwarding     : " + r.NATForwarding + "\n" +
 		"  public route table : " + r.PublicRouteTableID + "\n" +
 		"  private route table: " + r.PrivateRouteTableID + "\n" +
 		"  waf web acl        : " + r.WAFWebACLARN + "\n" +
