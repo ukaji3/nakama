@@ -68,6 +68,12 @@
   <p><code>init</code> は<strong>冪等</strong>です。すでに nakama が作ったリソースがあれば、それを再利用します。「途中で失敗した」「設定が合っているか不安」というときは、もう一度実行して構いません。</p>
 </div>
 
+<div class="callout note" role="note">
+  <span class="title">最後に NAT インスタンスを点検します</span>
+  <p><code>init</code> は最後に、NAT インスタンスが通信を中継できているかを確かめます。結果は表示の <code>nat forwarding</code> の行に出ます (<code>ok</code> なら正常、<code>repaired</code> なら壊れていたものを直したという意味です)。直すときは、セキュリティ更新もあわせて入れるので、数分かかります。NAT インスタンスが停止中なら点検のために起動し、終わったら停止に戻します。</p>
+  <p>直せなかった場合、<code>init</code> はエラーで終わります。もう一度 <code>init</code> を実行してください。</p>
+</div>
+
 <div class="callout warn" role="note">
   <span class="title">以前の nakama から移行する場合の注意</span>
   <p>過去のバージョンの nakama が作った <strong>NAT ゲートウェイ</strong>が残っている場合、<code>init</code> はそれを削除し、割り当てられていた固定 IP (Elastic IP) を解放します。これは、より安価な NAT インスタンスへ移行するためです。通信が途切れないように、先に新しい経路へ切り替えてから削除する順序で行われます。</p>

@@ -200,7 +200,20 @@ func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label};
 6. RTB / Routes を冪等に作成。private default route は NAT インスタンスの ENI 宛て。既存の `0.0.0.0/0` が旧 NAT Gateway 宛てなら `ReplaceRoute` で張り替え
 7. 旧 NAT Gateway が存在すれば削除し、その EIP を解放 (ADR 0007 への移行。ルート張り替え後に実施するため egress は途切れない)
 8. WAF IP set / web ACL を冪等に作成
-9. SSM `/nakama/_meta/*` に状態を記録
+9. NAT インスタンスの転送を確認する (`initNATForwarding`、ADR 0007 の追記 / Issue #87)
+   - 停止中なら起動し、終わったら電源を元に戻す (`reconcileNATInstancePowerState`)
+   - Run Command で `natCheckScript` を実行する。初回起動の設定 (`cloud-final.service` が `activating` の間) を待ってから、`ip_forward`、`iptables`、MASQUERADE のルール、`nakama-nat.service` を調べる。SSM エージェントの登録待ち (`InvalidInstanceId`) は最大 5 分
+   - 壊れていれば `natRepairScript` を実行する。user-data と同じ `nat_setup.sh` を、`systemd-run --unit=nakama-nat-repair` で動かす。その後、15 秒ごとに確認し (最大 25 分)、ユニットが `failed` になればログの末尾を付けて失敗にする
+   - 結果は `InitResult.NATForwarding` (`ok` / `repaired`)
+10. SSM `/nakama/_meta/*` に状態を記録
+
+NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順は次のとおり。
+1. `ip_forward` を有効にする
+2. `/var/tmp` に 1 GiB の一時スワップを作る (優先度 10、終了時に消す)
+3. `dnf --releasever=latest upgrade` (セキュリティ更新、必須)
+4. `iptables-nft` だけを入れる。どちらの dnf も `install_weak_deps=False`、3 回まで再試行する
+5. `nakama-nat-setup` と `nakama-nat.service` を書いて、enable と restart をする
+6. 結果を確かめる (`set -euo pipefail`、`|| true` なし)
 
 ### 8.2 `nakama aws create`
 
