@@ -185,7 +185,7 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 					"your credentials) and reconnect", err)
 			case startSessionErrRetryable:
 				if attempt >= in.MaxRetries {
-					return fmt.Errorf("StartSession: %w", err)
+					return withTargetNotConnectedHint(fmt.Errorf("StartSession: %w", err))
 				}
 				attempt++
 				if in.Observer != nil {

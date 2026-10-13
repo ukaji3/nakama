@@ -22,6 +22,9 @@ type InitResult struct {
 	NATInstanceID    string
 	NATInstanceENIID string
 	NATInstanceSGID  string
+	// NATForwarding is the result of the forwarding check at the end
+	// of init (Issue #87): NATForwardingOK or NATForwardingRepaired.
+	NATForwarding string
 
 	// Legacy NAT Gateway migration bookkeeping. Populated only when a
 	// pre-ADR-0007 NAT Gateway / EIP was found and removed during init.
@@ -99,6 +102,12 @@ func (s *Service) Init(ctx context.Context) (*InitResult, error) {
 	if err := s.initWAF(ctx, res); err != nil {
 		return nil, fmt.Errorf("waf: %w", err)
 	}
+	// Last, so everything else exists when the check fails: a NAT
+	// instance that does not forward makes every instance behind it
+	// unreachable, and init must not report success then (Issue #87).
+	if err := s.initNATForwarding(ctx, res); err != nil {
+		return nil, fmt.Errorf("nat instance forwarding: %w", err)
+	}
 	if err := s.initSSMMarkers(ctx); err != nil {
 		return nil, fmt.Errorf("ssm markers: %w", err)
 	}
@@ -108,6 +117,7 @@ func (s *Service) Init(ctx context.Context) (*InitResult, error) {
 		"public_subnet", res.PublicSubnetID,
 		"nat_instance", res.NATInstanceID,
 		"nat_instance_eni", res.NATInstanceENIID,
+		"nat_forwarding", res.NATForwarding,
 		"deleted_legacy_nat_gateway", res.DeletedNATGatewayID,
 		"waf_web_acl", res.WAFWebACLID,
 		"instance_profile", res.InstanceProfileARN,

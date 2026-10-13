@@ -495,6 +495,25 @@ func classifyStartSessionError(err error) startSessionErrorKind {
 	}
 }
 
+// withTargetNotConnectedHint adds what to do when StartSession failed
+// with TargetNotConnected: the instance's SSM agent is not connected to
+// AWS. Right after start that is a matter of a minute; when it lasts,
+// the instance usually has no outbound connectivity, as with a NAT
+// instance that does not forward (Issue #87). Other errors are returned
+// unchanged.
+func withTargetNotConnectedHint(err error) error {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "TargetNotConnected" {
+		return err
+	}
+	return fmt.Errorf("%w\n"+
+		"The instance's SSM agent is not connected to AWS. Right after `start` or `create` this takes a minute "+
+		"or two; retry then.\n"+
+		"If it persists, the instance probably cannot reach AWS: it reaches the internet through the NAT instance. "+
+		"Check that the NAT instance is running (`nakama aws list --show-nat`), and run `nakama aws init`, "+
+		"which checks the NAT instance's forwarding and repairs it", err)
+}
+
 // installPluginResumeConfig points the vendored plugin's in-place
 // resume path (NakamaAWSConfigProvider, a NAKAMA PATCH) at the
 // nakama-resolved aws.Config: nakama credential resolution, the forced
