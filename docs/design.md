@@ -613,8 +613,13 @@ replace github.com/aws/session-manager-plugin => ./third_party/session-manager-p
    エラーメッセージには alias / account と復旧手順 (`nakama aws login`
    再実行 or `nakama aws profile unload`) を含める。
 2. **default chain** (`AWS_PROFILE` / `AWS_DEFAULT_PROFILE` 尊重) + probe。
-3. **login_session fallback** (SDK Go v2 は login_session を解釈しない
-   ための互換レイヤ)。ユーザーの AWS config (`AWS_CONFIG_FILE` 尊重、
+   aws-sdk-go-v2/config v1.32.0 以降は、既定チェーン自体が
+   `login_session` を解決する (`credentials/logincreds`)。そのため、
+   `aws login` / `nakama aws login` が書いたプロファイルは、通常ここで
+   解決される。このとき、トークンの更新とキャッシュの書き換えは SDK が
+   行う (形式の違いは §13.3)。
+3. **login_session fallback** (SDK が login_session を解釈しなかった
+   頃からの互換レイヤ。2 が失敗したときだけ使う)。ユーザーの AWS config (`AWS_CONFIG_FILE` 尊重、
    なければ `~/.aws/config`) の対象セクション (`AWS_PROFILE` 設定時は `[profile <name>]`、それ以外は `[default]`) を**読み取り専用の
    自前 INI パース** (`awsx.ResolveDefaultLoginSession`) で参照し、
    `login_session` があれば 1 と同じ provider で解決。config への
@@ -682,7 +687,7 @@ provider の Retrieve が呼び直されてネイティブリフレッシュが�
 |---|---|
 | `Login(ctx, LoginOptions)` | フロー全体のオーケストレーション。same-device (127.0.0.1 の一回限りコールバックサーバー、全体 10 分タイムアウト、state 検証) / cross-device (`--remote`、base64 貼り付けコードの parse + state 検証) の両フローを実装し、成功時にトークンをキャッシュへ保存して login_session と account ID を返す |
 | `Client` | `POST {base}/v1/token` の薄いクライアント。DPoP ヘッダー付与、SigV4 なし、非 2xx を `*APIError` (error コード + 対処のみ、サーバーメッセージは含めない) にマップ。BaseURL / HTTPClient / 時計はテスト注入可能で、既定の HTTPClient は `proxy.NewTransport()` + 30s タイムアウト |
-| `TokenCache` | AWS CLI バイト互換のトークンキャッシュ (`AWS_LOGIN_CACHE_DIRECTORY` または `~/.aws/login/cache`、ファイル名 = hex(sha256(login_session)) + ".json"、dir 0700 / file 0600、temp+rename のアトミック書き込み) |
+| `TokenCache` | AWS CLI バイト互換のトークンキャッシュ (`AWS_LOGIN_CACHE_DIRECTORY` または `~/.aws/login/cache`、ファイル名 = hex(sha256(login_session)) + ".json"、dir 0700 / file 0600、temp+rename のアトミック書き込み)。`accessToken.expiresAt` は AWS CLI と同じ `2006-01-02T15:04:05Z` で書き、読むときは任意の RFC 3339 を受け付けて UTC にそろえる (SDK for Go v2 が書き戻すファイルは、小数秒と手元の時差を含む。例: `2026-10-15T03:00:00.123456789+09:00`) |
 | `RefreshingCredentialsProvider` | `aws.CredentialsProvider` 実装。キャッシュ読取り → 残り 5 分超ならそのまま返却 (ネットワークなし) → 以下なら DPoP リフレッシュ + refresh token 回転をキャッシュへ保存。mutex で並行 Retrieve に安全。`aws.NewCredentialsCache` (ExpiryWindow=5 分) でラップして使用 |
 | DPoP/PKCE ヘルパ | ES256 JWT 生成 (P-256、r\|\|s 固定長署名)、SEC1 PEM の直列化/復元、64 文字 verifier 生成と S256 チャレンジ計算 |
 

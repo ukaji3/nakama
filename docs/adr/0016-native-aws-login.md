@@ -160,3 +160,16 @@ SSH/headless 環境向けの cross-device フロー (`--remote`) は AWS CLI と
   `awscli/customizations/sso/utils.py` (AuthCodeFetcher)
 - RFC 7636 (PKCE), RFC 9449 (DPoP)
 - ADR 0011 (マルチアカウントプロファイル), ADR 0015 (OS プロキシ / TLS)
+
+## 追記 (2026-10-15, Issue #94): SDK for Go v2 が login_session を解決するようになった
+
+aws-sdk-go-v2/config v1.32.0 (2025-11) から、既定の資格情報チェーンに AWS ログイン (`credentials/logincreds`) が入った。nakama は #94 でこの版以降の SDK に上げた。
+
+- **解決の経路**: active profile が無いときは、`login_session` を含むプロファイルを、nakama のフォールバックより先に SDK が解決する。nakama のフォールバックは、SDK の経路が失敗したときの互換レイヤとして残す。
+  - active profile の経路は変わらない (nakama の provider を明示的に渡す。fail-closed)。
+  - SDK の更新処理も、nakama が `LoadDefaultConfig` に渡す HTTP クライアント (プロキシ対応) を使う。
+- **キャッシュの形式**: SDK はトークンを更新すると、キャッシュを書き換える。そのときの形式が、AWS CLI や nakama と次の 2 点で異なる。
+  - `accessToken.expiresAt` は `time.Time` の JSON (小数秒と手元の時差を含む)。nakama は `Z` の形しか読めず、日本の時刻設定ではキャッシュを「壊れている」と判定していた。#94 で、任意の RFC 3339 を読むように直した。
+  - ID トークンを `identityToken` のキーで書く (`idToken` は消える)。nakama も AWS CLI も、トークンの使用と更新に ID トークンを必要としないので、影響しない。
+  - nakama が書くときは、引き続き AWS CLI と同じ形式にする。
+- **Risks の訂正**: 「書き込み自体は temp+rename でアトミック」は、nakama の書き込みについてのみ正しい。SDK の書き込みは `O_TRUNC` で開いて書く。そのため、書き込みの途中を別のプロセスが読むと、JSON の解析に失敗する可能性がある (書き込みが終われば、もう一度実行して読める)。nakama の側では対処できないので、許容する。
