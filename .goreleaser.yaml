@@ -66,11 +66,10 @@ changelog:
   sort: asc
   use: github
   filters:
+    # With or without a scope ("test(connect):") or a breaking-change
+    # "!"; the scope-less form alone let test(connect) into v0.19.2's notes.
     exclude:
-      - '^docs:'
-      - '^test:'
-      - '^chore:'
-      - '^ci:'
+      - '^(docs|test|chore|ci)(\(.+\))?!?:'
 
 release:
   github:

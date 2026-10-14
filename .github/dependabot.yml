@@ -1,9 +1,27 @@
 # Keeps the SHA-pinned GitHub Actions current: Dependabot understands
 # `uses: owner/repo@<sha> # vX.Y.Z` and bumps both the SHA and the
 # version comment.
+#
+# The Go modules are kept current as well (Issue #89); vendored code in
+# third_party/ is updated by scripts/vendor-ssm-plugin.sh instead. Minor
+# and patch updates come as one weekly pull request. Each such pull
+# request also needs THIRD-PARTY-NOTICES regenerated (`make notices`):
+# the notices list module versions, and CI checks them.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
