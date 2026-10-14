@@ -57,18 +57,23 @@ type dpopPayload struct {
 //   - the ECDSA signature is encoded as r||s with each integer
 //     left-padded to 32 bytes, base64url-encoded without padding.
 func buildDPoPHeader(key *ecdsa.PrivateKey, uri string, iat time.Time, jti string) (string, error) {
-	coord := func(b []byte) string {
-		buf := make([]byte, 32)
-		copy(buf[32-len(b):], b)
-		return base64.RawURLEncoding.EncodeToString(buf)
+	// The JWK carries the 32-byte big-endian coordinates. Take them from
+	// the SEC 1 uncompressed point (0x04 || X || Y, 65 bytes for P-256)
+	// rather than the X/Y big.Int fields, which Go 1.26 deprecates.
+	point, err := key.PublicKey.Bytes()
+	if err != nil {
+		return "", fmt.Errorf("encode the DPoP public key: %w", err)
+	}
+	if len(point) != 65 || point[0] != 4 {
+		return "", errors.New("the DPoP key is not an uncompressed P-256 point")
 	}
 	header := dpopHeader{
 		Typ: "dpop+jwt",
 		Alg: "ES256",
 		JWK: dpopJWK{
 			Kty: "EC",
-			X:   coord(key.X.Bytes()),
-			Y:   coord(key.Y.Bytes()),
+			X:   base64.RawURLEncoding.EncodeToString(point[1:33]),
+			Y:   base64.RawURLEncoding.EncodeToString(point[33:]),
 			Crv: "P-256",
 		},
 	}

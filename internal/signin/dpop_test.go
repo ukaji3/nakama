@@ -2,6 +2,7 @@ package signin
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -73,9 +74,9 @@ func TestBuildDPoPHeader_StructureAndSignature(t *testing.T) {
 	if len(xBytes) != 32 || len(yBytes) != 32 {
 		t.Fatalf("coordinate lengths = %d/%d, want 32/32", len(xBytes), len(yBytes))
 	}
-	if new(big.Int).SetBytes(xBytes).Cmp(key.X) != 0 ||
-		new(big.Int).SetBytes(yBytes).Cmp(key.Y) != 0 {
-		t.Error("jwk coordinates do not match the public key")
+	point := append(append([]byte{4}, xBytes...), yBytes...)
+	if pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point); err != nil || !pub.Equal(&key.PublicKey) {
+		t.Errorf("jwk coordinates do not match the public key (parse error: %v)", err)
 	}
 
 	// --- payload ---
@@ -149,7 +150,7 @@ func TestDPoPKeyPEM_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseDPoPKeyPEM: %v", err)
 	}
-	if parsed.D.Cmp(key.D) != 0 {
+	if !parsed.Equal(key) {
 		t.Error("round-tripped key does not match the original")
 	}
 }
