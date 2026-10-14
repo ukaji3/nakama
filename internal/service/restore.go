@@ -144,7 +144,7 @@ func (s *Service) planNewInstance(ctx context.Context, in RestoreInput) (*Restor
 	if len(backups) == 0 {
 		return nil, fmt.Errorf("nakama instance %q not found, and it has no backups (see \"nakama aws backup list\")", in.Name)
 	}
-	b, err := s.findBackup(ctx, in.Name, in.Label)
+	b, err := selectBackup(backups, in.Name, in.Label)
 	if err != nil {
 		return nil, err
 	}
@@ -401,6 +401,9 @@ func (s *Service) replaceRootVolume(ctx context.Context, name, instanceID, snaps
 	})
 	if err != nil {
 		return fmt.Errorf("CreateVolume: %w", err)
+	}
+	if volOut.VolumeId == nil {
+		return errors.New("CreateVolume returned no volume ID")
 	}
 	newVolumeID := *volOut.VolumeId
 	if err := s.waitVolumeState(ctx, newVolumeID, ec2types.VolumeStateAvailable); err != nil {
