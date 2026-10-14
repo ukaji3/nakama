@@ -37,7 +37,7 @@ sha256sum -c checksums.txt --ignore-missing
 tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 nakama /usr/local/bin/
 ```
 
-**ソースから** (Go 1.25 以上): `go install github.com/ukaji3/nakama/cmd/nakama@latest`
+**ソースから** (Go 1.26 以上): `go install github.com/ukaji3/nakama/cmd/nakama@latest`
 
 ## 主なコマンド
 
