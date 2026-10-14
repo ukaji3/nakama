@@ -49,7 +49,7 @@ func TestBase(t *testing.T) {
 
 func TestForBackup(t *testing.T) {
 	t.Parallel()
-	got := ForBackup("dev01", "before-x", "nakama-backup-dev01-before-x", "2026-05-29T00:00:00Z", "note")
+	got := ForBackup("dev01", "before-x", "nakama-backup-dev01-before-x", "2026-05-29T00:00:00Z", "note", BackupSource{})
 	if got[KeyComponent] != ComponentBackup {
 		t.Errorf("KeyComponent=%q, want %q", got[KeyComponent], ComponentBackup)
 	}
@@ -60,7 +60,30 @@ func TestForBackup(t *testing.T) {
 		t.Errorf("KeyNote=%q, want note", got[KeyNote])
 	}
 	// Empty note must not set the note tag.
-	if _, ok := ForBackup("dev01", "l", "n", "t", "")[KeyNote]; ok {
+	if _, ok := ForBackup("dev01", "l", "n", "t", "", BackupSource{})[KeyNote]; ok {
 		t.Error("empty note should omit KeyNote")
+	}
+}
+
+// TestForBackupRecordsSource pins the tags restore reads to rebuild a
+// deleted instance (Issue #96), and that unknown fields stay absent
+// rather than being written as empty tags.
+func TestForBackupRecordsSource(t *testing.T) {
+	t.Parallel()
+	got := ForBackup("dev01", "l", "n", "t", "", BackupSource{
+		InstanceType: "t4g.medium", Architecture: "arm64", Kind: "bare", IAMRole: "my-role",
+	})
+	for k, want := range map[string]string{
+		KeyInstanceType: "t4g.medium", KeyArchitecture: "arm64", KeyKind: "bare", KeyIAMRole: "my-role",
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %q, want %q", k, got[k], want)
+		}
+	}
+	none := ForBackup("dev01", "l", "n", "t", "", BackupSource{InstanceType: "t3.medium"})
+	for _, k := range []string{KeyArchitecture, KeyKind, KeyIAMRole} {
+		if _, ok := none[k]; ok {
+			t.Errorf("empty source field must omit %s, got %v", k, none)
+		}
 	}
 }
