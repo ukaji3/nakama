@@ -6,9 +6,12 @@ package userdata
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"regexp"
 	"text/template"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/ukaji3/nakama/internal/kiro"
 )
@@ -18,6 +21,9 @@ var codeServerTemplate string
 
 //go:embed bare.tmpl.sh
 var bareTemplate string
+
+//go:embed restore.tmpl.sh
+var restoreTemplate string
 
 // BareParams is the data passed to the bare cloud-init template
 // (`nakama aws create --bare`, Issue #52).
@@ -138,4 +144,85 @@ func RenderCodeServer(p CodeServerParams) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// RestoreScriptPath is where the restore user data places the
+// first-boot script of a code-server instance.
+const RestoreScriptPath = "/var/lib/nakama/restore-first-boot.sh"
+
+// RestoreParams is the data for the user data of an instance that
+// `nakama aws restore` rebuilds from a backup after the original was
+// deleted (Issue #96).
+type RestoreParams struct {
+	InstanceName string
+	Region       string
+	// Bare is true for an instance without code-server: the user data
+	// then only keeps the SSH host keys.
+	Bare bool
+	// SSMPasswordParameter holds the new code-server password, and
+	// SSMVersionParameter receives the running version. Both are
+	// required unless Bare.
+	SSMPasswordParameter string
+	SSMVersionParameter  string
+}
+
+// restoreCloudConfig is the subset of cloud-config the restore user data
+// uses. It is marshalled rather than templated so that the embedded
+// script is always quoted correctly.
+type restoreCloudConfig struct {
+	SSHDeleteKeys bool               `yaml:"ssh_deletekeys"`
+	WriteFiles    []restoreWriteFile `yaml:"write_files,omitempty"`
+	RunCmd        [][]string         `yaml:"runcmd,omitempty"`
+}
+
+type restoreWriteFile struct {
+	Path        string `yaml:"path"`
+	Owner       string `yaml:"owner"`
+	Permissions string `yaml:"permissions"`
+	Content     string `yaml:"content"`
+}
+
+// restoreHeader explains the cloud-config to anyone who reads the user
+// data of the instance.
+const restoreHeader = `#cloud-config
+# nakama user data for an instance restored from a backup (Issue #96).
+#
+# The root volume comes from the backup and already holds the user's
+# system, so nothing is installed. cloud-init sees a new instance ID and
+# would delete and regenerate the SSH host keys; ssh_deletekeys: false
+# keeps the backup's keys, so known_hosts entries made by
+# "nakama aws ssh setup" stay valid.
+`
+
+// RenderRestore returns the cloud-config user data for an instance
+// restored from a backup. The restored volume has already run its own
+// create-time user data, so this replaces it entirely: it keeps the SSH
+// host keys and, for a code-server instance, swaps in the new password.
+func RenderRestore(p RestoreParams) (string, error) {
+	cfg := restoreCloudConfig{SSHDeleteKeys: false}
+	if !p.Bare {
+		if p.SSMPasswordParameter == "" || p.SSMVersionParameter == "" {
+			return "", errors.New("restore user data: the SSM password and version parameters are required for a code-server instance")
+		}
+		t, err := template.New("restore").Parse(restoreTemplate)
+		if err != nil {
+			return "", err
+		}
+		var buf bytes.Buffer
+		if err := t.Execute(&buf, p); err != nil {
+			return "", err
+		}
+		cfg.WriteFiles = []restoreWriteFile{{
+			Path:        RestoreScriptPath,
+			Owner:       "root:root",
+			Permissions: "0700",
+			Content:     buf.String(),
+		}}
+		cfg.RunCmd = [][]string{{"bash", RestoreScriptPath}}
+	}
+	body, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", fmt.Errorf("restore user data: %w", err)
+	}
+	return restoreHeader + string(body), nil
 }
