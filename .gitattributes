@@ -1,0 +1,9 @@
+# Check every text file out with LF, whatever core.autocrlf says (Issue #89).
+#
+# Git for Windows defaults to core.autocrlf=true, which turned the shell
+# scripts embedded with go:embed (the NAT setup, the Kiro install, the
+# user-data templates) into CRLF in a Windows clone; a `make build` there
+# then shipped scripts that bash rejects ("/bin/bash^M: bad interpreter").
+# LF everywhere also keeps generated files (THIRD-PARTY-NOTICES, the
+# permission table in docs/requirements.md) byte-identical across systems.
+* text=auto eol=lf
