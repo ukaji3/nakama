@@ -150,25 +150,11 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		}
 	}
 
-	base, err := s.discoverBaseInfra(ctx)
+	net, err := s.prepareInstanceNetwork(ctx, in.Name)
 	if err != nil {
-		return nil, fmt.Errorf("discover base infrastructure: %w", err)
+		return nil, err
 	}
-
-	prefixListID, err := s.cloudFrontPrefixListID(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("resolve CloudFront prefix list: %w", err)
-	}
-
-	sgID, err := s.upsertInstanceSecurityGroup(ctx, in.Name, base.VPCID, prefixListID)
-	if err != nil {
-		return nil, fmt.Errorf("security group: %w", err)
-	}
-
-	eniID, err := s.upsertInstanceENI(ctx, in.Name, base.PrivateSubnet1aID, sgID)
-	if err != nil {
-		return nil, fmt.Errorf("eni: %w", err)
-	}
+	base, sgID, eniID := net.base, net.sgID, net.eniID
 
 	var ud string
 	if in.Bare {
@@ -464,6 +450,36 @@ func (s *Service) checkInstanceRunning(ctx context.Context, instanceID string) (
 		}
 	}
 	return false, nil
+}
+
+// instanceNetwork is the network side of a new instance: the shared
+// base infrastructure plus its own security group and ENI.
+type instanceNetwork struct {
+	base  baseInfra
+	sgID  string
+	eniID string
+}
+
+// prepareInstanceNetwork discovers the base infrastructure and creates
+// (or reuses) the instance's security group and ENI. Shared by create
+// and by restore of a deleted instance (Issue #96).
+func (s *Service) prepareInstanceNetwork(ctx context.Context, name string) (instanceNetwork, error) {
+	var n instanceNetwork
+	var err error
+	if n.base, err = s.discoverBaseInfra(ctx); err != nil {
+		return n, fmt.Errorf("discover base infrastructure: %w", err)
+	}
+	prefixListID, err := s.cloudFrontPrefixListID(ctx)
+	if err != nil {
+		return n, fmt.Errorf("resolve CloudFront prefix list: %w", err)
+	}
+	if n.sgID, err = s.upsertInstanceSecurityGroup(ctx, name, n.base.VPCID, prefixListID); err != nil {
+		return n, fmt.Errorf("security group: %w", err)
+	}
+	if n.eniID, err = s.upsertInstanceENI(ctx, name, n.base.PrivateSubnet1aID, n.sgID); err != nil {
+		return n, fmt.Errorf("eni: %w", err)
+	}
+	return n, nil
 }
 
 // baseInfra holds the IDs of base resources discovered via tag
