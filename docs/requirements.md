@@ -29,7 +29,7 @@
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用), Resource Groups Tagging API。機能別のアクション粒度の一覧は [付録 A. 機能別 IAM 権限マトリクス](#付録-a-機能別-iam-権限マトリクス) を参照 (現在の資格情報での可否は `nakama aws doctor` が表示する)
 - `connect` 利用時の追加 IAM 権限 (**呼び出し側プリンシパル**): `ssm:StartSession` / `ssm:TerminateSession` / `ssm:ResumeSession`。接続先 EC2 の instance role 側は既存 `AmazonSSMManagedInstanceCore` で充足
 - `connect` 利用時のクライアント前提: 追加バイナリ不要 (plugin を nakama 本体に取り込むため。詳細は design.md §12)
-- ビルド環境: Go 1.25+ (`go.mod` の `go` 行)
+- ビルド環境: Go 1.26+ (`go.mod` の `go` 行)
 - 実行環境: Linux / macOS / Windows
 - ネットワーク: HTTP(S) プロキシ環境では自動検出で対応 (優先順位: `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` 環境変数 → Windows のみ OS 設定 (WinHTTP/IE 静的設定・PAC)。macOS/Linux の OS 設定検出は非対応で環境変数のみ。TLS 検証は OS 証明書ストアを使用するため企業 CA の追加設定は不要。ADR 0015)
 
