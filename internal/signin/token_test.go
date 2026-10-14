@@ -139,6 +139,39 @@ func TestTokenValidateAndExpiresAt(t *testing.T) {
 	}
 }
 
+// The cache is shared with the AWS CLI and the AWS SDK for Go v2, which
+// write expiresAt differently; every RFC 3339 form must be read as the
+// same instant, in UTC.
+func TestExpiresAtTime_AcceptsEveryWritersFormat(t *testing.T) {
+	t.Parallel()
+	want := time.Date(2026, 10, 14, 18, 0, 0, 0, time.UTC)
+	for _, tc := range []struct{ name, in string }{
+		{"AWS CLI and nakama", "2026-10-14T18:00:00Z"},
+		{"Go SDK on a UTC machine", "2026-10-14T18:00:00.000000000Z"},
+		{"Go SDK on a JST machine", "2026-10-15T03:00:00+09:00"},
+		{"Go SDK with nanoseconds", "2026-10-15T03:00:00.000000001+09:00"},
+	} {
+		tok := Token{AccessToken: AccessToken{ExpiresAt: tc.in}}
+		got, err := tok.ExpiresAtTime()
+		if err != nil {
+			t.Errorf("%s: ExpiresAtTime(%q): %v", tc.name, tc.in, err)
+			continue
+		}
+		if got.Location() != time.UTC {
+			t.Errorf("%s: location=%v, want UTC", tc.name, got.Location())
+		}
+		if d := got.Sub(want); d < 0 || d > time.Nanosecond {
+			t.Errorf("%s: ExpiresAtTime(%q)=%v, want %v", tc.name, tc.in, got, want)
+		}
+	}
+	for _, bad := range []string{"", "2026-10-14 18:00:00", "2026-10-14T18:00:00", "1760464800"} {
+		tok := Token{AccessToken: AccessToken{ExpiresAt: bad}}
+		if _, err := tok.ExpiresAtTime(); err == nil {
+			t.Errorf("ExpiresAtTime(%q): expected an error", bad)
+		}
+	}
+}
+
 func TestFormatExpiresAt_UTCSecondPrecision(t *testing.T) {
 	t.Parallel()
 	jst := time.FixedZone("JST", 9*3600)

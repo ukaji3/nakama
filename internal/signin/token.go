@@ -9,8 +9,10 @@ import (
 	"time"
 )
 
-// expiresAtLayout is the accessToken.expiresAt timestamp format used
-// by the AWS CLI cache (UTC, second precision, literal Z suffix).
+// expiresAtLayout is the accessToken.expiresAt timestamp format that
+// the AWS CLI writes (UTC, second precision, literal Z suffix). nakama
+// writes the same format; it reads any RFC 3339 timestamp (see
+// ExpiresAtTime).
 const expiresAtLayout = "2006-01-02T15:04:05Z"
 
 // AccessToken is the accessToken object of the cached token document.
@@ -55,13 +57,21 @@ func (t *Token) Validate() error {
 	return nil
 }
 
-// ExpiresAtTime parses accessToken.expiresAt as a UTC timestamp.
+// ExpiresAtTime parses accessToken.expiresAt and returns it in UTC.
+//
+// Writers of the shared cache disagree on the format: the AWS CLI and
+// nakama write expiresAtLayout, while the AWS SDK for Go v2
+// (credentials/logincreds, part of its default credential chain)
+// rewrites the file after a refresh with a marshaled time.Time, i.e.
+// RFC 3339 with nanoseconds and the local UTC offset
+// (2026-10-15T03:00:00.123456789+09:00). Both are RFC 3339, so any RFC
+// 3339 timestamp is accepted.
 func (t *Token) ExpiresAtTime() (time.Time, error) {
-	ts, err := time.Parse(expiresAtLayout, t.AccessToken.ExpiresAt)
+	ts, err := time.Parse(time.RFC3339Nano, t.AccessToken.ExpiresAt)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("cached login token has malformed expiresAt: %w", err)
 	}
-	return ts, nil
+	return ts.UTC(), nil
 }
 
 // FormatExpiresAt renders a timestamp in the cache's expiresAt format.
