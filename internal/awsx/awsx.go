@@ -91,11 +91,16 @@ type Clients struct {
 //     on an unintended account. The active profile also takes
 //     precedence over AWS_PROFILE.
 //  2. Without an active profile, config.LoadDefaultConfig is called
-//     and STS GetCallerIdentity is used as a connectivity probe.
+//     and STS GetCallerIdentity is used as a connectivity probe. Since
+//     aws-sdk-go-v2/config v1.32.0 the default chain resolves a
+//     login_session key itself (credentials/logincreds), so a profile
+//     written by `aws login` / `nakama aws login` usually succeeds here,
+//     and the SDK refreshes and rewrites the shared token cache.
 //  3. If that probe fails and the user's AWS config ([default] in
 //     AWS_CONFIG_FILE or ~/.aws/config) carries a login_session key,
-//     nakama retries with the same native login-session provider
-//     (the SDK for Go v2 does not understand login_session itself).
+//     nakama retries with its own native login-session provider. This
+//     fallback predates the SDK's support and is kept as a
+//     compatibility layer.
 //
 // AWS_PROFILE is honoured in phases 2 and 3.
 func NewClients(ctx context.Context) (*Clients, error) {
@@ -256,11 +261,11 @@ func activeProfileError(active *profilestore.Profile, cause error) error {
 }
 
 // resolveDefaultChain resolves credentials without an active nakama
-// profile: default credential chain first, then — because the SDK for
-// Go v2 does not understand the login_session key that `aws login` /
-// `nakama aws login` writes — the native login-session fallback based
-// on the [default] section of the user's AWS config. AWS_PROFILE is
-// honoured in both phases.
+// profile: default credential chain first (which, with the SDK's
+// logincreds, already covers the login_session key that `aws login` /
+// `nakama aws login` writes), then the native login-session fallback
+// based on the [default] section of the user's AWS config. AWS_PROFILE
+// is honoured in both phases.
 func resolveDefaultChain(ctx context.Context, h resolverHooks) (aws.Config, string, string, error) {
 	profile := h.profileFromEnv()
 
