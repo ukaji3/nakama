@@ -2,9 +2,11 @@ package signin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,6 +122,110 @@ func TestProviderRetrieve_RefreshesAndRotates(t *testing.T) {
 		saved.ClientID != tok.ClientID || saved.TokenType != tok.TokenType {
 		t.Error("idToken/dpopKey/clientId/tokenType must be unchanged by a refresh")
 	}
+}
+
+// sdkLoginToken mirrors the cache document that the AWS SDK for Go v2
+// writes after a refresh (credentials/logincreds, loginToken): the
+// expiry is a marshaled time.Time in the local zone, and the ID token is
+// stored under identityToken rather than idToken.
+type sdkLoginToken struct {
+	AccessToken struct {
+		AccessKeyID     string    `json:"accessKeyId"`
+		SecretAccessKey string    `json:"secretAccessKey"`
+		SessionToken    string    `json:"sessionToken"`
+		AccountID       string    `json:"accountId"`
+		ExpiresAt       time.Time `json:"expiresAt"`
+	} `json:"accessToken"`
+	TokenType     string `json:"tokenType"`
+	RefreshToken  string `json:"refreshToken"`
+	IdentityToken string `json:"identityToken"`
+	ClientID      string `json:"clientId"`
+	DPOPKey       string `json:"dpopKey"`
+}
+
+// writeSDKToken stores tok in the cache the way the Go SDK would on a
+// machine in JST.
+func writeSDKToken(t *testing.T, cache *TokenCache, tok *Token, expiresAt time.Time) {
+	t.Helper()
+	var doc sdkLoginToken
+	doc.AccessToken.AccessKeyID = tok.AccessToken.AccessKeyID
+	doc.AccessToken.SecretAccessKey = tok.AccessToken.SecretAccessKey
+	doc.AccessToken.SessionToken = tok.AccessToken.SessionToken
+	doc.AccessToken.AccountID = tok.AccessToken.AccountID
+	doc.AccessToken.ExpiresAt = expiresAt.Add(123456789 * time.Nanosecond).In(time.FixedZone("JST", 9*3600))
+	doc.TokenType = tok.TokenType
+	doc.RefreshToken = tok.RefreshToken
+	doc.ClientID = tok.ClientID
+	doc.DPOPKey = tok.DPoPKey
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "+09:00") {
+		t.Fatalf("the fixture must carry a local offset like the SDK writes: %s", raw)
+	}
+	path, err := cache.path(testLoginSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderRetrieve_ReadsATokenTheGoSDKWrote(t *testing.T) {
+	t.Parallel()
+	t.Run("fresh: used as is", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int64
+		ts := newRefreshServer(t, &calls)
+		defer ts.Close()
+		expiresAt := fixedNow().Add(10 * time.Minute)
+		p, cache := newTestProvider(t, ts, nil, fixedNow)
+		writeSDKToken(t, cache, testToken(t, expiresAt), expiresAt)
+
+		creds, err := p.Retrieve(context.Background())
+		if err != nil {
+			t.Fatalf("Retrieve: %v", err)
+		}
+		if calls.Load() != 0 {
+			t.Errorf("refresh calls=%d, want 0 (token is fresh)", calls.Load())
+		}
+		if creds.AccessKeyID != "AKIAEXAMPLE" || creds.AccountID != testAccountID {
+			t.Errorf("unexpected credentials: %+v", creds)
+		}
+		if want := expiresAt.Add(123456789 * time.Nanosecond); !creds.Expires.Equal(want) {
+			t.Errorf("Expires=%v, want %v", creds.Expires, want)
+		}
+	})
+	t.Run("near expiry: refreshed and written back in the AWS CLI format", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int64
+		ts := newRefreshServer(t, &calls)
+		defer ts.Close()
+		expiresAt := fixedNow().Add(2 * time.Minute)
+		tok := testToken(t, expiresAt)
+		p, cache := newTestProvider(t, ts, nil, fixedNow)
+		writeSDKToken(t, cache, tok, expiresAt)
+
+		creds, err := p.Retrieve(context.Background())
+		if err != nil {
+			t.Fatalf("Retrieve: %v", err)
+		}
+		if calls.Load() != 1 || creds.AccessKeyID != "AKIANEW" {
+			t.Fatalf("refresh calls=%d key=%q, want one refresh", calls.Load(), creds.AccessKeyID)
+		}
+		saved, err := cache.Load(testLoginSession)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := FormatExpiresAt(fixedNow().Add(900 * time.Second)); saved.AccessToken.ExpiresAt != want {
+			t.Errorf("expiresAt=%q, want %q", saved.AccessToken.ExpiresAt, want)
+		}
+		if saved.DPoPKey != tok.DPoPKey || saved.ClientID != tok.ClientID || saved.AccessToken.AccountID != testAccountID {
+			t.Error("dpopKey, clientId, and accountId must survive the refresh")
+		}
+	})
 }
 
 func TestProviderRetrieve_TokenExpiredMapsToRelogin(t *testing.T) {
