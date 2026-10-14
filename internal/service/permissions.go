@@ -93,6 +93,26 @@ var (
 		"ssm:GetParameter",
 	}
 
+	// createInstanceActions: what building an instance needs beyond
+	// the NAT lifecycle (instance_create*.go): the base-infra lookups,
+	// the security group and ENI, and the CloudFront entry path. Shared
+	// by create and by restore of a deleted instance (Issue #96).
+	createInstanceActions = []string{
+		"cloudfront:CreateDistribution",
+		"cloudfront:CreateVpcOrigin",
+		"cloudfront:GetDistribution",
+		"cloudfront:GetVpcOrigin",
+		"cloudfront:TagResource",
+		"ec2:CreateNetworkInterface",
+		"ec2:DescribeInstanceTypes",
+		"ec2:DescribeManagedPrefixLists",
+		"ec2:DescribeNetworkInterfaces",
+		"ec2:DescribeSubnets",
+		"ec2:DescribeVpcs", // discoverBaseInfra -> findVPCByTags
+		"ssm:PutParameter",
+		"wafv2:ListWebACLs", // discoverBaseInfra -> findWAFWebACLARN
+	}
+
 	// backupActions: snapshot create/list/tag plus the root-volume
 	// lookup (backup.go, rootVolumeOf in instance_edit.go). `update`
 	// includes it because it takes an automatic pre-update backup.
@@ -201,28 +221,14 @@ func featurePermissionMatrix() []FeaturePermission {
 				resolveInstanceActions,
 				natLifecycleActions,
 				remoteScriptActions, // --setup / --dotfiles / --preset
-				[]string{
-					"cloudfront:CreateDistribution",
-					"cloudfront:CreateVpcOrigin",
-					"cloudfront:GetDistribution",
-					"cloudfront:GetVpcOrigin",
-					"cloudfront:TagResource",
-					"ec2:CreateNetworkInterface",
-					"ec2:DescribeInstanceTypes",
-					"ec2:DescribeManagedPrefixLists",
-					"ec2:DescribeNetworkInterfaces",
-					"ec2:DescribeSubnets",
-					"ec2:DescribeVpcs", // discoverBaseInfra -> findVPCByTags
-					"ssm:PutParameter",
-					"wafv2:ListWebACLs", // discoverBaseInfra -> findWAFWebACLARN
-				},
+				createInstanceActions,
 			),
 			Note:     "--bare は cloudfront:* を使わない。NAT インスタンスの初回作成を含む",
 			Simulate: true,
 		},
 		{
 			Feature:  "create --with-admin / --with-role",
-			Commands: "nakama aws create --with-admin / --with-role",
+			Commands: "nakama aws create / restore の --with-admin / --with-role",
 			Actions: []string{
 				"iam:AddRoleToInstanceProfile",
 				"iam:AttachRolePolicy",
@@ -234,7 +240,7 @@ func featurePermissionMatrix() []FeaturePermission {
 				"iam:ListInstanceProfilesForRole",
 				"iam:SimulatePrincipalPolicy",
 			},
-			Note:     "create 本体の権限に追加で必要 (ADR 0010 の事前検証を含む)",
+			Note:     "create / restore 本体の権限に追加で必要 (ADR 0010 の事前検証を含む)",
 			Simulate: true,
 		},
 		{
@@ -374,6 +380,7 @@ func featurePermissionMatrix() []FeaturePermission {
 			Actions: mergeActions(
 				resolveInstanceActions,
 				natLifecycleActions,
+				createInstanceActions, // a deleted instance is rebuilt (Issue #96)
 				[]string{
 					"ec2:AttachVolume",
 					"ec2:CreateTags",
@@ -386,6 +393,8 @@ func featurePermissionMatrix() []FeaturePermission {
 					"ec2:StopInstances",
 				},
 			),
+			Note: "インスタンスが削除済みのときは、同じ名前のインスタンスを作り直すので create と同じ権限が要る " +
+				"(--bare は cloudfront:* を使わない)",
 			Simulate: true,
 		},
 		{
