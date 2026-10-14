@@ -143,7 +143,7 @@
     <tr><td><code>nakama aws backup list [名前]</code></td><td>バックアップ一覧 (省略で全件)</td><td>—</td></tr>
     <tr><td><code>nakama aws backup note &lt;名前&gt;</code></td><td>メモを付ける</td><td><code>--label</code> (必須)、<code>--note</code> (必須)</td></tr>
     <tr><td><code>nakama aws backup delete &lt;名前&gt;</code></td><td>バックアップ削除</td><td><code>--label</code> (必須)</td></tr>
-    <tr><td><code>nakama aws restore &lt;名前&gt;</code></td><td>バックアップから復元 (上書き)。<strong>完了後は停止状態</strong>なので <code>start</code> が必要</td><td><code>--label &lt;名札&gt;</code> (既定は最新)、<code>-y, --yes</code></td></tr>
+    <tr><td><code>nakama aws restore &lt;名前&gt;</code></td><td>バックアップから復元 (上書き)。環境を削除済みなら、同じ名前で作り直す (URL とパスワードは新しくなる)。<strong>完了後は停止状態</strong>なので <code>start</code> が必要</td><td><code>--label &lt;名札&gt;</code> (既定は最新)、<code>-y, --yes</code>。削除済みのときだけ: <code>--instance-type &lt;型&gt;</code>、<code>--bare</code>、<code>--with-admin</code>、<code>--with-role &lt;ロール&gt;</code></td></tr>
     <tr><td><code>nakama aws delete &lt;名前&gt;</code></td><td>環境を削除 (15〜20 分)。土台は残ります</td><td><code>--force</code>、<code>-y, --yes</code></td></tr>
   </tbody>
 </table>
@@ -230,6 +230,11 @@ ssh nakama-dev01</code></pre>
 <pre><code>nakama aws backup create dev01 --label before-change --note "変更前"
 # ... 作業 ...
 nakama aws restore dev01 --label before-change   # 戻したいとき (上書きです)</code></pre>
+
+<p class="cmd-caption">消してしまった環境を戻す</p>
+<pre><code>nakama aws backup list                           # 削除した環境のバックアップも出る
+nakama aws restore dev01                         # 同じ名前で作り直す (15〜20 分)
+nakama aws start dev01</code></pre>
 
 <p class="cmd-caption">調子が悪いとき</p>
 <pre><code>nakama aws doctor

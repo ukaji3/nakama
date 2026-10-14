@@ -106,6 +106,7 @@ github.com/ukaji3/nakama
 | `nakama:backup-time=<RFC3339>` | スナップショットの取得時刻。`backup list` の並び順と件数ベース prune の判定に使用 |
 | `nakama:backup-label=<label>` | バックアップの人間可読ラベル。`restore` / `backup delete` の選択キー。AWS snapshot-id を UI から隠蔽するための間接層 |
 | `nakama:note=<text>` | バックアップの自由記述メモ。`CreateTags` の上書きで後から編集可能。`backup list` に表示 |
+| `nakama:instance-type` / `nakama:architecture` / `nakama:kind` / `nakama:iam-role` | バックアップの取得元インスタンスの設定 (タイプ、`x86_64` / `arm64`、`vscode` / `bare`、`--with-admin` / `--with-role` のロール名)。削除済みインスタンスの restore が既定値に使う (Issue #96、ADR 0023)。値が無いものは付けない。Issue #96 より前のバックアップには無い |
 | `Name` | 標準 AWS Name タグ。命名規約に従う |
 
 `component` の取りうる値は `internal/tagging.Component*` を参照。
@@ -174,6 +175,8 @@ type Backup struct {
     State      string `json:"state"`          // pending|completed|error
     SizeGiB    int32  `json:"size_gib"`
     SnapshotID string `json:"snapshot_id"`    // table 出力では非表示
+    // 取得元インスタンスの設定 (Issue #96)。古いバックアップでは空
+    InstanceType, Architecture, Kind, IAMRole string // json: instance_type, architecture, kind, iam_role
 }
 
 func (s *Service) CreateBackup(ctx, CreateBackupInput) (*Backup, error)
@@ -181,8 +184,13 @@ func (s *Service) ListBackups(ctx, name string) ([]Backup, error)
 func (s *Service) ListAllBackups(ctx) ([]Backup, error) // 全インスタンス横断 (backup list 名前省略時)
 func (s *Service) SetBackupNote(ctx, name, label, note string) (*Backup, error)
 func (s *Service) DeleteBackup(ctx, name, label string) error
-func (s *Service) Restore(ctx, RestoreInput) error // RestoreInput{Name, Label}; Label 空=最新
+// RestoreInput{Name, Label, InstanceType, Bare, WithAdmin, WithRole}。Label 空=最新。
+// InstanceType 以降は削除済みインスタンスの作り直しにだけ使う (Issue #96)
+func (s *Service) PlanRestore(ctx, RestoreInput) (*RestorePlan, error) // 読み取りだけ。Mode = in-place | new-instance
+func (s *Service) Restore(ctx, *RestorePlan) (*RestoreResult, error)
 ```
+
+- `restore` の CLI は、`PlanRestore` の結果 (モード、使うバックアップ、作り直すときのタイプ・種類・ロール、警告) を表示してから確認を取り、`Restore` を呼ぶ。
 
 - ラベル検証: `^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$` (`internal/service` のローカル regexp)。空ラベルは取得時刻スラッグ `2006-01-02-1504` を採番。
 - メモ検証: 255 文字以内 (`utf8.RuneCountInString`)。
@@ -267,8 +275,10 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 
 ### 8.5 `nakama aws restore`
 
+モードは SSM の `/nakama/<name>/meta/instance-id` の有無で決まる。ある場合はインプレース復元 (下の 1〜10)。無い場合 (インスタンスが削除済み) は、同じ名前のインスタンスを作り直す (§8.5.1、ADR 0023)。記録はあるのに EC2 が無い (`terminated` か `NotFound`) 場合は、`delete --force` で残りを片付けるよう案内してエラーにする。
+
 1. 対象スナップショットを解決: `--label` 指定時はタグ `nakama:backup-label` で、省略時は `backup-time` 最新のものを選ぶ。利用者は snapshot-id を指定しない
-2. 確認 (`--yes` 必須)
+2. 確認 (`--yes` で省略)。作り直し用のフラグ (`--instance-type` / `--bare` / `--with-admin` / `--with-role`) はエラー
 3. instance-id を SSM で解決し、現ルートのデバイス名 (例 `/dev/sda1`) と旧ルートボリューム ID / AZ / ボリュームタイプを記録 (stop より前に取得)
 4. インスタンスを `stop` → `stopped` まで待機
 5. スナップショットから新ボリュームを `CreateVolume` (同 AZ / 同タイプ、暗号化は継承)
@@ -277,6 +287,27 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 8. 旧ルートボリュームを `DeleteVolume`
 9. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。インスタンスは停止のまま残るため、他に稼働中が無ければ NAT インスタンスも停止。ADR 0007)
 10. インスタンスは停止のまま終了 (利用者が `start`)
+
+#### 8.5.1 削除済みインスタンスの作り直し (Issue #96)
+
+計画 (`PlanRestore`、読み取りだけ。失敗すれば何も作らない):
+
+1. 名前を `ValidateNewInstanceName` で検査する。その名前のバックアップが無ければエラー。`--label` (省略時は最新) で選んだバックアップが `completed` でなければエラー
+2. `assertNameAvailable`: nakama の記録が無いのに同じ名前の EC2 があればエラー。`requireInitialized`
+3. 種類: タグ `nakama:kind` を優先する。`vscode` のバックアップに `--bare` はエラー。タグが無ければ `--bare` に従う
+4. タイプ: `--instance-type` > タグ `nakama:instance-type`。どちらも無ければ `--instance-type` を求めるエラー。`resolveInstanceArchitecture` でアーキを決め、タグ `nakama:architecture` と違えばエラー
+5. 警告: タグの無いバックアップでは、アーキを検査できないことを警告する。タグ `nakama:iam-role` があってフラグが無ければ、ロールを付け直さないことと、付けるフラグ (`nakama-instance-role-admin` なら `--with-admin`) を警告する
+
+実行 (`Restore`):
+
+1. `--with-admin` / `--with-role` があれば、create と同じくロールを先に用意する (ADR 0010 の事前検証)
+2. アーキに合う最新の Ubuntu 26.04 AMI を解決する。code-server なら新しいパスワードを生成して SSM に置く
+3. `prepareInstanceNetwork` (create と共通): 土台の発見、SG と ENI の作成
+4. user-data は `userdata.RenderRestore` の cloud-config。`ssh_deletekeys: false` で、バックアップの SSH ホスト鍵を残す (cloud-init は新しいインスタンス ID を見ると鍵を消して作り直すため)。code-server なら初回起動スクリプトを置き、`runcmd` で実行する。スクリプトは `~/.config/code-server/config.yaml` が無ければ何もせず (起動直後の新しいボリュームの場合)、あれば SSM の新しいパスワードで `password:` の行だけを置き換えて code-server を再起動し、版を SSM に書き戻す。ソフトウェアは入れ直さない
+5. NAT インスタンスを起動し、`runInstances` で EC2 を起動する (ルートは既定の 20 GiB。直後に差し替える)。instance-id / ENI / SG を記録してから `running` を待つ
+6. code-server なら private DNS → VPC origin → distribution を作り、それぞれ作った直後に記録する (失敗しても `delete` で片付けられるように)
+7. インプレース復元の 3〜8 と同じ手順 (`replaceRootVolume`) でルートを差し替える。起動直後のボリュームは削除される
+8. NAT インスタンスの電源を再調整し、code-server なら distribution の `Deployed` を待つ。停止のまま終了する。URL・パスワード・プライベート IP は新しく、Kiro Crew の画面は `kirocrew enable` のやり直しが要る
 
 ### 8.7 `nakama aws connect`
 

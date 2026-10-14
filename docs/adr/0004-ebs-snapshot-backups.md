@@ -116,7 +116,8 @@ no time-based or background pruning in v1.
 - **Restore as a new named instance**: safer (non-destructive) but
   requires re-running the full `create` flow from a snapshot origin.
   Heavier; deferred. In-place restore covers the primary recovery use
-  case.
+  case. (Restoring a *deleted* instance under its own name was added
+  later; see ADR 0023.)
 - **Exposing the raw `snap-...` ID** (or a positional generation
   index) as the backup selector: rejected. The snapshot-id leaks AWS
   internals into a tool meant to hide them, and a generation index is
