@@ -85,7 +85,7 @@ make build
 - 認証: `nakama aws login` によるネイティブサインイン (**aws CLI 不要**、要 `SignInLocalDevelopmentAccess` 管理ポリシー。ADR 0016)、または SSO / Profile / 環境変数など任意の AWS 資格情報
 - 必要 IAM 権限: EC2, VPC, CloudFront (incl. VPC origins), WAFv2, SSM Parameter Store, IAM (instance role 用)。機能別の詳細は [docs/requirements.md の付録 A](docs/requirements.md#付録-a-機能別-iam-権限マトリクス)、現在の資格情報での可否は `nakama aws doctor`
 - `connect` 利用時は呼び出し側プリンシパルに `ssm:StartSession` 等が追加で必要
-- ビルド環境: Go 1.23+ (クロスコンパイル可: linux / darwin / windows)
+- ビルド環境: Go 1.25+ (`go.mod` の `go` 行。クロスコンパイル可: linux / darwin / windows)
 - 実行環境 (クライアント OS): Linux / macOS / Windows
 
 ## 使い方

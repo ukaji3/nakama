@@ -1,22 +1,6 @@
-// Package cli builds the nakama command tree using cobra.
-//
-// Sub-package layout:
-//
-//	cli/
-//	  root.go           // root command and global flags
-//	  aws.go            // `nakama aws` parent command
-//	  aws_init.go       // `nakama aws init`
-//	  aws_acl.go        // `nakama aws acl {add|list|delete}`
-//	  aws_create.go     // `nakama aws create`
-//	  aws_list.go       // `nakama aws list`
-//	  aws_info.go       // `nakama aws info`
-//	  aws_open.go       // `nakama aws open`
-//	  aws_lifecycle.go  // `nakama aws {start|stop}`
-//	  aws_delete.go     // `nakama aws delete`
-//	  aws_edit.go       // `nakama aws edit`
-//	  aws_backup.go     // `nakama aws backup {create|list|note|delete}`
-//	  aws_restore.go    // `nakama aws restore`
-//	  version.go        // `nakama version`
+// Package cli builds the nakama command tree using cobra: root.go holds
+// the root command and the global flags, and each `nakama aws <command>`
+// lives in aws_<command>.go.
 package cli
 
 import (
