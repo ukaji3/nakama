@@ -43,6 +43,14 @@ type Backup struct {
 	State      string `json:"state"`
 	SizeGiB    int32  `json:"size_gib"`
 	SnapshotID string `json:"snapshot_id"`
+
+	// The instance the backup was taken from, recorded so that restore
+	// can rebuild it after a delete (Issue #96). Empty for backups
+	// taken before nakama recorded them.
+	InstanceType string `json:"instance_type,omitempty"`
+	Architecture string `json:"architecture,omitempty"`
+	Kind         string `json:"kind,omitempty"`
+	IAMRole      string `json:"iam_role,omitempty"`
 }
 
 func validateNote(note string) error {
@@ -78,6 +86,10 @@ func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Back
 	if err != nil {
 		return nil, err
 	}
+	src, err := s.backupSource(ctx, in.Name, instanceID)
+	if err != nil {
+		return nil, err
+	}
 
 	existing, err := s.ListBackups(ctx, in.Name)
 	if err != nil {
@@ -90,7 +102,7 @@ func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Back
 	}
 
 	createdAt := time.Now().UTC().Format(time.RFC3339)
-	tags := tagging.ForBackup(in.Name, in.Label, naming.Snapshot(in.Name, in.Label), createdAt, in.Note)
+	tags := tagging.ForBackup(in.Name, in.Label, naming.Snapshot(in.Name, in.Label), createdAt, in.Note, src)
 	csIn := &ec2.CreateSnapshotInput{
 		VolumeId: aws.String(volumeID),
 		TagSpecifications: []ec2types.TagSpecification{
@@ -106,7 +118,10 @@ func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Back
 		return nil, fmt.Errorf("CreateSnapshot: %w", err)
 	}
 
-	b := &Backup{Label: in.Label, Note: in.Note, CreatedAt: createdAt, State: string(out.State)}
+	b := &Backup{
+		Label: in.Label, Note: in.Note, CreatedAt: createdAt, State: string(out.State),
+		InstanceType: src.InstanceType, Architecture: src.Architecture, Kind: src.Kind, IAMRole: src.IAMRole,
+	}
 	if out.SnapshotId != nil {
 		b.SnapshotID = *out.SnapshotId
 	}
@@ -121,6 +136,35 @@ func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Back
 	}
 	slog.Info("backup: created", "instance", in.Name, "label", in.Label, "snapshot_id", b.SnapshotID)
 	return b, nil
+}
+
+// backupSource reads what restore needs to rebuild the instance once it
+// is deleted (Issue #96): the instance type and architecture from EC2,
+// and the kind and attached IAM role from the instance metadata.
+func (s *Service) backupSource(ctx context.Context, name, instanceID string) (tagging.BackupSource, error) {
+	var src tagging.BackupSource
+	out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		return src, fmt.Errorf("DescribeInstances: %w", err)
+	}
+	for _, r := range out.Reservations {
+		for _, i := range r.Instances {
+			src.InstanceType = string(i.InstanceType)
+			src.Architecture = string(i.Architecture)
+		}
+	}
+	kind, err := s.ssmGetOptional(ctx, ssmKindPath(name))
+	if err != nil {
+		return src, err
+	}
+	src.Kind = instanceKindVSCode
+	if kind == instanceKindBare {
+		src.Kind = instanceKindBare
+	}
+	if src.IAMRole, err = s.ssmGetOptional(ctx, ssmIAMRolePath(name)); err != nil {
+		return src, err
+	}
+	return src, nil
 }
 
 // ListBackups returns the named instance's snapshots, newest first.
@@ -183,6 +227,11 @@ func snapshotToBackup(sn ec2types.Snapshot) Backup {
 		Note:      t[tagging.KeyNote],
 		CreatedAt: t[tagging.KeyBackupTime],
 		State:     string(sn.State),
+
+		InstanceType: t[tagging.KeyInstanceType],
+		Architecture: t[tagging.KeyArchitecture],
+		Kind:         t[tagging.KeyKind],
+		IAMRole:      t[tagging.KeyIAMRole],
 	}
 	if b.CreatedAt == "" && sn.StartTime != nil {
 		b.CreatedAt = sn.StartTime.UTC().Format(time.RFC3339)
