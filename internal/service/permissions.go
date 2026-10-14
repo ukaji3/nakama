@@ -212,7 +212,9 @@ func featurePermissionMatrix() []FeaturePermission {
 					"ec2:DescribeManagedPrefixLists",
 					"ec2:DescribeNetworkInterfaces",
 					"ec2:DescribeSubnets",
+					"ec2:DescribeVpcs", // discoverBaseInfra -> findVPCByTags
 					"ssm:PutParameter",
+					"wafv2:ListWebACLs", // discoverBaseInfra -> findWAFWebACLARN
 				},
 			),
 			Note:     "--bare は cloudfront:* を使わない。NAT インスタンスの初回作成を含む",
