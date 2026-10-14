@@ -14,6 +14,7 @@ func TestEmbeddedTemplatesUseLF(t *testing.T) {
 	for name, s := range map[string]string{
 		"code-server.tmpl.sh": codeServerTemplate,
 		"bare.tmpl.sh":        bareTemplate,
+		"restore.tmpl.sh":     restoreTemplate,
 	} {
 		if i := strings.IndexByte(s, '\r'); i >= 0 {
 			t.Errorf("%s contains a carriage return at byte %d; check it out with LF (see .gitattributes)", name, i)
