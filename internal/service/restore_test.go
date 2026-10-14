@@ -38,6 +38,9 @@ type fakeRestoreEC2 struct {
 	// namedOrphan makes assertNameAvailable see an EC2 instance carrying
 	// the name although SSM has no record of it.
 	namedOrphan bool
+	// noVolumeID makes CreateVolume answer without a volume ID.
+	noVolumeID bool
+	snapCalls  int
 
 	// instances by ID (i-old for in-place tests, i-new once launched).
 	state    map[string]ec2types.InstanceStateName
@@ -123,6 +126,7 @@ func (f *fakeRestoreEC2) DescribeInstances(_ context.Context, in *ec2.DescribeIn
 }
 
 func (f *fakeRestoreEC2) DescribeSnapshots(context.Context, *ec2.DescribeSnapshotsInput, ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error) {
+	f.snapCalls++
 	return &ec2.DescribeSnapshotsOutput{Snapshots: f.snaps}, nil
 }
 
@@ -213,6 +217,9 @@ func (f *fakeRestoreEC2) CreateVolume(_ context.Context, in *ec2.CreateVolumeInp
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("CreateVolume %s %s %s", aws.ToString(in.SnapshotId), aws.ToString(in.AvailabilityZone), in.VolumeType)
+	if f.noVolumeID {
+		return &ec2.CreateVolumeOutput{}, nil
+	}
 	f.volState["vol-restored"] = ec2types.VolumeStateAvailable
 	return &ec2.CreateVolumeOutput{VolumeId: aws.String("vol-restored")}, nil
 }
@@ -368,6 +375,9 @@ func TestPlanRestore_DeletedInstanceIsRebuiltFromTheBackupTags(t *testing.T) {
 	if p.Mode != RestoreModeNewInstance || p.Backup.Label != "new" || p.InstanceType != "m7g.xlarge" ||
 		p.Architecture != config.ArchARM64 || p.Bare || p.WithAdmin || p.WithRole != "" {
 		t.Errorf("plan = %+v, want a new arm64 m7g.xlarge code-server instance from the latest backup, no role", p)
+	}
+	if f.snapCalls != 1 {
+		t.Errorf("DescribeSnapshots calls = %d, want 1 (the backup is picked from one listing)", f.snapCalls)
 	}
 	// The admin role is not re-attached on its own, but the user is told.
 	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "--with-admin") {
@@ -605,5 +615,28 @@ func TestRestore_InPlaceStillSwapsTheExistingRoot(t *testing.T) {
 	}
 	if res.Mode != RestoreModeInPlace || res.InstanceID != "i-old" || res.Label != "l1" {
 		t.Errorf("result = %+v", res)
+	}
+}
+
+// TestRestore_CreateVolumeWithoutAnIDFailsCleanly guards the response
+// dereference: an answer without a volume ID is an error, not a panic,
+// and the current root volume is left in place.
+func TestRestore_CreateVolumeWithoutAnIDFailsCleanly(t *testing.T) {
+	t.Parallel()
+	f := newFakeRestoreEC2(snapNamed("snap-1", "dev01", "l1", "", "2026-10-01T00:00:00Z"))
+	f.state["i-old"] = ec2types.InstanceStateNameStopped
+	f.rootVol["i-old"] = "vol-cur"
+	f.volState["vol-cur"] = ec2types.VolumeStateInUse
+	f.noVolumeID = true
+	svc, _, _ := restoreService(f, map[string]string{ssmInstanceIDPath("dev01"): "i-old"})
+	p, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01"})
+	if err != nil {
+		t.Fatalf("PlanRestore: %v", err)
+	}
+	if _, err := svc.Restore(context.Background(), p); err == nil || !strings.Contains(err.Error(), "no volume ID") {
+		t.Fatalf("Restore error = %v, want the missing-volume-ID error", err)
+	}
+	if indexOf(f.log, "DetachVolume") >= 0 || indexOf(f.log, "DeleteVolume") >= 0 {
+		t.Errorf("the current root volume must stay attached: %v", f.log)
 	}
 }

@@ -251,6 +251,12 @@ func (s *Service) findBackup(ctx context.Context, name, label string) (*Backup, 
 	if err != nil {
 		return nil, err
 	}
+	return selectBackup(backups, name, label)
+}
+
+// selectBackup picks a backup by label from a newest-first listing
+// (empty label -> newest).
+func selectBackup(backups []Backup, name, label string) (*Backup, error) {
 	if len(backups) == 0 {
 		return nil, fmt.Errorf("no backups found for instance %q", name)
 	}
