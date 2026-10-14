@@ -60,7 +60,8 @@
 | バックアップ | `nakama aws backup list [<n>]` | 当該インスタンスのバックアップを一覧 (ラベル / 取得時刻 / サイズ / 状態 / メモ。AWS の snapshot-id は既定では非表示、`-o json` でのみ表示)。名前を省略すると全インスタンスのバックアップを NAME 列付きで一覧する (インスタンス削除後にバックアップの帰属を辿れるようにするため) |
 | バックアップ | `nakama aws backup note <n> --label <label> --note <text>` | 取得後にメモを設定・更新する。`--note` は必須 (省略はエラー)。空文字を明示指定 (`--note ""`) するとメモを消去 |
 | バックアップ | `nakama aws backup delete <n> --label <label>` | ラベルで指定したバックアップを削除 |
-| バックアップ | `nakama aws restore <n> [--label <label>] [--yes]` | インプレース復元。`--label` 省略時は最新バックアップへ復元。インスタンスを停止しスナップショットから作成したボリュームをルートに差し替え (旧ルートは削除) |
+| バックアップ | `nakama aws restore <n> [--label <label>] [--yes]` | インスタンスが**ある**とき: インプレース復元。`--label` 省略時は最新バックアップへ復元。インスタンスを停止しスナップショットから作成したボリュームをルートに差し替え (旧ルートは削除) |
+| バックアップ | `nakama aws restore <n> [--label <label>] [--instance-type <t>] [--bare] [--with-admin \| --with-role <role>] [--yes]` | インスタンスが**削除済み**のとき: 同じ名前のインスタンスを作り直して復元 (Issue #96、ADR 0023)。`create` と同じリソースを作り、ルートをバックアップから作ったボリュームに差し替える。ソフトウェアは入れ直さない。URL・code-server のパスワード・プライベート IP は新しくなり、SSH のホスト鍵はバックアップのものを引き継ぐ。完了後は停止状態 |
 | 接続 | `nakama aws connect <n>` | AWS Systems Manager Session Manager 経由で対話シェルにログイン (SSH 不要・受信ポート開放なし) |
 | 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY)。非対話では stdout と stderr を分けて出し、リモートの終了コードで終わる (受け取れなければ 255)。標準入力は読まない |
 | 接続 | `nakama aws tunnel [start] <n> -L <spec> [-L <spec>...]` | バックグラウンドに常駐してポート転送 (ADR 0017)。`start` は省略可。複数 `-L` 可 (転送ごとに SSM セッション)。既に転送中なら転送一覧を表示して exit 1 |
@@ -95,9 +96,10 @@
 - `<IP>`: IPv4 単独 (`/32` 自動付与) または IPv4 CIDR。**IPv6 は v1 非対応**
 - `<instance-type>`: `ec2:DescribeInstanceTypes` で存在を事前検証し CPU アーキ (x86_64 / arm64) を判定 (create / edit 双方)。存在しないタイプはインスタンスを停止せず即時エラー (`instance type %q does not exist`)。Graviton (arm64) タイプ指定時は arm64 版 Ubuntu AMI を自動選択する。`edit` での**アーキ跨ぎ変更は不可** (別アーキへは delete → create)
 - `--ebs <size>`: 現在のサイズより大きい整数 (GiB)
-- `--with-admin` / `--with-role <role>` (create 専用): 相互排他。`--with-role` のロール名は `^[\w+=,.@-]{1,64}$` (IAM ロール命名規則) で事前検証し、`iam:GetRole` で存在確認 (未存在は即エラー)。trust policy が `ec2.amazonaws.com` の `sts:AssumeRole` を許可していないロールも即エラー。指定ロールに AmazonSSMManagedInstanceCore / AdministratorAccess のいずれも付いていない場合は警告 (SSM 接続・パスワード取得が動かない可能性)。いずれのフラグでも、リソース作成前に `iam:SimulatePrincipalPolicy` で `iam:PassRole` (+ 未作成分の `iam:CreateRole` / `iam:AttachRolePolicy` / `iam:CreateInstanceProfile` / `iam:AddRoleToInstanceProfile`) を検査し、拒否があれば何も作らずエラー (fail-closed。呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要)
+- `--with-admin` / `--with-role <role>` (create と、削除済みインスタンスの restore): 相互排他。`--with-role` のロール名は `^[\w+=,.@-]{1,64}$` (IAM ロール命名規則) で事前検証し、`iam:GetRole` で存在確認 (未存在は即エラー)。trust policy が `ec2.amazonaws.com` の `sts:AssumeRole` を許可していないロールも即エラー。指定ロールに AmazonSSMManagedInstanceCore / AdministratorAccess のいずれも付いていない場合は警告 (SSM 接続・パスワード取得が動かない可能性)。いずれのフラグでも、リソース作成前に `iam:SimulatePrincipalPolicy` で `iam:PassRole` (+ 未作成分の `iam:CreateRole` / `iam:AttachRolePolicy` / `iam:CreateInstanceProfile` / `iam:AddRoleToInstanceProfile`) を検査し、拒否があれば何も作らずエラー (fail-closed。呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要)
 - `update <n>` (受理状態): 対象は **running または stopped のみ** (`pending`/`stopping`/`terminated` 等は即エラー)。stopped は内部で start→更新→stop と遷移し、元状態へ戻す。code-server は常に latest、apt は `dist-upgrade -y` (非対話: `DEBIAN_FRONTEND=noninteractive` + `--force-confdef/--force-confold`)。reboot は「元 running かつ `/var/run/reboot-required` 存在時のみ」実施 (元 stopped は最終 stop で反映されるため reboot しない)
 - `--keep <N>`: 1 以上の整数。省略時は自動削除なし (手動 `backup delete` のみ)。`update` でも自動バックアップの世代数制御に使用
+- restore で削除済みインスタンスを作り直すときの設定: バックアップのタグ (`backup create` が記録する、インスタンスタイプ・CPU アーキ・種類・IAM ロール名) を既定とする。`--instance-type` はタイプを上書きするが、タグのアーキと違えば何も作らずにエラー。タグの無いバックアップ (Issue #96 より前に取得) では `--instance-type` が必須で、bare なら `--bare` も要る。この場合アーキを検査できないため警告を出す。IAM ロールは自動では付け直さず、元にロールがあれば `--with-admin` / `--with-role` を案内する警告を出す。インスタンスが存在するときにこれらのフラグを指定するとエラー
 - `--label <label>`: バックアップの人間可読な識別子。`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$`。当該 `<name>` 内で一意 (重複はエラー)。`restore` / `backup delete` での選択に使用。利用者は AWS の snapshot-id を意識しない
 - `--note <text>`: バックアップの自由記述メモ。最大 255 文字、Unicode 可 (日本語・空白可)。`backup note` では必須で、空文字の明示指定でメモ消去 (省略による無警告消去を防ぐ)。識別子ではないため一意性は不要
 - `-L <spec>` (tunnel 専用): `<localPort>:<remotePort>` または `<localPort>:<host>:<remotePort>`。各ポートは 1–65535。`<host>` 省略時は接続先 instance 自身。複数指定可 (転送ごとに SSM セッションを 1 本張る)。start 系呼び出しでは 1 つ以上必須
@@ -162,7 +164,7 @@
 - ルート EBS 以外 (追加データボリューム) のバックアップ
 - 期間ベース (N 日経過で削除) の世代管理。v1 は件数ベース (`--keep N`) のみ
 - スナップショットのクロスリージョン / クロスアカウントコピー
-- 別名インスタンスとしての復元 (v1 はインプレース復元のみ)
+- 別名インスタンスとしての復元 (同じ名前での作り直しのみ。Issue #96)
 - `connect` でのファイル転送 (scp / sftp 相当)
 - `connect` セッションログの S3 / CloudWatch Logs への記録 (Session Manager logging 設定)
 - `tunnel` のポートごとの転送量 (バイト数) 計測・表示
@@ -203,6 +205,8 @@
 22. (手動 E2E) Windows で nakama.exe をエクスプローラーからダブルクリックすると、Windows PowerShell のウィンドウが開き、nakama.exe のフォルダーが PATH の先頭にあることと、プロキシ・CA・疎通確認の結果が表示される。そのウィンドウでは、どのフォルダーからでも `nakama version` が動き、検出に成功していれば `aws s3 ls` も追加設定なしで動く。オフラインでもウィンドウは開き、`nakama` を打てる。`exit` でウィンドウが閉じ、レジストリ・ユーザー環境変数に変更は残らない。シェルの中で Ctrl-C を押しても nakama は終わらない (自動テストでは Ctrl-Break を受けた `runShell` の生存を確認する)
 
 23. `nakama aws init` で作った NAT インスタンス (t4g.nano、最新の AL2023 AMI) では、初回起動の設定が OOM なしで完了する。`dnf --releasever=latest upgrade` が適用され、`iptables-nft` だけが入り、MASQUERADE のルールが入る。init は最後に NAT インスタンスの転送を確かめる。転送が壊れた NAT インスタンス (`iptables` が無い、`nakama-nat.service` が失敗) では、init が修理して `nat forwarding: repaired` と表示する。直らなければ init は失敗する。停止中の NAT インスタンスは、確認の後に停止に戻る。`connect` / `ssh` が `TargetNotConnected` で失敗したときは、NAT インスタンスと init を案内する (Issue #87)
+
+24. `nakama aws delete <n>` で削除したインスタンスに対し、`nakama aws restore <n> --yes` を実行すると同じ名前のインスタンスができる。start するとバックアップ時点のファイルがあり、新しい URL に新しいパスワードでログインでき、SSH のホスト鍵の指紋は削除前と同じ。bare のバックアップからは bare のインスタンスができる。アーキの合わないタイプの指定とタグの無いバックアップでの `--instance-type` の省略は、何も作らずにエラーになる (Issue #96)
 
 ## 付録 A. 機能別 IAM 権限マトリクス
 
@@ -247,7 +251,7 @@
 | R3 | code-server の Microsoft Marketplace 不可は仕様 | README / FAQ に明記 |
 | R4 | `apne1-az3` の AZ ID 解決はアカウント依存 | `ec2:DescribeAvailabilityZones` で AZ ID を取得し除外 |
 | R5 | NAT のegressコスト | NAT Gateway を廃し NAT インスタンス (`t4g.nano`) を採用 (ADR 0007)。電源を code-server のライフサイクルに連動させ、全停止時は NAT インスタンスも停止して固定費をゼロに近づける。EIP は付与せず停止中の public IPv4 課金も回避 |
-| R6 | 稼働中スナップショットはクラッシュコンシステント | 重要時は `stop` 後に `backup create` する旨を明記。`restore` はインプレースで破壊的なため `--yes` を要求 |
+| R6 | 稼働中スナップショットはクラッシュコンシステント | 重要時は `stop` 後に `backup create` する旨を明記。`restore` はインプレースで破壊的なため確認を要求 (`--yes` で省略)。削除済みインスタンスの復元も確認を要求し、URL とパスワードが変わることを示す |
 | R7 | `--keep` 未指定スナップショットのコスト累積 | `--keep N` の利用を推奨。CLI は常駐しないため prune は `backup create` 実行時のみ |
 | R8 | 取り込んだ `session-manager-plugin` の upstream 追随は手動 | 取り込み元 commit/tag を ADR 0005 に記録し、定期的に re-sync |
 | R9 | `connect` には呼び出し側プリンシパルに `ssm:StartSession` 等が必要 (instance role とは別) | 前提条件 §3 に明記。`init` では付与しない (利用者責務) |

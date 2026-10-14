@@ -101,7 +101,7 @@ before-upgrade        2026-09-12T22:10:33Z  completed   30     アップグレ�
 <pre><code>nakama aws restore dev01                       # 最新のバックアップに戻す
 nakama aws restore dev01 --label before-upgrade  # 世代を指定して戻す</code></pre>
 <p>実行すると確認を求められます。</p>
-<pre class="output"><code>Restore nakama instance "dev01" in place? This deletes the current root volume. [y/N]:</code></pre>
+<pre class="output"><code>Restore nakama instance "dev01" in place from backup "before-upgrade" (2026-09-12T22:10:33Z)? This deletes the current root volume. [y/N]:</code></pre>
 
 <div class="callout danger" role="note">
   <span class="title">restore は現在の内容を消します</span>
@@ -112,6 +112,36 @@ nakama aws restore dev01 --label before-upgrade  # 世代を指定して戻す</
 <div class="callout warn" role="note">
   <span class="title">復元が終わると環境は停止した状態になります</span>
   <p>復元は環境を止めてディスクを入れ替えるため、完了後は<strong>停止状態のまま</strong>です。使うときは <code>nakama aws start dev01</code> で起動してください。復元中は数分かかり、その間 <code>connect</code> や <code>tunnel</code> の接続は切れます。</p>
+</div>
+
+<h3 id="restore-deleted">削除した環境を復元する</h3>
+<p><code>delete</code> で消した環境も、バックアップが残っていれば、同じ名前で作り直せます。コマンドは同じ <code>restore</code> です。環境が無いことを nakama が見つけて、新しい環境を作ってからディスクをバックアップの内容に入れ替えます。名前を忘れたときは、名前を省いた <code>nakama aws backup list</code> で探せます。</p>
+<p class="cmd-caption">PowerShell で実行</p>
+<pre><code>nakama aws backup list                           # 削除した環境のバックアップも出る
+nakama aws restore dev01                         # 最新のバックアップから作り直す
+nakama aws restore dev01 --label before-upgrade  # 世代を指定して作り直す</code></pre>
+<pre class="output"><code>nakama instance "dev01" no longer exists. Restore it as a new instance from backup "before-upgrade" (2026-09-12T22:10:33Z)?
+  instance type : t3.medium (x86_64)
+  kind          : code-server
+  IAM role      : none
+The disk is the backup's; nothing is reinstalled. The URL and the code-server password
+are new. This takes about 15-20 minutes (CloudFront); the instance is left stopped.
+[y/N]:</code></pre>
+<p>作り直しには、<code>create</code> と同じく 15〜20 分ほどかかります。終わったら <code>nakama aws start dev01</code> で起動し、<code>nakama aws open dev01</code> で開いてください。</p>
+<ul>
+  <li><strong>そのまま戻るもの</strong>: ディスクの中身 (コード、設定、入れたソフトウェア)。ソフトウェアは入れ直さないので、バックアップを取ったときの版のままです。最新にするには <code>nakama aws update dev01</code> を使います。<code>ssh</code> の接続先の鍵 (ホスト鍵) も同じなので、<code>nakama aws ssh setup</code> で作った設定はそのまま使えます。</li>
+  <li><strong>新しくなるもの</strong>: URL と code-server のパスワード。<code>open</code> はパスワードを自動で入れるので、いつもどおり開けます。ブラウザのブックマークは作り直してください。Kiro Crew の画面を使っていた場合は、<code>nakama aws kirocrew enable dev01</code> をもう一度実行します。</li>
+  <li><strong>大きさと種類</strong>: バックアップを取ったときのインスタンスタイプと種類 (<code>--bare</code> かどうか) で作ります。<code>--instance-type</code> で別のタイプにもできますが、<code>t3</code> (Intel/AMD) と <code>t4g</code> (ARM) のように CPU の種類が違うタイプにはできません。</li>
+</ul>
+
+<div class="callout warn" role="note">
+  <span class="title">管理者権限 (<code>--with-admin</code>) は自動では付きません</span>
+  <p>元の環境に <code>--with-admin</code> や <code>--with-role</code> のロールが付いていた場合、復元ではそのことを表示するだけで、ロールは付けません。必要なら <code>nakama aws restore dev01 --with-admin</code> のように指定してください。</p>
+</div>
+
+<div class="callout note" role="note">
+  <span class="title">古いバックアップから作り直すとき</span>
+  <p>このしくみより前に取ったバックアップには、インスタンスタイプが記録されていません。その場合は <code>nakama aws restore dev01 --instance-type t3.medium</code> のようにタイプを指定します (<code>--bare</code> で作った環境なら <code>--bare</code> も付けます)。元と CPU の種類 (Intel/AMD か ARM か) が違うタイプを選ぶと起動しないので、元の環境と同じ系統のタイプを選んでください。</p>
 </div>
 
 <h2 id="update">3. アップデート</h2>
@@ -165,9 +195,9 @@ nakama aws edit dev01 --instance-type t3.medium --yes    # 確認を省略</code
 <p>確認のあと、次の順で削除します: CloudFront distribution → VPC Origin → EC2 インスタンス → ENI (ネットワークインターフェース) → セキュリティグループ → SSM のパラメータ。<strong>全体で 15〜20 分ほどかかります</strong> (CloudFront の反映待ちが大半です)。土台 (<code>init</code> で作った VPC や WAF) はそのまま残ります。</p>
 
 <div class="callout danger" role="note">
-  <span class="title">中身は消え、バックアップからも戻せません</span>
-  <p><code>delete</code> はディスクも削除するため、<strong>その環境に置いていたコードやデータは失われます</strong>。しかも <code>restore</code> は「いまある環境のディスクを置き換える」操作なので、<strong>削除した環境をバックアップから nakama で復元することはできません</strong>。</p>
-  <p>必要なものは削除の前に git へ push するか、<code>nakama aws connect</code> や <code>scp</code> で手元にコピーしてください。</p>
+  <span class="title">中身はディスクごと消えます</span>
+  <p><code>delete</code> はディスクも削除するため、<strong>その環境に置いていたコードやデータは失われます</strong>。戻せるのは、<code>backup create</code> で取ったバックアップの時点までです (<a href="#restore-deleted">削除した環境を復元する</a>)。それ以降に書いた内容は戻りません。</p>
+  <p>必要なものは、削除の前に <code>nakama aws backup create</code> を取るか、git へ push するか、<code>nakama aws connect</code> や <code>scp</code> で手元にコピーしてください。</p>
   <p><code>backup</code> のスナップショットは環境の削除後も残り、<strong>保管料がかかり続けます</strong>。不要なら <code>nakama aws backup delete &lt;名前&gt; --label &lt;ラベル&gt;</code> で消してください。</p>
 </div>
 

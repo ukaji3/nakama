@@ -122,7 +122,7 @@ KNOWN_FLAGS = {
     "nakama aws backup create": {"--label", "--note", "--keep"},
     "nakama aws backup note": {"--label", "--note"},
     "nakama aws backup delete": {"--label"},
-    "nakama aws restore": {"--label", "--yes", "-y"},
+    "nakama aws restore": {"--label", "--yes", "-y", "--instance-type", "--bare", "--with-admin", "--with-role"},
     "nakama aws delete": {"--force", "--yes", "-y"},
     "nakama aws setup rerun": {"--setup", "--dotfiles", "--preset"},
     "nakama aws cli shell": {"--shell"},
