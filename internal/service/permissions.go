@@ -210,6 +210,7 @@ func featurePermissionMatrix() []FeaturePermission {
 				"ssm:GetParametersByPath",
 				"ssm:PutParameter",
 				"wafv2:GetIPSet",
+				"wafv2:ListIPSets", // findIPSetSummary
 				"wafv2:UpdateIPSet",
 			},
 			Simulate: true,
@@ -257,9 +258,10 @@ func featurePermissionMatrix() []FeaturePermission {
 				[]string{
 					"ssm:GetParametersByPath",
 					"wafv2:GetIPSet",
+					"wafv2:ListIPSets", // ListACL -> findIPSetSummary
 				},
 			),
-			Note: "wafv2:GetIPSet と ssm:GetParametersByPath は許可リスト未登録の " +
+			Note: "wafv2:ListIPSets / wafv2:GetIPSet と ssm:GetParametersByPath は許可リスト未登録の " +
 				"警告表示のためだけに使い、読めない場合は警告を出さずに続行する",
 			Simulate: true,
 		},
@@ -432,6 +434,7 @@ func featurePermissionMatrix() []FeaturePermission {
 				"iam:SimulatePrincipalPolicy",
 				"ssm:GetParametersByPath",
 				"wafv2:GetIPSet",
+				"wafv2:ListIPSets", // waf-allowlist: ListACL -> findIPSetSummary
 			},
 			Note: "読み取り専用。iam:SimulatePrincipalPolicy が無い場合も " +
 				"capability 判定が warn になるだけで他の診断は動く",
