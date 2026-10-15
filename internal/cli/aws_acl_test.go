@@ -66,6 +66,15 @@ func TestACLDeleteAllPrompt(t *testing.T) {
 	if strings.Contains(keep, "yours included") {
 		t.Errorf("with a kept entry the caller is not locked out:\n%s", keep)
 	}
+
+	one := aclDeleteAllPrompt(&service.ACLDeleteAllPlan{Delete: entries[:1]})
+	if !strings.Contains(one, "Delete the only entry") || strings.Contains(one, "1 entries") {
+		t.Errorf("one-entry prompt:\n%s", one)
+	}
+	kept := aclDeleteAllPrompt(&service.ACLDeleteAllPlan{Delete: entries[:1], Keep: entries[1:], MyIP: "10.0.0.1"})
+	if !strings.Contains(kept, "Delete 1 of 2 entries") {
+		t.Errorf("one-of-two prompt:\n%s", kept)
+	}
 }
 
 func TestACLDeleteAllSummary(t *testing.T) {
@@ -87,7 +96,7 @@ func TestACLDeleteAllSummary(t *testing.T) {
 			name: "kept mine",
 			plan: &service.ACLDeleteAllPlan{Delete: del, Keep: []service.ACLEntry{{CIDR: "153.242.166.137/32"}}, MyIP: "153.242.166.137"},
 			res:  &service.ACLDeleteAllResult{Deleted: []string{"10.0.0.0/8"}, Gone: []string{"203.0.113.5/32"}, Remaining: []string{"153.242.166.137/32"}},
-			want: []string{"deleted 1 entries; remaining: 153.242.166.137/32", "already removed by someone else: 203.0.113.5/32"},
+			want: []string{"deleted 1 entry; remaining: 153.242.166.137/32", "already removed by someone else: 203.0.113.5/32"},
 		},
 		{
 			name: "already empty",

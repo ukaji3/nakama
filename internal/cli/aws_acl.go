@@ -185,10 +185,13 @@ func runACLDeleteAll(ctx context.Context, cmd *cobra.Command, svc *service.Servi
 func aclDeleteAllPrompt(p *service.ACLDeleteAllPlan) string {
 	var b strings.Builder
 	total := len(p.Delete) + len(p.Keep)
-	if len(p.Keep) == 0 {
+	switch {
+	case len(p.Keep) > 0:
+		fmt.Fprintf(&b, "Delete %d of %s from the allowlist (WAF IP set nakama-allowed-ips):\n", len(p.Delete), entryCount(total))
+	case total == 1:
+		b.WriteString("Delete the only entry of the allowlist (WAF IP set nakama-allowed-ips):\n")
+	default:
 		fmt.Fprintf(&b, "Delete all %d entries from the allowlist (WAF IP set nakama-allowed-ips):\n", total)
-	} else {
-		fmt.Fprintf(&b, "Delete %d of %d entries from the allowlist (WAF IP set nakama-allowed-ips):\n", len(p.Delete), total)
 	}
 	writeACLEntries(&b, p.Delete)
 	if len(p.Keep) > 0 {
@@ -201,6 +204,14 @@ func aclDeleteAllPrompt(p *service.ACLDeleteAllPlan) string {
 	}
 	b.WriteString("connect, ssh and tunnel are not affected. [y/N]: ")
 	return b.String()
+}
+
+// entryCount renders a count of allowlist entries ("1 entry", "2 entries").
+func entryCount(n int) string {
+	if n == 1 {
+		return "1 entry"
+	}
+	return fmt.Sprintf("%d entries", n)
 }
 
 func writeACLEntries(b *strings.Builder, entries []service.ACLEntry) {
@@ -227,9 +238,9 @@ func aclDeleteAllSummary(p *service.ACLDeleteAllPlan, r *service.ACLDeleteAllRes
 	case len(r.Deleted) == 0 && len(r.Gone) == 0:
 		fmt.Fprintf(&b, "nothing to delete: every entry contains your IP %s", p.MyIP)
 	case len(r.Remaining) == 0:
-		fmt.Fprintf(&b, "deleted %d entries; the allowlist is now empty (add your IP with \"nakama aws acl add\")", len(r.Deleted))
+		fmt.Fprintf(&b, "deleted %s; the allowlist is now empty (add your IP with \"nakama aws acl add\")", entryCount(len(r.Deleted)))
 	default:
-		fmt.Fprintf(&b, "deleted %d entries; remaining: %s", len(r.Deleted), strings.Join(r.Remaining, ", "))
+		fmt.Fprintf(&b, "deleted %s; remaining: %s", entryCount(len(r.Deleted)), strings.Join(r.Remaining, ", "))
 	}
 	if len(r.Gone) > 0 {
 		fmt.Fprintf(&b, "\nalready removed by someone else: %s", strings.Join(r.Gone, ", "))
