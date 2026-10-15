@@ -95,7 +95,7 @@
 <pre><code>nakama aws acl add 203.0.113.10          # 1 つの IP (自動で /32 が付きます)
 nakama aws acl add 203.0.113.0/24        # 範囲で指定 (会社の出口が複数ある場合など)
 nakama aws acl list                      # 登録済みの一覧
-nakama aws acl delete 203.0.113.10/32    # 削除</code></pre>
+nakama aws acl delete 203.0.113.10/32    # 削除 (複数を並べてまとめて消すこともできます)</code></pre>
 
 <p><code>acl list</code> は次のように表示されます。</p>
 <pre class="output"><code>CIDR                  ADDED_AT
@@ -105,6 +105,17 @@ nakama aws acl delete 203.0.113.10/32    # 削除</code></pre>
   <span class="title">IP アドレスは変わります</span>
   <p>自宅の回線は再接続で IP が変わることがあり、会社のネットワークは出口が複数あって日によって変わることもあります。「昨日は開けたのに今日は 403 になる」ときは、まず <code>nakama aws acl add</code> をもう一度実行してください。</p>
   <p>使わなくなった IP は <code>acl delete</code> で消しておくと安全です。</p>
+</div>
+
+<h3 id="acl-cleanup">たまった IP をまとめて消す</h3>
+<p>IP を追加し続けると、もう使っていない IP が許可リストに残ります。<code>acl delete all</code> で一度に消せます。</p>
+<pre><code>nakama aws acl delete all --keep-mine    # いまの自分の IP を含むものだけ残して、ほかを消す
+nakama aws acl delete all                # すべて消す</code></pre>
+<p>どちらも、消す一覧を表示して確認を求めます。<code>y</code> と入力して <kbd>Enter</kbd> で実行します (<code>--yes</code> で確認を省けます)。</p>
+
+<div class="callout danger" role="note">
+  <span class="title"><code>acl delete all</code> は自分も締め出します</span>
+  <p>すべて消すと、<strong>どの開発環境 (Kiro Crew の画面も含む) も、あなたを含むすべてのブラウザに 403 を返します</strong>。使い続けるなら <code>--keep-mine</code> を付けるか、消した後に <code>nakama aws acl add</code> で登録し直してください。<code>connect</code> / <code>ssh</code> / <code>tunnel</code> は許可リストを使わないので、影響を受けません。</p>
 </div>
 
 <div class="callout tip" role="note">

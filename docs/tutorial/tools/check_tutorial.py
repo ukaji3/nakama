@@ -108,6 +108,7 @@ KNOWN_FLAGS = {
         "--code-server-version", "--with-admin", "--with-role", "--show-password",
         "--no-kiro",
     },
+    "nakama aws acl delete": {"--keep-mine", "--yes", "-y"},
     "nakama aws list": {"--show-nat"},
     "nakama aws info": {"--show-password"},
     "nakama aws open": {"--no-auth", "--print-url", "--browser", "--timeout"},

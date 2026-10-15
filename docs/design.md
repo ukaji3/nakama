@@ -580,6 +580,14 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - **terminal**: 標準入力が端末でなければ (Windows 以外)、`os.Pipe` に差し替えて `copyTerminalInput` で中継する。行頭の `~` を二重にし (ShellSession のエスケープ回避)、入力が尽きたら Ctrl-D (最後が改行でなければ先に改行)。書き込み側は閉じない (保持して GC で閉じないようにする)
 - **separateOutputStream を使わない理由**: agent 3.3.4793.0 は送信を約 2 秒で打ち切り、約 300 KB を超える出力が途切れる (3.3.4851.0 で修正)。既定のモードは 5 MB まで全部届くことを実機で確認した
 
+### 8.21 `nakama aws acl delete` — 複数の削除と `delete all` (Issue #99)
+
+- 複数指定 (`DeleteACLs`): 入力を正規化して重複を除き、IP set を読む。1 つでも無ければ何も変えずに `ErrACLEntryNotFound` (入力のままの表記で列挙)。全部あれば 1 回の `UpdateIPSet` で消し、追加日時を消す。
+- `delete all` は計画 (`PlanACLDeleteAll`、読み取りだけ) と実行 (`DeleteACLAll`) に分ける。計画は IP set と SSM の追加日時を読み、消すエントリ・残すエントリ・SSM にだけある残骸 (Stale) を決める。`--keep-mine` は `IPDiscoverer.PublicIPv4` で接続元 IP を調べ、それを含む CIDR を残す (検出できなければエラー。締め出しを防ぐため黙って続けない)。CLI は計画を表示して確認を取る。
+- 実行は IP set を読み直し、計画にあって今もあるエントリだけを除いた一覧で 1 回の `UpdateIPSet` をする (確認の後に追加されたエントリは残る。読み直しで得た lock token により、その間の変更は `WAFOptimisticLockException` で拒否される)。消すものが無ければ更新しない。`Addresses` は空でも nil にしない (SDK の必須項目)。
+- 追加日時は、消したエントリ、計画の後に他から消されたエントリ、まだエントリの無い残骸の分を `DeleteParameter` で消す (`ParameterNotFound` は無視)。IP set が正なので、失敗は警告に留める。
+- IP set を空にすると、Web ACL の既定 (Block) により、すべての distribution (Kiro Crew を含む) がブラウザに 403 を返す。SSM 経由の `connect` / `ssh` / `tunnel` は影響を受けない。
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |
