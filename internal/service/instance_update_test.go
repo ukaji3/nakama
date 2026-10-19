@@ -1,8 +1,17 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/smithy-go"
+
+	"github.com/ukaji3/nakama/internal/awsx"
 )
 
 func TestRebootRequired(t *testing.T) {
@@ -67,5 +76,51 @@ func TestApplyToolMarkers(t *testing.T) {
 		if res.AWSCLIVersion != c.wantAWS || res.KiroCrew != c.wantKiroCrew {
 			t.Errorf("applyToolMarkers(%q) = %q / %q, want %q / %q", c.stdout, res.AWSCLIVersion, res.KiroCrew, c.wantAWS, c.wantKiroCrew)
 		}
+	}
+}
+
+// fakeKindFailSSM knows the instance but fails to read its kind.
+type fakeKindFailSSM struct{ fakeParamSSM }
+
+func (f *fakeKindFailSSM) GetParameter(ctx context.Context, in *ssm.GetParameterInput, opts ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+	if aws.ToString(in.Name) == ssmKindPath("dev01") {
+		return nil, &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "denied"}
+	}
+	return f.fakeParamSSM.GetParameter(ctx, in, opts...)
+}
+
+// fakeUpdateEC2 serves a stopped instance and fails the test on any
+// call that changes something.
+type fakeUpdateEC2 struct {
+	fakeEC2
+	t *testing.T
+}
+
+func (f *fakeUpdateEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{{
+		InstanceId: aws.String("i-1"), InstanceType: "t3.medium",
+		State: &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopped},
+	}}}}}, nil
+}
+
+func (f *fakeUpdateEC2) StartInstances(context.Context, *ec2.StartInstancesInput, ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error) {
+	f.t.Error("the instance must not be started when a read fails first")
+	return &ec2.StartInstancesOutput{}, nil
+}
+
+func (f *fakeUpdateEC2) CreateSnapshot(context.Context, *ec2.CreateSnapshotInput, ...func(*ec2.Options)) (*ec2.CreateSnapshotOutput, error) {
+	f.t.Error("no backup may be taken when a read fails first")
+	return &ec2.CreateSnapshotOutput{}, nil
+}
+
+// TestUpdate_ReadsTheKindBeforeChangingAnything: a failure to read the
+// kind used to come after a stopped instance was started, and returned
+// without stopping it again.
+func TestUpdate_ReadsTheKindBeforeChangingAnything(t *testing.T) {
+	ssmf := &fakeKindFailSSM{fakeParamSSM{params: map[string]string{ssmInstanceIDPath("dev01"): "i-1"}}}
+	svc := &Service{clients: &awsx.Clients{EC2: &fakeUpdateEC2{t: t}, SSM: ssmf}}
+	_, err := svc.Update(context.Background(), UpdateInput{Name: "dev01"})
+	if err == nil || !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("Update error = %v, want the kind read failure", err)
 	}
 }
