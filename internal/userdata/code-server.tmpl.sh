@@ -5,7 +5,8 @@
 # Template variables (Go text/template syntax):
 #   {{`{{.InstanceName}}`}}, {{`{{.Region}}`}}, {{`{{.Port}}`}},
 #   {{`{{.SSMPasswordParameter}}`}}, {{`{{.SSMVersionParameter}}`}},
-#   {{`{{.PinnedVersion}}`}}
+#   {{`{{.PinnedVersion}}`}}, and the shared AWS CLI fragments
+#   {{`{{.AWSCLIInstall}}`}}, {{`{{.AWSCLIRun}}`}} (internal/awscli)
 
 set -euxo pipefail
 exec > >(tee -a /var/log/nakama-userdata.log) 2>&1
@@ -26,26 +27,24 @@ TARGET_USER="ubuntu"
 HOME_DIR="/home/${TARGET_USER}"
 
 # 1. Base packages + AWS CLI v2. Ubuntu's apt "awscli" package is the
-#    legacy v1; AWS CLI v2 is installed from the snap store instead. Purge
-#    any apt awscli the base image may carry, wait for snapd seeding to
-#    complete (early cloud-init can race it), then install the classic snap.
+#    legacy v1, and the snap cannot run inside an agent sandbox, so the
+#    AWS CLI comes from AWS's installer, for the ubuntu user, in
+#    ~/.local/aws-cli (Issue #101; see internal/awscli). gnupg verifies
+#    the download. nakama's own calls below go through nakama_aws.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl ca-certificates jq unzip unar
+apt-get install -y curl ca-certificates jq unzip unar gnupg
 apt-get purge -y awscli || true
-snap wait system seed.loaded
-snap install aws-cli --classic
-# Expose the snap binary on the default PATH so non-login root shells
-# (this script and later SSM Run Command updates) resolve "aws" to v2.
-ln -sf /snap/bin/aws /usr/local/bin/aws
-/snap/bin/aws --version
+{{.AWSCLIInstall}}
+{{.AWSCLIRun}}
+nakama_install_awscli
 
 # 2. Pull the password from SSM Parameter Store (SecureString).
 #    xtrace would expand the secret into /var/log/nakama-userdata.log
 #    (and any EBS snapshot taken later), so tracing stays off for the
 #    whole block that touches it (CWE-532).
 set +x
-PASSWORD="$(/snap/bin/aws ssm get-parameter \
+PASSWORD="$(nakama_aws ssm get-parameter \
   --region "${REGION}" \
   --name "${PASSWORD_PARAM}" \
   --with-decryption \
@@ -87,7 +86,7 @@ systemctl enable --now "code-server@${TARGET_USER}"
 if VERSION_LINE="$(sudo -u "${TARGET_USER}" code-server --version 2>/dev/null | head -n1)"; then
   RUNNING_VERSION="$(echo "${VERSION_LINE}" | awk '{print $1}')"
   if [ -n "${RUNNING_VERSION}" ]; then
-    /snap/bin/aws ssm put-parameter \
+    nakama_aws ssm put-parameter \
       --region "${REGION}" \
       --name "${VERSION_PARAM}" \
       --type String \

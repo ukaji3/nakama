@@ -30,14 +30,15 @@ if [ ! -f "${CONFIG}" ]; then
   exit 0
 fi
 
-AWS=/snap/bin/aws
-[ -x "${AWS}" ] || AWS=aws
+# nakama_aws: the official AWS CLI run as ubuntu, or the snap on a disk
+# from before Issue #101.
+{{.AWSCLIRun}}
 
 # `nakama aws start` starts the NAT instance first, but SSM can still be
 # a moment away; retry for up to five minutes.
 PASSWORD=""
 for _ in $(seq 1 30); do
-  if PASSWORD="$("${AWS}" ssm get-parameter \
+  if PASSWORD="$(nakama_aws ssm get-parameter \
       --region "${REGION}" \
       --name "${PASSWORD_PARAM}" \
       --with-decryption \
@@ -69,7 +70,7 @@ echo "nakama restore: code-server password replaced"
 if VERSION_LINE="$(sudo -u "${TARGET_USER}" code-server --version 2>/dev/null | head -n1)"; then
   RUNNING_VERSION="$(echo "${VERSION_LINE}" | awk '{print $1}')"
   if [ -n "${RUNNING_VERSION}" ]; then
-    "${AWS}" ssm put-parameter \
+    nakama_aws ssm put-parameter \
       --region "${REGION}" \
       --name "${VERSION_PARAM}" \
       --type String \

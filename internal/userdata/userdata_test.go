@@ -34,11 +34,13 @@ func TestRenderCodeServer_Substitutes(t *testing.T) {
 		`auth: password`,
 		`code-server@`,
 		`export HOME="${HOME:-/root}"`,
-		// AWS CLI v2 is installed from snap (not the legacy apt awscli),
-		// and referenced via its absolute snap path from non-login shells.
-		`snap install aws-cli --classic`,
-		`/snap/bin/aws ssm get-parameter`,
-		`ln -sf /snap/bin/aws /usr/local/bin/aws`,
+		// AWS CLI v2 comes from AWS's installer for the ubuntu user, and
+		// nakama's own calls go through nakama_aws (Issue #101).
+		"nakama_install_awscli() {",
+		"nakama_aws() {",
+		"\nnakama_install_awscli\n",
+		"nakama_aws ssm get-parameter",
+		"nakama_aws ssm put-parameter",
 	}
 	for _, s := range wantSubstrings {
 		if !strings.Contains(got, s) {
@@ -222,5 +224,44 @@ func TestRenderedUserDataIsValidBash(t *testing.T) {
 		if out, cerr := cmd.CombinedOutput(); cerr != nil {
 			t.Errorf("InstallKiro=%v: bash -n rejected the user-data: %v\n%s", installKiro, cerr, out)
 		}
+	}
+}
+
+// TestRenderCodeServer_AWSCLIWithoutTheSnap pins Issue #101: no snap (it
+// cannot run in the Kiro Crew sandbox), no root-owned link to it, and
+// the tools the AWS installer needs are in place before it runs.
+func TestRenderCodeServer_AWSCLIWithoutTheSnap(t *testing.T) {
+	t.Parallel()
+	got, err := RenderCodeServer(CodeServerParams{
+		InstanceName: "dev01", Region: "ap-northeast-1", Port: 8080,
+		SSMPasswordParameter: "/p", SSMVersionParameter: "/v", InstallKiro: true,
+	})
+	if err != nil {
+		t.Fatalf("RenderCodeServer: %v", err)
+	}
+	assertAWSCLIFromTheInstaller(t, got, "apt-get install -y curl ca-certificates jq unzip unar gnupg")
+	// The password is read with the CLI just installed.
+	if strings.Index(got, "\nnakama_install_awscli\n") > strings.Index(got, "nakama_aws ssm get-parameter") {
+		t.Errorf("the AWS CLI must be installed before the password is read")
+	}
+}
+
+// assertAWSCLIFromTheInstaller checks a rendered create user-data.
+func assertAWSCLIFromTheInstaller(t *testing.T, got, aptLine string) {
+	t.Helper()
+	for _, banned := range []string{"snap install aws-cli", "/usr/local/bin/aws", "snap wait"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("rendered user data still contains %q", banned)
+		}
+	}
+	apt := strings.Index(got, aptLine)
+	call := strings.Index(got, "\nnakama_install_awscli\n")
+	if apt < 0 || call < 0 || apt > call {
+		t.Errorf("want %q (curl, unzip, gnupg) before the nakama_install_awscli call (apt at %d, call at %d)", aptLine, apt, call)
+	}
+	// The code-server template lists its variables in a comment, so look
+	// for the AWS CLI placeholders only.
+	if strings.Contains(got, "\n{{.AWSCLI") || !strings.Contains(got, "nakama_install_awscli() {") {
+		t.Errorf("the AWS CLI fragment was not rendered in")
 	}
 }
