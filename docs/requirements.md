@@ -56,7 +56,7 @@
 | インスタンス | `nakama aws delete <n> [--yes] [--force]` | EC2 / CloudFront / 関連リソースを依存逆順で削除 |
 | インスタンス | `nakama aws edit <n> --ebs <size-gb>` | EBS の拡張 (縮小不可) |
 | インスタンス | `nakama aws edit <n> --instance-type <t> [--yes]` | EC2 インスタンスタイプ変更。停止が必要なため running は stop→変更→start で元状態へ復帰。`--ebs` とは排他。アーキ跨ぎ (x86_64⇄arm64) の変更は不可 |
-| インスタンス | `nakama aws update <n> [--keep N] [--yes]` | インスタンスを最新化: 更新前に自動バックアップ → (stopped なら start) → `apt-get dist-upgrade` + code-server を latest へ → 必要時のみ reboot → 元の電源状態へ復帰 |
+| インスタンス | `nakama aws update <n> [--keep N] [--yes]` | インスタンスを最新化: 更新前に自動バックアップ → (stopped なら start) → `apt-get dist-upgrade` + code-server を latest へ + AWS CLI (公式のインストールがあるとき) を最新へ + `kirocrew update` / `kirocrew restart` (Kiro Crew があるとき。失敗は警告) → 必要時のみ reboot → 元の電源状態へ復帰。詳しい出力はインスタンスの `/var/log/nakama-update.log` |
 | バックアップ | `nakama aws backup create <n> [--label <label>] [--note <text>] [--keep N]` | ルート EBS のスナップショットを取得。`--label` 省略時は取得時刻から自動生成。`--note` で自由記述のメモを付加 (例 `"X を導入済み"`)。`--keep N` 指定時は直近 N 世代を残し古いものを削除 |
 | バックアップ | `nakama aws backup list [<n>]` | 当該インスタンスのバックアップを一覧 (ラベル / 取得時刻 / サイズ / 状態 / メモ。AWS の snapshot-id は既定では非表示、`-o json` でのみ表示)。名前を省略すると全インスタンスのバックアップを NAME 列付きで一覧する (インスタンス削除後にバックアップの帰属を辿れるようにするため) |
 | バックアップ | `nakama aws backup note <n> --label <label> --note <text>` | 取得後にメモを設定・更新する。`--note` は必須 (省略はエラー)。空文字を明示指定 (`--note ""`) するとメモを消去 |
@@ -211,6 +211,8 @@
 24. `nakama aws delete <n>` で削除したインスタンスに対し、`nakama aws restore <n> --yes` を実行すると同じ名前のインスタンスができる。start するとバックアップ時点のファイルがあり、新しい URL に新しいパスワードでログインでき、SSH のホスト鍵の指紋は削除前と同じ。bare のバックアップからは bare のインスタンスができる。アーキの合わないタイプの指定とタグの無いバックアップでの `--instance-type` の省略は、何も作らずにエラーになる (Issue #96)
 
 25. `nakama aws acl delete <IP1> <IP2>` で両方が 1 回の更新で消え、片方が未登録なら何も消えない。`nakama aws acl delete all --keep-mine` は確認の後、接続元 IP を含むエントリだけを残し、ブラウザからのアクセスは通り続ける。`nakama aws acl delete all` は確認の後に IP set を空にし、ブラウザからのアクセスは 403 になる。どちらも消したエントリの追加日時が SSM から消える (Issue #99)
+
+26. `nakama aws create` で作ったインスタンス (code-server 版・bare 版、x86_64・arm64) では、AWS CLI v2 が AWS 公式のインストールスクリプトで ubuntu ユーザーの `~/.local/aws-cli` に入り (`~/.local/bin/aws`)、CPU に合った版で、権限の昇格を禁じた状態 (`setpriv --no-new-privs`) でも動く。snap の `aws-cli` と `/usr/local/bin/aws` は無い。`nakama aws update <n>` は AWS CLI を更新し、Kiro Crew があれば `kirocrew update` と `kirocrew restart` を実行して、結果に AWS CLI の版と Kiro Crew の結果を出す。Issue #101 より前に作ったインスタンスの snap の AWS CLI には触れない。update の出力が長くても再起動の要否が失われない (Issue #101)
 
 ## 付録 A. 機能別 IAM 権限マトリクス
 

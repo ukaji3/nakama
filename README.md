@@ -55,7 +55,7 @@ tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 n
 | `nakama aws kirocrew` | Kiro Crew の画面をブラウザで開く |
 | `nakama aws start` / `stop` / `delete` | 起動 / 停止 / 削除 |
 | `nakama aws backup` / `restore` | バックアップ / 復元 |
-| `nakama aws update` / `edit` | OS と code-server の更新 / 大きさやディスクの変更 |
+| `nakama aws update` / `edit` | OS・code-server・AWS CLI・Kiro Crew の更新 / 大きさやディスクの変更 |
 | `nakama aws setup rerun` | 初期セットアップ (スクリプト、dotfiles) のやり直し |
 | `nakama aws doctor` | 環境の自己診断 (読み取り専用) |
 | `nakama aws cli shell` | aws CLI を会社のプロキシの下で使えるシェルを開く (Windows) |

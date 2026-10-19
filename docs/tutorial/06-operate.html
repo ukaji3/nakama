@@ -145,7 +145,7 @@ are new. This takes about 15-20 minutes (CloudFront); the instance is left stopp
 </div>
 
 <h2 id="update">3. アップデート</h2>
-<p>OS のパッケージと code-server を最新にします。</p>
+<p>OS のパッケージ、code-server、AWS CLI、Kiro Crew を最新にします。</p>
 <pre><code>nakama aws update dev01
 nakama aws update dev01 --keep 5 --yes    # 自動バックアップを 5 世代までに制限し、確認を省略</code></pre>
 
@@ -153,14 +153,24 @@ nakama aws update dev01 --keep 5 --yes    # 自動バックアップを 5 世代
 <ol class="steps" role="list">
   <li><p><strong>バックアップを自動取得</strong>します (失敗しても戻せるようにするため)。</p></li>
   <li><p>停止していた場合は<strong>起動</strong>します。</p></li>
-  <li><p>OS のパッケージ更新 (<code>apt dist-upgrade</code> 相当) と code-server の最新版導入を実行します。</p></li>
+  <li><p>OS のパッケージ更新 (<code>apt dist-upgrade</code> 相当) と code-server の最新版導入を実行します。続いて AWS CLI を最新にし、Kiro Crew があれば <code>kirocrew update</code> と <code>kirocrew restart</code> を実行します。詳しい記録は、環境の中の <code>/var/log/nakama-update.log</code> に残ります。</p></li>
   <li><p>更新の内容によって<strong>再起動</strong>が必要な場合は再起動します。</p></li>
   <li><p>元の電源状態に戻します (もともと停止していた環境は、また停止します)。</p></li>
 </ol>
 
 <div class="callout note" role="note">
-  <span class="title">--bare の環境では OS の更新だけ</span>
-  <p>code-server が無いので、その部分は行われません。</p>
+  <span class="title">--bare の環境では code-server の更新はありません</span>
+  <p>code-server が無いので、その部分は行われません。AWS CLI と Kiro Crew は同じように更新します (<code>--no-kiro</code> で作った環境では Kiro Crew の手順を飛ばします)。</p>
+</div>
+
+<div class="callout warn" role="note">
+  <span class="title">Kiro Crew は再起動します</span>
+  <p>更新の最後に Kiro Crew を再起動するので、動いているセッションは切れます。Kiro Crew の更新に失敗しても、ほかの更新は終わっているので <code>update</code> は成功として終わり、警告を表示します。そのときは <code>nakama aws connect dev01</code> で入り、<code>kirocrew update</code> を実行して原因を確かめてください。</p>
+</div>
+
+<div class="callout note" role="note">
+  <span class="title">古い環境の AWS CLI は更新されません</span>
+  <p>nakama は、AWS CLI を AWS 公式のインストーラーで <code>~/.local/aws-cli</code> に入れます。以前の nakama で作った環境は snap の AWS CLI を使っており、<code>update</code> はそれには触れません (snap は自分で更新されます)。ただし snap の AWS CLI は Kiro Crew のサンドボックスの中では動きません。公式版に切り替えるには、環境の中で ubuntu として公式の手順どおり <code>~/.local/aws-cli</code> と <code>~/.local/bin</code> に入れてください。以後の <code>update</code> がそれを更新します。</p>
 </div>
 
 <div class="callout warn" role="note">

@@ -53,3 +53,7 @@ private subnet にあり、更新は SSM Run Command (`AWS-RunShellScript`)
   カーネル更新が未反映のまま running し得る。needs-restart 連動 (option c) を採用。
 - **スナップショット完了待ち**: 数分のブロッキングが増えるだけで復元点の
   有効性は変わらないため不採用。
+
+## 追記 (2026-10-20, Issue #101)
+
+update は AWS CLI (公式のインストールがあるとき) と Kiro Crew (`kirocrew update` / `kirocrew restart`) も更新するようになった。また、詳しい出力はインスタンスの `/var/log/nakama-update.log` に書き、Run Command の stdout には結果の印だけを出すようにした (GetCommandInvocation が stdout の先頭 24,000 字しか返さず、再起動の要否の印が切れることがあったため)。ADR 0024 を参照。
