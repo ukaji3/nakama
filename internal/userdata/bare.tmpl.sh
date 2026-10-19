@@ -25,17 +25,18 @@ echo "nakama: bare instance ${INSTANCE_NAME} in ${REGION}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 
+# Baseline tooling a developer expects to find on a fresh box (gnupg also
+# verifies the AWS CLI download below).
+apt-get install -y -qq git curl unzip unar jq build-essential gnupg
+
 # The AWS CLI is not required by nakama itself (which speaks the AWS
 # APIs natively), but a development box is expected to have it, and the
 # provisioning steps of `create --setup` may use it. Same source as the
-# regular image: the classic snap, after snapd seeding completes.
+# regular image: AWS's installer, for the ubuntu user (Issue #101; the
+# snap cannot run inside an agent sandbox).
 apt-get purge -y -qq awscli || true
-snap wait system seed.loaded
-snap install aws-cli --classic
-ln -sf /snap/bin/aws /usr/local/bin/aws
-
-# Baseline tooling a developer expects to find on a fresh box.
-apt-get install -y -qq git curl unzip unar jq build-essential
+{{.AWSCLIInstall}}
+nakama_install_awscli
 
 # Session Manager (and therefore `connect` / `tunnel` / `ssh`) needs the
 # SSM agent. Ubuntu images ship it as a snap; make sure it is enabled so

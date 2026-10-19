@@ -67,6 +67,11 @@ func TestRenderRestore_CodeServer(t *testing.T) {
 		"--with-decryption",
 		`grep -v '^password:'`,
 		`systemctl restart "code-server@${TARGET_USER}"`,
+		// The official AWS CLI as ubuntu, or the snap on an older disk
+		// (Issue #101).
+		"nakama_aws() {",
+		"nakama_aws ssm get-parameter",
+		"nakama_aws ssm put-parameter",
 	} {
 		if !strings.Contains(f.Content, want) {
 			t.Errorf("script lacks %q", want)

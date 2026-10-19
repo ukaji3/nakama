@@ -18,7 +18,7 @@ func TestRenderBare(t *testing.T) {
 		`REGION="ap-northeast-1"`,
 		"amazon-ssm-agent", // connect / tunnel / ssh depend on the agent
 		"systemctl enable --now ssh",
-		"git curl unzip unar jq build-essential",
+		"git curl unzip unar jq build-essential gnupg",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered bare user data lacks %q", want)
@@ -83,5 +83,17 @@ func TestRenderBareIsValidBash(t *testing.T) {
 		if out, cerr := cmd.CombinedOutput(); cerr != nil {
 			t.Errorf("InstallKiro=%v: bash -n rejected the bare user-data: %v\n%s", installKiro, cerr, out)
 		}
+	}
+}
+
+// TestRenderBareAWSCLIWithoutTheSnap: the bare box gets the same AWS CLI
+// as the regular image (Issue #101).
+func TestRenderBareAWSCLIWithoutTheSnap(t *testing.T) {
+	for _, kiro := range []bool{true, false} {
+		got, err := RenderBare(BareParams{InstanceName: "dev01", Region: "ap-northeast-1", InstallKiro: kiro})
+		if err != nil {
+			t.Fatalf("RenderBare: %v", err)
+		}
+		assertAWSCLIFromTheInstaller(t, got, "apt-get install -y -qq git curl unzip unar jq build-essential gnupg")
 	}
 }

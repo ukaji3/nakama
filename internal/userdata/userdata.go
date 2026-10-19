@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/ukaji3/nakama/internal/awscli"
 	"github.com/ukaji3/nakama/internal/kiro"
 )
 
@@ -47,8 +48,9 @@ func RenderBare(p BareParams) (string, error) {
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, bareTemplateData{
-		BareParams: p,
-		KiroScript: kiroScriptFor(p.InstallKiro),
+		BareParams:    p,
+		KiroScript:    kiroScriptFor(p.InstallKiro),
+		AWSCLIInstall: awscli.InstallScript(),
 	}); err != nil {
 		return "", err
 	}
@@ -62,6 +64,8 @@ type bareTemplateData struct {
 	// KiroScript is the shared Kiro install fragment, empty when the
 	// instance was created with --no-kiro.
 	KiroScript string
+	// AWSCLIInstall defines nakama_install_awscli (Issue #101).
+	AWSCLIInstall string
 }
 
 // kiroScriptFor returns the shared install fragment when requested.
@@ -124,6 +128,10 @@ type codeServerTemplateData struct {
 	// KiroScript is the shared Kiro install fragment, empty when the
 	// instance was created with --no-kiro.
 	KiroScript string
+	// AWSCLIInstall and AWSCLIRun define nakama_install_awscli and
+	// nakama_aws (Issue #101).
+	AWSCLIInstall string
+	AWSCLIRun     string
 }
 
 // RenderCodeServer returns the rendered cloud-init User Data shell
@@ -140,6 +148,8 @@ func RenderCodeServer(p CodeServerParams) (string, error) {
 	if err := t.Execute(&buf, codeServerTemplateData{
 		CodeServerParams: p,
 		KiroScript:       kiroScriptFor(p.InstallKiro),
+		AWSCLIInstall:    awscli.InstallScript(),
+		AWSCLIRun:        awscli.RunScript(),
 	}); err != nil {
 		return "", err
 	}
@@ -209,7 +219,10 @@ func RenderRestore(p RestoreParams) (string, error) {
 			return "", err
 		}
 		var buf bytes.Buffer
-		if err := t.Execute(&buf, p); err != nil {
+		if err := t.Execute(&buf, struct {
+			RestoreParams
+			AWSCLIRun string
+		}{p, awscli.RunScript()}); err != nil {
 			return "", err
 		}
 		cfg.WriteFiles = []restoreWriteFile{{
