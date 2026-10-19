@@ -29,10 +29,19 @@ echo "apt-get $1 done"
 	"fuser": `#!/bin/bash
 exit 1
 `,
-	// curl serves the code-server installer as a no-op script.
+	// curl serves the code-server installer as a no-op script, and AWS's
+	// install script (requested with -o) as one that records its run and
+	// reinstalls the official CLI stub.
 	"curl": `#!/bin/bash
 echo "curl $*" >> "$NAKAMA_STUB_LOG"
-echo 'echo "code-server installed"'
+out=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+if [ -z "$out" ]; then echo 'echo "code-server installed"'; exit 0; fi
+[ "${NAKAMA_STUB_FAIL:-}" = "awscli install" ] && { echo "curl: (22) 503" >&2; exit 22; }
+cat > "$out" <<'INSTALLER'
+echo "awscli installer $* XDG_DATA_HOME=$XDG_DATA_HOME" >> "$NAKAMA_STUB_LOG"
+echo "aws-cli/2.99.1 Python/3.13 Linux/6 exe/x86_64" > "$XDG_DATA_HOME/aws-cli/version"
+INSTALLER
 `,
 	"systemctl": `#!/bin/bash
 echo "systemctl $*" >> "$NAKAMA_STUB_LOG"
@@ -48,6 +57,13 @@ exec "$@"
 `,
 	"code-server": `#!/bin/bash
 echo "4.200.0 abc with Code 1.200.0"
+`,
+	// gpg is present on instances created after Issue #101.
+	"gpg": `#!/bin/bash
+exit 0
+`,
+	"chown": `#!/bin/bash
+echo "chown $*" >> "$NAKAMA_STUB_LOG"
 `,
 	"aws": `#!/bin/bash
 echo "aws $*" >> "$NAKAMA_STUB_LOG"
@@ -214,5 +230,177 @@ func TestUpdateScriptFailureShowsTheEndOfTheLog(t *testing.T) {
 				t.Errorf("nothing may run after the failure: %q", r.calls)
 			}
 		})
+	}
+}
+
+// officialAWSCLI installs a stand-in for the official AWS CLI in the fake
+// ubuntu home, as on an instance created after Issue #101. It prints the
+// version the (stub) installer last wrote and records its calls.
+func officialAWSCLI(t *testing.T) func(home string) {
+	return func(home string) {
+		t.Helper()
+		bin := filepath.Join(home, ".local", "aws-cli", "v2", "current", "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(home, ".local", "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// nakama_aws clears the environment (env -i), so the stub carries
+		// the call log path itself (runUpdateScript puts it two levels up).
+		callLog := filepath.Join(filepath.Dir(filepath.Dir(home)), "calls.log")
+		body := "#!/bin/bash\necho \"official-aws $* HOME=$HOME\" >> \"" + callLog + "\"\n" +
+			"if [ \"$1\" = --version ]; then cat \"" + filepath.Join(home, ".local", "aws-cli", "version") + "\" 2>/dev/null || echo \"aws-cli/2.98.0 Python/3.13\"; fi\n"
+		if err := os.WriteFile(filepath.Join(bin, "aws"), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(bin, "aws"), filepath.Join(home, ".local", "bin", "aws")); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// kiroCrew installs a stand-in kirocrew in the fake ubuntu home. Like
+// the real one, restart prints a dashboard URL with an access token.
+func kiroCrew(t *testing.T, failOn string) func(home string) {
+	return func(home string) {
+		t.Helper()
+		bin := filepath.Join(home, ".local", "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `#!/bin/bash
+echo "kirocrew $* HOME=$HOME" >> "$NAKAMA_STUB_LOG"
+[ "$1" = "` + failOn + `" ] && { echo "kirocrew $1: failed" >&2; exit 1; }
+[ "$1" = restart ] && printf '\xe2\x9c\x85 Restarted kirocrew service.\n\xf0\x9f\x94\x91 http://kirocrew.localhost:5476?token=SECRET-TOKEN-123\n'
+exit 0
+`
+		if err := os.WriteFile(filepath.Join(bin, "kirocrew"), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func both(fns ...func(string)) func(string) {
+	return func(home string) {
+		for _, f := range fns {
+			f(home)
+		}
+	}
+}
+
+// TestUpdateScriptUpdatesTheAWSCLIAndKiroCrew covers an instance created
+// after Issue #101, with Kiro Crew.
+func TestUpdateScriptUpdatesTheAWSCLIAndKiroCrew(t *testing.T) {
+	for name, script := range bothUpdateScripts() {
+		t.Run(name, func(t *testing.T) {
+			r := runUpdateScript(t, script, nil, both(officialAWSCLI(t), kiroCrew(t, "")))
+			if r.exitErr != nil {
+				t.Fatalf("update failed: %v\nstderr: %s\nlog: %s", r.exitErr, r.stderr, r.log)
+			}
+			if !r.called("awscli installer --quiet XDG_DATA_HOME=" + r.home + "/.local") {
+				t.Errorf("the AWS CLI must be updated in ~/.local/aws-cli; calls %q", r.calls)
+			}
+			if got := updateMarker(r.stdout, "NAKAMA_AWSCLI"); got != "2.99.1" {
+				t.Errorf("NAKAMA_AWSCLI = %q, want the version after the update (2.99.1); stdout %q", got, r.stdout)
+			}
+			// kirocrew update, then restart, both as ubuntu, in that order.
+			var kc []string
+			for _, c := range r.calls {
+				if strings.HasPrefix(c, "kirocrew ") {
+					kc = append(kc, c)
+				}
+			}
+			if len(kc) != 2 || !strings.HasPrefix(kc[0], "kirocrew update HOME="+r.home) || !strings.HasPrefix(kc[1], "kirocrew restart HOME="+r.home) {
+				t.Errorf("want kirocrew update then restart as ubuntu; got %q", kc)
+			}
+			if updateMarker(r.stdout, "NAKAMA_KIROCREW") != KiroCrewUpdated {
+				t.Errorf("stdout %q lacks NAKAMA_KIROCREW=updated", r.stdout)
+			}
+			// restart prints a dashboard token; it must not reach the log
+			// (or SSM's output, which a failure would show).
+			if strings.Contains(r.log+r.stdout+r.stderr, "SECRET-TOKEN-123") {
+				t.Errorf("the Kiro Crew access token leaked into the update output")
+			}
+			if !strings.Contains(r.log, "Kiro Crew updated and restarted") {
+				t.Errorf("the log should say Kiro Crew was updated")
+			}
+		})
+	}
+}
+
+// TestUpdateScriptLeavesOlderInstancesAlone: an instance from before
+// Issue #101 keeps its snap AWS CLI (no official install is added), and
+// one created with --no-kiro has no Kiro Crew to update.
+func TestUpdateScriptLeavesOlderInstancesAlone(t *testing.T) {
+	for name, script := range bothUpdateScripts() {
+		t.Run(name, func(t *testing.T) {
+			r := runUpdateScript(t, script, nil, nil)
+			if r.exitErr != nil {
+				t.Fatalf("update failed: %v\nstderr: %s", r.exitErr, r.stderr)
+			}
+			if r.called("awscli installer") || r.called("curl -fsSL https://awscli.amazonaws.com") {
+				t.Errorf("no official AWS CLI may be installed on an older instance; calls %q", r.calls)
+			}
+			if _, err := os.Stat(filepath.Join(r.home, ".local", "bin", "aws")); err == nil {
+				t.Errorf("~/.local/bin/aws appeared")
+			}
+			if r.called("kirocrew") || strings.Contains(r.stdout, "NAKAMA_KIROCREW") || strings.Contains(r.stdout, "NAKAMA_AWSCLI") {
+				t.Errorf("nothing to report without the tools: calls %q, stdout %q", r.calls, r.stdout)
+			}
+			if !strings.Contains(r.stdout, "NAKAMA_REBOOT_REQUIRED=0") {
+				t.Errorf("the update must still finish: %q", r.stdout)
+			}
+		})
+	}
+}
+
+// TestUpdateScriptKiroCrewFailureOnlyWarns: the OS and code-server are
+// updated by then, so a failing kirocrew does not fail the update.
+func TestUpdateScriptKiroCrewFailureOnlyWarns(t *testing.T) {
+	for _, failOn := range []string{"update", "restart"} {
+		r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "/v"), nil, kiroCrew(t, failOn))
+		if r.exitErr != nil {
+			t.Fatalf("kirocrew %s failing must not fail the update: %v\n%s", failOn, r.exitErr, r.stderr)
+		}
+		if updateMarker(r.stdout, "NAKAMA_KIROCREW") != KiroCrewFailed || !strings.Contains(r.stdout, "NAKAMA_REBOOT_REQUIRED=0") {
+			t.Errorf("kirocrew %s: stdout %q, want NAKAMA_KIROCREW=failed and the reboot marker", failOn, r.stdout)
+		}
+		if failOn == "update" && r.called("kirocrew restart") {
+			t.Errorf("restart must not run after a failed update; calls %q", r.calls)
+		}
+		if !strings.Contains(r.log, "WARNING kirocrew update or kirocrew restart failed") {
+			t.Errorf("the log should carry the warning")
+		}
+	}
+}
+
+// TestUpdateScriptAWSCLIFailureFailsTheUpdate: as with code-server, a
+// failed AWS CLI update fails the command.
+func TestUpdateScriptAWSCLIFailureFailsTheUpdate(t *testing.T) {
+	r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "/v"), []string{"NAKAMA_STUB_FAIL=awscli install"},
+		both(officialAWSCLI(t), kiroCrew(t, "")))
+	if r.exitErr == nil {
+		t.Fatal("a failed AWS CLI update must fail the update")
+	}
+	if !strings.Contains(r.stderr, "curl: (22)") || strings.Contains(r.stdout, "NAKAMA_REBOOT_REQUIRED") {
+		t.Errorf("stderr %q / stdout %q", r.stderr, r.stdout)
+	}
+}
+
+// TestUpdateScriptRecordsTheVersionThroughNakamaAWS: on an instance with
+// the official CLI, the code-server version is written by running it as
+// ubuntu with ubuntu's AWS settings ignored, not as root.
+func TestUpdateScriptRecordsTheVersionThroughNakamaAWS(t *testing.T) {
+	r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "/nakama/dev01/meta/code-server-version"), nil, officialAWSCLI(t))
+	if r.exitErr != nil {
+		t.Fatalf("update failed: %v\n%s", r.exitErr, r.stderr)
+	}
+	want := "official-aws ssm put-parameter --region ap-northeast-1 --name /nakama/dev01/meta/code-server-version --type String --overwrite --value 4.200.0 HOME=/nonexistent"
+	if !r.called(want) {
+		t.Errorf("want %q; calls %q", want, r.calls)
+	}
+	if r.called("aws ssm put-parameter") {
+		t.Errorf("root's aws (the snap link) must not be used when the official CLI is there; calls %q", r.calls)
 	}
 }
