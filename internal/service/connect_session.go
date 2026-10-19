@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
@@ -252,7 +253,11 @@ func spawnSessionRunnerIO(ctx context.Context, req sessionRunRequest, stdio sess
 	select {
 	case <-ctx.Done():
 		_ = terminateSessionRunner(cmd.Process)
-		<-done
+		// Reap the runner. Its exit status is moot: the cancellation is the
+		// result.
+		if err := <-done; err != nil {
+			slog.Debug("session runner exited after cancellation", "error", err)
+		}
 		return failed, ctx.Err()
 	case err := <-done:
 		res := sessionRunResult{remoteExit: collectSessionStatus(status)}
