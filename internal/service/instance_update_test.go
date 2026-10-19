@@ -48,3 +48,24 @@ func TestBuildUpdateScript(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyToolMarkers(t *testing.T) {
+	cases := []struct {
+		stdout       string
+		wantAWS      string
+		wantKiroCrew string
+	}{
+		{"NAKAMA_AWSCLI=2.38.1\nNAKAMA_KIROCREW=updated\nNAKAMA_REBOOT_REQUIRED=0\n", "2.38.1", KiroCrewUpdated},
+		{"NAKAMA_KIROCREW=failed\nNAKAMA_REBOOT_REQUIRED=1\n", "", KiroCrewFailed},
+		{"NAKAMA_REBOOT_REQUIRED=0\n", "", ""},         // an instance from before Issue #101, no Kiro
+		{"NAKAMA_KIROCREW=maybe\n", "", ""},            // unknown values are ignored
+		{"  NAKAMA_AWSCLI=2.38.1  \r\n", "2.38.1", ""}, // surrounding whitespace
+	}
+	for _, c := range cases {
+		var res UpdateResult
+		applyToolMarkers(&res, c.stdout)
+		if res.AWSCLIVersion != c.wantAWS || res.KiroCrew != c.wantKiroCrew {
+			t.Errorf("applyToolMarkers(%q) = %q / %q, want %q / %q", c.stdout, res.AWSCLIVersion, res.KiroCrew, c.wantAWS, c.wantKiroCrew)
+		}
+	}
+}

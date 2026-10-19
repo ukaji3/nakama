@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 
+	"github.com/ukaji3/nakama/internal/awscli"
 	"github.com/ukaji3/nakama/internal/awshelper"
 	"github.com/ukaji3/nakama/internal/config"
 )
@@ -32,7 +33,22 @@ type UpdateResult struct {
 	Rebooted          bool   `json:"rebooted"`       // a reboot was performed (was-running case)
 	RebootPending     bool   `json:"reboot_pending"` // kernel update applies on next start (was-stopped case)
 	RestoredToStopped bool   `json:"restored_to_stopped"`
+
+	// AWSCLIVersion is the AWS CLI version after the update, when the
+	// instance has the official install (Issue #101). Instances created
+	// before that keep their snap, which nakama does not touch.
+	AWSCLIVersion string `json:"aws_cli_version,omitempty"`
+	// KiroCrew is "updated" or "failed" when the instance has Kiro Crew,
+	// and empty when it has none (--no-kiro). A failure does not fail
+	// the update.
+	KiroCrew string `json:"kiro_crew,omitempty"`
 }
+
+// Kiro Crew update outcomes in UpdateResult.KiroCrew.
+const (
+	KiroCrewUpdated = "updated"
+	KiroCrewFailed  = "failed"
+)
 
 // Update brings an existing instance up to date: it takes a pre-update
 // backup, runs `apt-get dist-upgrade` and a code-server latest install
@@ -150,6 +166,10 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 	if runErr != nil {
 		return res, fmt.Errorf("update command: %w", runErr)
 	}
+	applyToolMarkers(res, stdout)
+	if res.KiroCrew == KiroCrewFailed {
+		slog.Warn("update: kirocrew update or restart failed", "instance", in.Name, "log", updateLogPath)
+	}
 
 	if kind == instanceKindBare {
 		return res, nil
@@ -169,6 +189,27 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 // reboot is pending (presence of /var/run/reboot-required).
 func rebootRequired(commandStdout string) bool {
 	return strings.Contains(commandStdout, "NAKAMA_REBOOT_REQUIRED=1")
+}
+
+// applyToolMarkers copies the AWS CLI and Kiro Crew results the update
+// script reported into res. An unexpected Kiro Crew value is ignored.
+func applyToolMarkers(res *UpdateResult, commandStdout string) {
+	res.AWSCLIVersion = updateMarker(commandStdout, "NAKAMA_AWSCLI")
+	switch k := updateMarker(commandStdout, "NAKAMA_KIROCREW"); k {
+	case KiroCrewUpdated, KiroCrewFailed:
+		res.KiroCrew = k
+	}
+}
+
+// updateMarker returns the value of a KEY=value line the update script
+// wrote to stdout, or "" when there is none.
+func updateMarker(commandStdout, key string) string {
+	for _, line := range strings.Split(commandStdout, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), key+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // updateLogPath is where the update script writes its full output on
@@ -194,6 +235,37 @@ set -x
 `
 }
 
+// updateToolsScript updates the tools nakama installs for the ubuntu
+// user (Issue #101). Both steps run only where the tool is installed: an
+// instance created before Issue #101 keeps its snap AWS CLI (nothing is
+// installed here), and one created with --no-kiro has no Kiro Crew.
+//
+//   - The AWS CLI: AWS's install script, run again, updates in place.
+//     A failure fails the update, as a failed code-server update does.
+//   - Kiro Crew: `kirocrew update`, then `kirocrew restart` so the
+//     gateway runs the new version. The output is discarded, not logged:
+//     restart prints a dashboard URL with an access token. A failure only
+//     warns (the OS and code-server are updated by then), and the result
+//     goes to the caller as NAKAMA_KIROCREW=updated|failed.
+//
+// The NAKAMA_AWSCLI marker carries the AWS CLI version afterwards.
+var updateToolsScript = awscli.InstallScript() + `
+if [ -x ` + awscli.InstalledBin + ` ]; then
+  nakama_install_awscli
+  echo "NAKAMA_AWSCLI=$(sudo -u ubuntu env -i PATH=/usr/bin:/bin HOME=/nonexistent ` + awscli.InstalledBin + ` --version 2>&1 | awk '{print $1}' | cut -d/ -f2)" >&3
+fi
+
+if [ -x /home/ubuntu/.local/bin/kirocrew ]; then
+  if sudo -u ubuntu -H bash -lc 'set -e; export PATH="$HOME/.local/bin:$PATH"; kirocrew update; kirocrew restart' >/dev/null 2>&1; then
+    echo "nakama: Kiro Crew updated and restarted"
+    echo "NAKAMA_KIROCREW=updated" >&3
+  else
+    echo "nakama: WARNING kirocrew update or kirocrew restart failed; run them as ubuntu to see why"
+    echo "NAKAMA_KIROCREW=failed" >&3
+  fi
+fi
+`
+
 // updateRebootMarker reports, on the result channel, whether a reboot
 // is pending (presence of /var/run/reboot-required).
 const updateRebootMarker = `if [ -f /var/run/reboot-required ]; then
@@ -212,14 +284,14 @@ export HOME="${HOME:-/root}"
 apt-get update -qq
 apt-get dist-upgrade -y -qq
 apt-get autoremove -y -qq
-` + updateRebootMarker
+` + updateToolsScript + updateRebootMarker
 }
 
 // buildUpdateScript renders the in-instance update shell script.
 // region/versionParam are injected so the instance can write the
 // post-update code-server version back to Parameter Store.
 func buildUpdateScript(region, versionParam string) string {
-	return updateScriptHeader() + fmt.Sprintf(`export DEBIAN_FRONTEND=noninteractive
+	return updateScriptHeader() + awscli.RunScript() + fmt.Sprintf(`export DEBIAN_FRONTEND=noninteractive
 # SSM Run Command runs as root in a non-login shell that does not export
 # HOME; the code-server install.sh reads $HOME. Default to /root (matches
 # the cloud-init userdata workaround).
@@ -242,11 +314,11 @@ systemctl restart code-server@ubuntu || true
 if VL="$(sudo -u ubuntu code-server --version 2>/dev/null | head -n1)"; then
   RV="$(echo "${VL}" | awk '{print $1}')"
   if [ -n "${RV}" ]; then
-    aws ssm put-parameter --region %q --name %q --type String --overwrite --value "${RV}" || true
+    nakama_aws ssm put-parameter --region %q --name %q --type String --overwrite --value "${RV}" >/dev/null || true
   fi
 fi
 
-`, region, versionParam) + updateRebootMarker
+`, region, versionParam) + updateToolsScript + updateRebootMarker
 }
 
 // runUpdateCommand sends the update script via SSM Run Command and
@@ -273,7 +345,7 @@ func (s *Service) runUpdateCommand(ctx context.Context, instanceID, versionParam
 				"executionTimeout": {"3600"},
 			},
 			TimeoutSeconds: aws.Int32(600),
-			Comment:        aws.String("nakama: apt dist-upgrade + code-server latest"),
+			Comment:        aws.String("nakama: apt dist-upgrade, code-server, AWS CLI and Kiro Crew"),
 		})
 		if err != nil {
 			// The agent may not be registered yet right after start.
