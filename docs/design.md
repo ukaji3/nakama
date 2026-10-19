@@ -236,7 +236,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 6. SG 作成 → 8080 inbound (prefix list)
 7. ENI 作成 (Private subnet 1a)
 8. NAT インスタンスを起動 (`ensureNATInstanceRunning`。停止中なら start して `running` まで待機。ADR 0007 の電源連動)
-9. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を snap (`snap install aws-cli --classic`) で導入する。Ubuntu の apt `awscli` は v1 と古いため purge し、`/snap/bin/aws` を絶対パス参照 + `/usr/local/bin/aws` へ symlink して非ログイン shell からも解決させる)。IAM instance profile は手順 2 で選択したもの (フラグ省略時は共有ベースプロファイル `nakama-instance-profile`)
+9. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を AWS 公式のインストールスクリプトで ubuntu ユーザーに導入する (§8.22、ADR 0024)。Ubuntu の apt `awscli` は v1 と古いため purge する)。IAM instance profile は手順 2 で選択したもの (フラグ省略時は共有ベースプロファイル `nakama-instance-profile`)
 10. EC2 が `running` まで待機
 11. CloudFront `CreateVpcOrigin` (HTTP:8080)
 12. VpcOrigin が `Deployed` まで待機
@@ -353,11 +353,14 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 5. SSM Run Command (`AWS-RunShellScript`, `executionTimeout` 延長) で 1 スクリプト実行:
    - `apt-get update` → `apt-get dist-upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold` (`DEBIAN_FRONTEND=noninteractive`)
    - code-server `install.sh`(latest) → `systemctl restart code-server@ubuntu`
-   - `code-server --version` を `/nakama/<name>/code-server/version` へ書き戻し (best-effort)
-   - 末尾に `/var/run/reboot-required` の有無を `NAKAMA_REBOOT_REQUIRED=0|1` として stdout 出力
+   - `code-server --version` を `/nakama/<name>/code-server/version` へ書き戻し (best-effort。`nakama_aws` 経由、§8.22)
+   - AWS CLI: 公式のインストールがあれば (`~/.local/aws-cli/v2/current/bin/aws`) 公式のインストールスクリプトを再実行して更新し、版を `NAKAMA_AWSCLI=<版>` で返す。失敗は update の失敗。Issue #101 より前のインスタンス (snap) には何もしない (Issue #101)
+   - Kiro Crew: `~/.local/bin/kirocrew` があれば ubuntu で `kirocrew update` → `kirocrew restart` (update が失敗したら restart しない)。出力は捨てる (restart がダッシュボードのアクセストークン付き URL を表示するため)。結果を `NAKAMA_KIROCREW=updated|failed` で返し、失敗は警告に留める (Issue #101)
+   - 末尾に `/var/run/reboot-required` の有無を `NAKAMA_REBOOT_REQUIRED=0|1` として返す
+   - **出力の扱い** (Issue #101): GetCommandInvocation が返す stdout は先頭 24,000 字だけなので、詳しい出力 (xtrace と apt) はインスタンスの `/var/log/nakama-update.log` に書き、stdout には上の `NAKAMA_*` の印だけを出す。失敗したときはログの末尾 (3,500 バイト) を stderr に出し、nakama のエラーに含める
 6. **reboot 判定**: 元 running かつ `NAKAMA_REBOOT_REQUIRED=1` のときのみ `RebootInstances`。元 stopped は reboot せず (手順 7 の stop と次回 start で新カーネルが反映される)
 7. `wasStopped` なら `StopInstances` → `stopped` 待ち。**手順 5 が失敗しても電源状態は元へ戻す** (バックアップ済のため復旧可能)。その後 NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。復元後の電源状態に対し、他に稼働中が無ければ NAT も停止。best-effort。ADR 0007)
-8. 結果出力: 更新後 code-server version / backup label / reboot 実施有無 / (元 stopped 時) 次回起動で反映の注記
+8. 結果出力: 更新後 code-server version / AWS CLI version / Kiro Crew の結果 / backup label / reboot 実施有無 / (元 stopped 時) 次回起動で反映の注記。Kiro Crew が failed なら stderr に警告
 
 > 設計判断の根拠は ADR 0006 を参照。
 
@@ -535,7 +538,7 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 §8.14 の ssh 経路が入ったことで、ブラウザ IDE を使わない構成が実用になった。`--bare` は code-server 一式を作らない。
 
 - **作らないもの**: パスワード (生成も SSM 保存もしない)、code-server の user-data、private DNS 解決、VPC Origin、CloudFront distribution とその Deployed 待ち。**作成時間の短縮はこの待ちの省略による**
-- **user-data**: `internal/userdata/bare.tmpl.sh` (SSM エージェントの起動確認・sshd 有効化・aws CLI と基本ツールの導入のみ)。`connect` / `ssh` / `tunnel` が成立する最小構成
+- **user-data**: `internal/userdata/bare.tmpl.sh` (SSM エージェントの起動確認・sshd 有効化・aws CLI (§8.22) と基本ツールの導入のみ)。`connect` / `ssh` / `tunnel` が成立する最小構成
 - **種別の記録**: `/nakama/<name>/meta/kind = bare`。**未記録は従来の code-server インスタンス**として扱うため、既存インスタンスへの移行処理は不要。空値の PutParameter は SSM が拒否するため、bare では distribution 系のメタキー自体を書かない
 - **各コマンドの対応**: `list` は kind を読んで TYPE=BARE 表示 / `info` は Kind を返し bare ではパスワードを読まない / `open` は bare を検出して `ssh setup`・`connect` を案内するエラー / `update` は OS 更新のみのスクリプト (reboot マーカーは共通) / `delete` は空の distribution・VPC Origin メタを既にスキップする構造だったためそのまま動作 / NAT 電源連動は通常インスタンスと同一 (egress が必要)
 
@@ -587,6 +590,14 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - 実行は IP set を読み直し、計画にあって今もあるエントリだけを除いた一覧で 1 回の `UpdateIPSet` をする (確認の後に追加されたエントリは残る。読み直しで得た lock token により、その間の変更は `WAFOptimisticLockException` で拒否される)。消すものが無ければ更新しない。`Addresses` は空でも nil にしない (SDK の必須項目)。
 - 追加日時は、消したエントリ、計画の後に他から消されたエントリ、まだエントリの無い残骸の分を `DeleteParameter` で消す (`ParameterNotFound` は無視)。IP set が正なので、失敗は警告に留める。
 - IP set を空にすると、Web ACL の既定 (Block) により、すべての distribution (Kiro Crew を含む) がブラウザに 403 を返す。SSM 経由の `connect` / `ssh` / `tunnel` は影響を受けない。
+
+### 8.22 AWS CLI の導入と、root からの呼び出し (ADR 0024 / Issue #101)
+
+- **導入**: `internal/awscli/install.sh` の `nakama_install_awscli` が、AWS 公式のインストールスクリプト (`https://awscli.amazonaws.com/v2/install.sh`) を ubuntu ユーザーで実行する。`XDG_DATA_HOME=~/.local` / `XDG_BIN_HOME=~/.local/bin` を渡し、`~/.local/aws-cli` に入れて `~/.local/bin/aws` にリンクを作る。スクリプトは `uname -m` から x86_64 / aarch64 の zip を選び、PGP 署名を検証する。gpg が無いと警告だけで検証を飛ばすため、nakama は gpg が無ければ失敗にする (テンプレートの apt に `gnupg` を入れる)。スクリプトはファイルに落としてから実行する (途中で切れたダウンロードを実行しない)。再実行すると古い版を更新し、最新なら何もしない
+- **snap を使わない理由**: snap のアプリは setuid の snap-confine で起動する。Kiro Crew のサンドボックス (unprivileged user namespace) の中では setuid が効かないため動かない
+- **PATH**: `~/.bashrc` に `export PATH="$HOME/.local/bin:$PATH"` を足す (Kiro の導入と同じ行。`grep -qF` で重複させない)。ログインシェルは `~/.profile` が `~/.local/bin` を加える
+- **root からの呼び出し** (`internal/awscli/run.sh` の `nakama_aws`): user-data のパスワード取得と版の記録、update の版の記録、復元の初回起動スクリプトが使う。公式版は ubuntu が書き換えられる場所にあるため root では実行せず、`sudo -u ubuntu env -i PATH=/usr/bin:/bin HOME=/nonexistent AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_PAGER=` で実行する。ubuntu の AWS の設定は効かず、インスタンスロールで動く。公式版が無いディスク (Issue #101 より前の作成、またはそのバックアップからの復元) では `/snap/bin/aws` を使う。root 用の `/usr/local/bin/aws` は作らない
+- **既存のインスタンス**: nakama は移行しない (snap はそのまま、update で公式版を入れない)。利用者が手で同じ場所 (`~/.local/aws-cli`、`~/.local/bin`) に入れれば、以後の update が更新する
 
 ## 9. テスト戦略
 
