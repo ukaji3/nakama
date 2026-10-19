@@ -690,7 +690,8 @@ func TestCommandWrapperInterrupt(t *testing.T) {
 			done := make(chan error, 1)
 			go func() { done <- cmd.Wait() }()
 			select {
-			case <-done:
+			case err := <-done:
+				t.Logf("wrapper exited: %v", err) // the exit status is not what this test checks
 			case <-time.After(10 * time.Second):
 				_ = cmd.Process.Kill()
 				t.Fatal("the wrapper did not exit after the interrupt")
@@ -755,7 +756,8 @@ func TestCommandWrapperInterruptKeepsTheStatusOfAFastExit(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		select {
-		case <-done:
+		case err := <-done:
+			t.Logf("wrapper exited: %v", err) // the exit status is not what this test checks
 		case <-time.After(10 * time.Second):
 			_ = cmd.Process.Kill()
 			t.Fatal("the wrapper did not exit after the interrupt")
