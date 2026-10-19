@@ -171,32 +171,55 @@ func rebootRequired(commandStdout string) bool {
 	return strings.Contains(commandStdout, "NAKAMA_REBOOT_REQUIRED=1")
 }
 
+// updateLogPath is where the update script writes its full output on
+// the instance.
+const updateLogPath = "/var/log/nakama-update.log"
+
+// updateScriptHeader starts every update script. GetCommandInvocation
+// returns only the first 24,000 characters of a command's stdout, and an
+// apt dist-upgrade under xtrace easily writes more, which pushed the
+// result markers at the end out of reach: a required reboot then went
+// undetected. So the full output goes to updateLogPath, and only the
+// markers are written to the Run Command stdout, kept as fd 3. When the
+// script fails, the end of the log goes to stderr (fd 4), where the
+// caller's error message shows it.
+func updateScriptHeader() string {
+	return `#!/bin/bash
+set -euo pipefail
+exec 3>&1 4>&2
+exec >>` + updateLogPath + ` 2>&1
+echo "=== nakama update $(date -u +%FT%TZ)"
+trap 'rc=$?; set +x; if [ "$rc" -ne 0 ]; then { echo "nakama: the update failed (exit $rc); the end of ` + updateLogPath + ` follows"; tail -c 3500 ` + updateLogPath + `; } >&4; fi' EXIT
+set -x
+`
+}
+
+// updateRebootMarker reports, on the result channel, whether a reboot
+// is pending (presence of /var/run/reboot-required).
+const updateRebootMarker = `if [ -f /var/run/reboot-required ]; then
+  echo "NAKAMA_REBOOT_REQUIRED=1" >&3
+else
+  echo "NAKAMA_REBOOT_REQUIRED=0" >&3
+fi
+`
+
 // buildBareUpdateScript renders the update script for a bare instance
 // (Issue #52): the OS part only, with the same reboot marker so the
 // caller's reboot handling is unchanged.
 func buildBareUpdateScript() string {
-	return `#!/bin/bash
-set -euxo pipefail
-export DEBIAN_FRONTEND=noninteractive
+	return updateScriptHeader() + `export DEBIAN_FRONTEND=noninteractive
 export HOME="${HOME:-/root}"
 apt-get update -qq
 apt-get dist-upgrade -y -qq
 apt-get autoremove -y -qq
-if [ -f /var/run/reboot-required ]; then
-  echo "NAKAMA_REBOOT_REQUIRED=1"
-else
-  echo "NAKAMA_REBOOT_REQUIRED=0"
-fi
-`
+` + updateRebootMarker
 }
 
 // buildUpdateScript renders the in-instance update shell script.
 // region/versionParam are injected so the instance can write the
 // post-update code-server version back to Parameter Store.
 func buildUpdateScript(region, versionParam string) string {
-	return fmt.Sprintf(`#!/bin/bash
-set -euxo pipefail
-export DEBIAN_FRONTEND=noninteractive
+	return updateScriptHeader() + fmt.Sprintf(`export DEBIAN_FRONTEND=noninteractive
 # SSM Run Command runs as root in a non-login shell that does not export
 # HOME; the code-server install.sh reads $HOME. Default to /root (matches
 # the cloud-init userdata workaround).
@@ -223,12 +246,7 @@ if VL="$(sudo -u ubuntu code-server --version 2>/dev/null | head -n1)"; then
   fi
 fi
 
-if [ -f /var/run/reboot-required ]; then
-  echo "NAKAMA_REBOOT_REQUIRED=1"
-else
-  echo "NAKAMA_REBOOT_REQUIRED=0"
-fi
-`, region, versionParam)
+`, region, versionParam) + updateRebootMarker
 }
 
 // runUpdateCommand sends the update script via SSM Run Command and
