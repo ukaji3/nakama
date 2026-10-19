@@ -67,6 +67,13 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 	if instanceID == "" {
 		return nil, fmt.Errorf("nakama instance %q not found", in.Name)
 	}
+	// Read everything the update needs before changing anything: an
+	// error after the instance was started would skip the power-state
+	// restore below and leave a stopped instance running.
+	kind, err := s.ssmGetOptional(ctx, ssmKindPath(in.Name))
+	if err != nil {
+		return nil, err
+	}
 
 	state, _, err := s.fetchInstanceStateAndType(ctx, instanceID)
 	if err != nil {
@@ -120,10 +127,6 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 	// 3. Run the update via SSM Run Command.
 	// A bare instance has no code-server to update, so only the OS part
 	// of the script runs (Issue #52).
-	kind, err := s.ssmGetOptional(ctx, ssmKindPath(in.Name))
-	if err != nil {
-		return nil, err
-	}
 	stdout, runErr := s.runUpdateCommand(ctx, instanceID, ssmVersionPath(in.Name), kind == instanceKindBare)
 
 	// 4. Reboot handling (only meaningful on success).
