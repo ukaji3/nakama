@@ -29,11 +29,19 @@ func newAWSACLCommand() *cobra.Command {
 func newAWSACLAddCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "add [IP|CIDR]",
-		Short: "Add a source IP to the allowlist (auto-detects caller's IP if omitted)",
+		Short: "Add a source IP to the allowlist (auto-detects caller's IPs if omitted)",
 		Long: `Adds an IPv4 address or CIDR block to the WAFv2 IP set
-` + "`nakama-allowed-ips`" + `. When no argument is supplied, nakama queries
-` + "https://checkip.amazonaws.com/" + ` to determine the caller's public
-IP address. /32 is appended automatically when only a single IP is given.`,
+` + "`nakama-allowed-ips`" + `. /32 is appended automatically when only a single
+IP is given.
+
+When no argument is supplied, nakama detects the caller's public IPv4
+address: it asks https://checkip.amazonaws.com/ and https://ifconfig.io/ip
+three times each, every time over a new connection (direct connections
+use IPv4, as "curl -4" does), and adds every distinct address it gets.
+A network with redundant exits can show a different address per
+connection, and a browser can leave by any of them. Answers that are not
+public IPv4 addresses are ignored. If some checks fail, it warns and adds
+what the others found; if all fail, it adds nothing.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := withCancel(cmd)
@@ -46,14 +54,49 @@ IP address. /32 is appended automatically when only a single IP is given.`,
 				return err
 			}
 			svc := service.NewService(clients)
-			canonical, err := svc.AddACL(ctx, input)
+			res, err := svc.AddACL(ctx, input)
 			if err != nil {
 				return err
 			}
-			res := map[string]string{"added": canonical}
-			return renderOutput(cmd.OutOrStdout(), global.Output, res, "added: "+canonical)
+			warnFailedIPChecks(cmd.ErrOrStderr(), res.Detection,
+				"if your network has more than one exit, one may be missing; run \"nakama aws acl add\" again or add its address")
+			data, text := aclAddOutput(res.Added)
+			return renderOutput(cmd.OutOrStdout(), global.Output, data, text)
 		},
 	}
+}
+
+// aclAddOutput is the structured and the text output of "acl add". One
+// entry keeps the output from before Issue #104 ({"added": "<cidr>"});
+// several make a list, as "acl delete" does.
+func aclAddOutput(added []string) (any, string) {
+	text := "added: " + strings.Join(added, "\nadded: ")
+	if len(added) == 1 {
+		return map[string]string{"added": added[0]}, text
+	}
+	return map[string][]string{"added": added}, text
+}
+
+// warnFailedIPChecks prints a warning for each check site that failed
+// some of the IP checks, then what that may mean (consequence).
+func warnFailedIPChecks(w io.Writer, det *awsx.DetectedIPs, consequence string) {
+	lines := det.FailureSummary()
+	if len(lines) == 0 {
+		return
+	}
+	for _, l := range lines {
+		_, _ = fmt.Fprintf(w, "warning: IP check: %s\n", l)
+	}
+	_, _ = fmt.Fprintf(w, "warning: %s\n", consequence)
+}
+
+// yourIPs names the caller's detected IPs: "your IP A" or "one of your
+// IPs A, B".
+func yourIPs(ips []string) string {
+	if len(ips) == 1 {
+		return "your IP " + ips[0]
+	}
+	return "one of your IPs " + strings.Join(ips, ", ")
 }
 
 func newAWSACLListCommand() *cobra.Command {
@@ -93,8 +136,8 @@ Browsers then get 403 from every nakama environment (Kiro Crew included),
 including yours, until an address is added again with
 "nakama aws acl add"; connect, ssh and tunnel do not use the allowlist.
 It lists what it removes and asks first (--yes skips the question).
-With --keep-mine, entries that contain your current public IP (detected
-as "acl add" does) are kept.`,
+With --keep-mine, entries that contain one of your current public IPs
+(detected as "acl add" does) are kept.`,
 		Example: `  nakama aws acl delete 203.0.113.10
   nakama aws acl delete 203.0.113.10 198.51.100.0/24
   nakama aws acl delete all --keep-mine
@@ -128,7 +171,7 @@ as "acl add" does) are kept.`,
 		},
 	}
 	cmd.Flags().BoolVar(&keepMine, "keep-mine", false,
-		"With \"all\": keep the entries that contain your current public IP")
+		"With \"all\": keep the entries that contain one of your current public IPs")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt of \"delete all\"")
 	return cmd
 }
@@ -155,9 +198,13 @@ func runACLDeleteAll(ctx context.Context, cmd *cobra.Command, svc *service.Servi
 	if err != nil {
 		return err
 	}
+	if plan.KeepMine {
+		warnFailedIPChecks(cmd.ErrOrStderr(), plan.Detection,
+			"if your network has more than one exit, the entries for one that was not detected are deleted too")
+	}
 	if plan.KeepMine && len(plan.Keep) == 0 {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-			"warning: your IP %s is in none of the entries, so --keep-mine keeps nothing\n", plan.MyIP)
+			"warning: no entry contains %s, so --keep-mine keeps nothing\n", yourIPs(plan.MyIPs))
 	}
 	// Asking is about access; removing only stale added-at records
 	// changes nobody's access.
@@ -195,7 +242,7 @@ func aclDeleteAllPrompt(p *service.ACLDeleteAllPlan) string {
 	}
 	writeACLEntries(&b, p.Delete)
 	if len(p.Keep) > 0 {
-		fmt.Fprintf(&b, "Keep (contains your IP %s):\n", p.MyIP)
+		fmt.Fprintf(&b, "Keep (contains %s):\n", yourIPs(p.MyIPs))
 		writeACLEntries(&b, p.Keep)
 		b.WriteString("Browsers at the deleted addresses will get 403 from every nakama environment (Kiro Crew included).\n")
 	} else {
@@ -236,7 +283,7 @@ func aclDeleteAllSummary(p *service.ACLDeleteAllPlan, r *service.ACLDeleteAllRes
 	case len(p.Delete) == 0 && len(p.Keep) == 0:
 		b.WriteString("the allowlist is already empty")
 	case len(r.Deleted) == 0 && len(r.Gone) == 0:
-		fmt.Fprintf(&b, "nothing to delete: every entry contains your IP %s", p.MyIP)
+		fmt.Fprintf(&b, "nothing to delete: every entry contains %s", yourIPs(p.MyIPs))
 	case len(r.Remaining) == 0:
 		fmt.Fprintf(&b, "deleted %s; the allowlist is now empty (add your IP with \"nakama aws acl add\")", entryCount(len(r.Deleted)))
 	default:

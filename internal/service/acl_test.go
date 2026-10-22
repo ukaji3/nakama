@@ -166,6 +166,14 @@ func (f *fakeIP) DetectPublicIPv4s(context.Context) (*awsx.DetectedIPs, error) {
 	return &awsx.DetectedIPs{IPs: ips, Checks: 6, Failures: f.failures}, nil
 }
 
+func (f *fakeACLSSM) PutParameter(_ context.Context, in *ssm.PutParameterInput, _ ...func(*ssm.Options)) (*ssm.PutParameterOutput, error) {
+	if !aws.ToBool(in.Overwrite) {
+		return nil, errors.New("the added-at record is overwritten")
+	}
+	f.params[aws.ToString(in.Name)] = aws.ToString(in.Value)
+	return &ssm.PutParameterOutput{}, nil
+}
+
 // aclService: the IP set holds addrs, and every CIDR in stamped has an
 // added-at record.
 func aclService(addrs []string, stamped ...string) (*Service, *fakeACLWAF, *fakeACLSSM, *fakeIP) {
@@ -260,7 +268,7 @@ func TestPlanACLDeleteAll_EverythingAndTheStaleRecords(t *testing.T) {
 	if strings.Join(p.Stale, ",") != "192.0.2.1/32" {
 		t.Errorf("stale = %v", p.Stale)
 	}
-	if ip.calls != 0 || p.MyIP != "" {
+	if ip.calls != 0 || p.MyIPs != nil || p.Detection != nil {
 		t.Errorf("without --keep-mine the IP is not detected (calls %d)", ip.calls)
 	}
 	if len(waf.updates) != 0 || len(ssmf.deleted) != 0 {
@@ -286,8 +294,94 @@ func TestPlanACLDeleteAll_KeepMine(t *testing.T) {
 	if strings.Join(keep, ",") != "153.242.0.0/16,153.242.166.137/32" || strings.Join(del, ",") != "153.243.0.0/16,203.0.113.5/32" {
 		t.Errorf("keep = %v, delete = %v", keep, del)
 	}
-	if p.MyIP != "153.242.166.137" || !p.KeepMine {
+	if strings.Join(p.MyIPs, ",") != "153.242.166.137" || !p.KeepMine || p.Detection == nil {
 		t.Errorf("plan = %+v", p)
+	}
+}
+
+// TestPlanACLDeleteAll_KeepMineKeepsEveryExit: with redundant exits,
+// the entries of every detected exit are kept, as acl add added them.
+func TestPlanACLDeleteAll_KeepMineKeepsEveryExit(t *testing.T) {
+	t.Parallel()
+	svc, _, _, ip := aclService([]string{"203.0.113.5/32", "198.51.100.1/32", "198.51.100.2/32", "192.0.2.0/24"})
+	ip.ips = []string{"198.51.100.1", "192.0.2.77"}
+	p, err := svc.PlanACLDeleteAll(context.Background(), true)
+	if err != nil {
+		t.Fatalf("PlanACLDeleteAll: %v", err)
+	}
+	var keep []string
+	for _, e := range p.Keep {
+		keep = append(keep, e.CIDR)
+	}
+	if strings.Join(keep, ",") != "192.0.2.0/24,198.51.100.1/32" || len(p.Delete) != 2 || strings.Join(p.MyIPs, ",") != "198.51.100.1,192.0.2.77" {
+		t.Errorf("keep = %v, delete = %v, my IPs = %v", keep, p.Delete, p.MyIPs)
+	}
+	res, err := svc.DeleteACLAll(context.Background(), p)
+	if err != nil {
+		t.Fatalf("DeleteACLAll: %v", err)
+	}
+	// my_ip stays for the JSON output from before Issue #104.
+	if res.MyIP != "198.51.100.1" || strings.Join(res.MyIPs, ",") != "198.51.100.1,192.0.2.77" {
+		t.Errorf("result my IPs = %q, %v", res.MyIP, res.MyIPs)
+	}
+}
+
+func TestAddACL_AddsEveryDetectedExitInOneUpdate(t *testing.T) {
+	t.Parallel()
+	svc, waf, ssmf, ip := aclService([]string{"203.0.113.5/32", "198.51.100.2/32"}, "198.51.100.2/32")
+	ip.ips = []string{"198.51.100.1", "198.51.100.2", "203.0.113.9"}
+	ip.failures = []awsx.IPCheckFailure{{Site: "ifconfig.io", Err: errors.New("timeout")}}
+	res, err := svc.AddACL(context.Background(), "")
+	if err != nil {
+		t.Fatalf("AddACL: %v", err)
+	}
+	if strings.Join(res.Added, ",") != "198.51.100.1/32,198.51.100.2/32,203.0.113.9/32" {
+		t.Errorf("added = %v", res.Added)
+	}
+	if res.Detection == nil || len(res.Detection.Failures) != 1 {
+		t.Errorf("the detection (with its failures) must reach the caller: %+v", res.Detection)
+	}
+	if len(waf.updates) != 1 || strings.Join(waf.updates[0], ",") != "198.51.100.1/32,198.51.100.2/32,203.0.113.5/32,203.0.113.9/32" {
+		t.Errorf("updates = %v, want one update adding the two missing exits", waf.updates)
+	}
+	for _, c := range res.Added {
+		if v := ssmf.params[aclTimestampPath(c)]; v == "" || v == "2026-09-01T00:00:00Z" {
+			t.Errorf("added-at of %s = %q, want it refreshed", c, v)
+		}
+	}
+}
+
+func TestAddACL_AllPresentChangesNoEntry(t *testing.T) {
+	t.Parallel()
+	svc, waf, _, ip := aclService([]string{"198.51.100.1/32", "198.51.100.2/32"})
+	ip.ips = []string{"198.51.100.2", "198.51.100.1"}
+	res, err := svc.AddACL(context.Background(), "")
+	if err != nil || len(res.Added) != 2 || len(waf.updates) != 0 {
+		t.Errorf("AddACL = %+v, %v; updates %v (want none)", res, err, waf.updates)
+	}
+}
+
+func TestAddACL_GivenCIDRSkipsTheDetection(t *testing.T) {
+	t.Parallel()
+	svc, waf, _, ip := aclService([]string{"203.0.113.5/32"})
+	res, err := svc.AddACL(context.Background(), "198.51.100.7")
+	if err != nil || strings.Join(res.Added, ",") != "198.51.100.7/32" || res.Detection != nil || ip.calls != 0 {
+		t.Errorf("AddACL = %+v, %v; detection calls %d", res, err, ip.calls)
+	}
+	if len(waf.updates) != 1 || strings.Join(waf.updates[0], ",") != "198.51.100.7/32,203.0.113.5/32" {
+		t.Errorf("updates = %v", waf.updates)
+	}
+}
+
+func TestAddACL_DetectionFailureAddsNothing(t *testing.T) {
+	t.Parallel()
+	svc, waf, ssmf, ip := aclService([]string{"203.0.113.5/32"})
+	ip.err = errors.New("no check site answered with a public IPv4 address")
+	if _, err := svc.AddACL(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "auto-detect public IP: no check site") {
+		t.Errorf("AddACL error = %v", err)
+	}
+	if len(waf.updates) != 0 || len(ssmf.params) != 0 {
+		t.Errorf("nothing may change: updates %v, params %v", waf.updates, ssmf.params)
 	}
 }
 
