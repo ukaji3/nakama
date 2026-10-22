@@ -154,7 +154,7 @@
   <tbody>
     <tr>
       <td>403 Forbidden になる</td>
-      <td>接続元 IP が許可されていません。<code>nakama aws acl add</code> を実行します。回線を変えた (テザリング、VPN の入切) 場合も IP が変わります。<br><strong>会社のネットワークでは、nakama とブラウザで外への出口 IP が違うことがあります。</strong>その場合はブラウザで <a href="https://checkip.amazonaws.com">https://checkip.amazonaws.com</a> を開き、表示された IP を <code>nakama aws acl add &lt;その IP&gt;</code> で追加してください</td>
+      <td>接続元 IP が許可されていません。<code>nakama aws acl add</code> を実行します。回線を変えた (テザリング、VPN の入切) 場合も IP が変わります。<br><strong>会社のネットワークでは、nakama とブラウザで外への出口 IP が違うことがあります。</strong>その場合はブラウザで <a href="https://checkip.amazonaws.com">https://checkip.amazonaws.com</a> を開き、表示された IP を <code>nakama aws acl add &lt;その IP&gt;</code> で追加してください。ときどきだけ 403 になるなら、出口が複数ある可能性があります。<code>nakama aws acl add</code> をもう一度実行してください</td>
     </tr>
     <tr>
       <td>ページが表示されない / タイムアウトする</td>

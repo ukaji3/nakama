@@ -79,7 +79,7 @@
   <thead><tr><th scope="col">コマンド</th><th scope="col">説明</th><th scope="col">主なオプション</th></tr></thead>
   <tbody>
     <tr><td><code>nakama aws init</code></td><td>共通の土台を作成 (冪等)</td><td>—</td></tr>
-    <tr><td><code>nakama aws acl add [IP|CIDR]</code></td><td>許可 IP を追加 (省略時は自動検出)</td><td>—</td></tr>
+    <tr><td><code>nakama aws acl add [IP|CIDR]</code></td><td>許可 IP を追加 (省略時は自動検出。見つかった IP をすべて追加)</td><td>—</td></tr>
     <tr><td><code>nakama aws acl list</code></td><td>許可 IP を一覧</td><td>—</td></tr>
     <tr><td><code>nakama aws acl delete &lt;IP|CIDR&gt;...</code></td><td>許可 IP を削除 (複数可)</td><td>—</td></tr>
     <tr><td><code>nakama aws acl delete all</code></td><td>許可 IP をすべて削除 (全環境がブラウザから 403 になる)</td><td><code>--keep-mine</code> (自分の IP を含むものを残す)、<code>-y, --yes</code></td></tr>

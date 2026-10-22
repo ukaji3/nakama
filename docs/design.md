@@ -126,7 +126,7 @@ github.com/ukaji3/nakama
 | `STSAPI` | `GetCallerIdentity` (AWS アカウント ID / 呼び出し元 ARN 解決。ARN は `--with-admin`/`--with-role` プリフライトの PolicySourceArn に使用) |
 | `IAMAPI` | Role, InstanceProfile, AttachRolePolicy, PutRolePolicy, SimulatePrincipalPolicy, ListInstanceProfilesForRole, ListAttachedRolePolicies |
 | `AMIResolver` | SSM 公式パラメータ経由で Ubuntu 26.04 AMI をアーキ別 (amd64 / arm64) に解決 (`LatestUbuntu2604(arch)`) |
-| `IPDiscoverer` | `https://checkip.amazonaws.com/` に GET し、Public IPv4 を返す |
+| `IPDiscoverer` | `PublicIPv4`: `https://checkip.amazonaws.com/` に 1 回 GET し、Public IPv4 を返す (`open` / `doctor`)。`DetectPublicIPv4s`: checkip と `https://ifconfig.io/ip` に 3 回ずつ問い合わせ、公開の IPv4 アドレスを重複なしで返す (`acl add` / `acl delete all --keep-mine`。§8.23) |
 
 `Clients` 構造体が上記をすべて束ね、`NewClients(ctx)` がエントリポイント。
 
@@ -586,7 +586,7 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 ### 8.21 `nakama aws acl delete` — 複数の削除と `delete all` (Issue #99)
 
 - 複数指定 (`DeleteACLs`): 入力を正規化して重複を除き、IP set を読む。1 つでも無ければ何も変えずに `ErrACLEntryNotFound` (入力のままの表記で列挙)。全部あれば 1 回の `UpdateIPSet` で消し、追加日時を消す。
-- `delete all` は計画 (`PlanACLDeleteAll`、読み取りだけ) と実行 (`DeleteACLAll`) に分ける。計画は IP set と SSM の追加日時を読み、消すエントリ・残すエントリ・SSM にだけある残骸 (Stale) を決める。`--keep-mine` は `IPDiscoverer.PublicIPv4` で接続元 IP を調べ、それを含む CIDR を残す (検出できなければエラー。締め出しを防ぐため黙って続けない)。CLI は計画を表示して確認を取る。
+- `delete all` は計画 (`PlanACLDeleteAll`、読み取りだけ) と実行 (`DeleteACLAll`) に分ける。計画は IP set と SSM の追加日時を読み、消すエントリ・残すエントリ・SSM にだけある残骸 (Stale) を決める。`--keep-mine` は `acl add` と同じ `IPDiscoverer.DetectPublicIPv4s` で接続元 IP を調べ、そのどれかを含む CIDR を残す (1 つも検出できなければエラー。締め出しを防ぐため黙って続けない。§8.23)。CLI は計画を表示して確認を取る。
 - 実行は IP set を読み直し、計画にあって今もあるエントリだけを除いた一覧で 1 回の `UpdateIPSet` をする (確認の後に追加されたエントリは残る。読み直しで得た lock token により、その間の変更は `WAFOptimisticLockException` で拒否される)。消すものが無ければ更新しない。`Addresses` は空でも nil にしない (SDK の必須項目)。
 - 追加日時は、消したエントリ、計画の後に他から消されたエントリ、まだエントリの無い残骸の分を `DeleteParameter` で消す (`ParameterNotFound` は無視)。IP set が正なので、失敗は警告に留める。
 - IP set を空にすると、Web ACL の既定 (Block) により、すべての distribution (Kiro Crew を含む) がブラウザに 403 を返す。SSM 経由の `connect` / `ssh` / `tunnel` は影響を受けない。
@@ -598,6 +598,20 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - **PATH**: `~/.bashrc` に `export PATH="$HOME/.local/bin:$PATH"` を足す (Kiro の導入と同じ行。`grep -qF` で重複させない)。ログインシェルは `~/.profile` が `~/.local/bin` を加える
 - **root からの呼び出し** (`internal/awscli/run.sh` の `nakama_aws`): user-data のパスワード取得と版の記録、update の版の記録、復元の初回起動スクリプトが使う。公式版は ubuntu が書き換えられる場所にあるため root では実行せず、`sudo -u ubuntu env -i PATH=/usr/bin:/bin HOME=/nonexistent AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_PAGER=` で実行する。ubuntu の AWS の設定は効かず、インスタンスロールで動く。公式版が無いディスク (Issue #101 より前の作成、またはそのバックアップからの復元) では `/snap/bin/aws` を使う。root 用の `/usr/local/bin/aws` は作らない
 - **既存のインスタンス**: nakama は移行しない (snap はそのまま、update で公式版を入れない)。利用者が手で同じ場所 (`~/.local/aws-cli`、`~/.local/bin`) に入れれば、以後の update が更新する
+
+### 8.23 `nakama aws acl add` の接続元 IP の検出 (ADR 0025 / Issue #104)
+
+引数なしの `acl add` と `acl delete all --keep-mine` は、`IPDiscoverer.DetectPublicIPv4s` で接続元の IP を調べる。出口を冗長化したネットワーク (接続ごとに出口が選ばれる) で、見えた出口をすべて登録するため。
+
+- **チェックサイト** (`ipCheckSites`): `https://checkip.amazonaws.com/` と `https://ifconfig.io/ip`。ifconfig.io の `/` は User-Agent によって HTML を返すので、平文の `/ip` を使う。
+- **問い合わせ**: それぞれに `IPCheckRounds` (3) 回、計 6 回を同時に行う (1 回の上限は 5 秒)。
+- **接続** (`newIPCheckTransport`): keep-alive を切り、1 回ごとに新しい接続にする (HTTP/2 の接続も 1 回きり、プロキシ経由なら毎回 CONNECT)。チェックサイトのホストへ直接ダイヤルするときは `tcp4` にする (`ipCheckNetwork`。`curl -4` と同じ)。プロキシへのダイヤルは変えない。
+- **答えの検査** (`publicIPv4`): 本文 (64 バイトまで) を IP として読み、IPv4 (IPv4-mapped は IPv4 に直す) で、グローバルユニキャストで、プライベートでも CGNAT (100.64.0.0/10) でもないものだけを受け付ける。checkip は X-Forwarded-For の先頭の値を返すので、TLS を中継するプロキシの下では社内の IP が返ることがある。
+- **結果** (`DetectedIPs`): `IPs` (重複なし、昇順)、`Checks` (6)、`Failures` (サイトとエラー)。1 つも無ければエラー (`FailureSummary` の内容を含む)。
+- **`AddACL`**: 見つかった IP を /32 に正規化し、IP set に無いものだけを足して、1 回の `UpdateIPSet` で更新する (無ければ更新しない)。追加日時はすべて書き直す。引数があるときは検出しない。
+- **CLI**: 失敗した問い合わせがあれば、サイトごとに `warning: IP check: <サイト>: N of 3 checks failed: <最初のエラー>` と、取りこぼしたかもしれないことを stderr に出す。追加したものが 1 つなら出力は今までと同じ (`added: X` / `{"added": "X"}`)、複数なら 1 行ずつと配列。
+- **`--keep-mine`**: 見つかったどれかを含むエントリを残す。確認の文と結果は「your IP X」または「one of your IPs X, Y」と書く。JSON の結果には `my_ips` を加え、`my_ip` (先頭) も残す。
+- **`open` / `doctor`**: `PublicIPv4` (checkip に 1 回) のまま。
 
 ## 9. テスト戦略
 
@@ -761,7 +775,7 @@ nakama の outbound HTTP(S) 経路は 3 つあり、いずれも `internal/proxy
 |---|---|
 | AWS SDK 全クライアント | `internal/awsx` の `loadConfig` で `config.WithHTTPClient(BuildableClient.WithTransportOptions(...))` により `Transport.Proxy = proxy.Func()` を設定。active profile / 既定チェーンの両パスが同一関数を通る |
 | Session Manager data-channel (WSS) | `service.RunSessionRunner` (session-runner 子プロセス) で `websocket.DefaultDialer.Proxy = proxy.Func()`。vendored plugin の websocketutil はこの package 変数を参照するためパッチ不要。副作用は子プロセス内に閉じる |
-| checkip (`IPDiscoverer`) | `internal/awsx/ip.go` で `proxy.NewTransport()` (http.DefaultTransport の Clone に Proxy 差し替え) を使用 |
+| checkip / ifconfig.io (`IPDiscoverer`) | `internal/awsx/ip.go` で `proxy.NewTransport()` (http.DefaultTransport の Clone に Proxy 差し替え) を使用。`DetectPublicIPv4s` 用はさらに keep-alive を切り、チェックサイトへの直接の接続を IPv4 にする (§8.23) |
 
 `proxy.Func()` の解決順序 (二段構え):
 
