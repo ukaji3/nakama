@@ -81,8 +81,13 @@ func UbuntuAMISSMParameterFor(arch string) (string, error) {
 }
 
 // CheckIPURL is the endpoint nakama queries to discover the caller's
-// public IP when `nakama aws acl add` is invoked without an argument.
+// public IP when `nakama aws acl add` is invoked without an argument,
+// and the one `open` and `doctor` ask for a quick check.
 const CheckIPURL = "https://checkip.amazonaws.com/"
+
+// IfconfigIOURL is the second endpoint `acl add` queries (Issue #104).
+// /ip answers with the address alone, whatever the User-Agent.
+const IfconfigIOURL = "https://ifconfig.io/ip"
 
 // CloudFrontVPCOriginsPrefixListName is the AWS-managed prefix list
 // whose addresses are used by CloudFront's service-managed ENIs to
