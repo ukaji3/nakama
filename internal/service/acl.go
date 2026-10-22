@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/wafv2"
 
 	"github.com/ukaji3/nakama/internal/awshelper"
+	"github.com/ukaji3/nakama/internal/awsx"
 )
 
 // ErrACLEntryNotFound is returned by DeleteACLs when a supplied CIDR
@@ -29,57 +30,77 @@ type ACLEntry struct {
 	AddedAt string `json:"added_at,omitempty"`
 }
 
-// AddACL inserts cidr (or the caller's public IP if cidr is empty)
-// into the shared WAFv2 IP set. The function is idempotent: if the
-// entry already exists, no WAF update is performed and the SSM
-// timestamp is preserved.
-func (s *Service) AddACL(ctx context.Context, cidr string) (string, error) {
-	if cidr == "" {
-		ip, err := s.clients.IPDiscoverer.PublicIPv4(ctx)
-		if err != nil {
-			return "", fmt.Errorf("auto-detect public IP: %w", err)
-		}
-		cidr = ip
-		slog.Info("acl: auto-detected caller IP", "ip", ip)
-	}
+// ACLAddResult is what AddACL put in the allowlist.
+type ACLAddResult struct {
+	// Added are the canonical CIDRs, now all in the IP set: the given
+	// one, or every detected address.
+	Added []string
+	// Detection is the auto-detection (nil when a CIDR was given).
+	Detection *awsx.DetectedIPs
+}
 
-	canonical, err := canonicalCIDR(cidr)
-	if err != nil {
-		return "", err
+// AddACL inserts cidr into the shared WAFv2 IP set. With an empty
+// cidr it detects the caller's public IPv4 addresses (every check site,
+// IPCheckRounds times each; Issue #104) and inserts each distinct one,
+// so that every exit of a network with redundant exits is allowed.
+// The IP set is changed with at most one update. It is idempotent:
+// entries already present are left alone (their added-at record is
+// refreshed).
+func (s *Service) AddACL(ctx context.Context, cidr string) (*ACLAddResult, error) {
+	res := &ACLAddResult{}
+	inputs := []string{cidr}
+	if cidr == "" {
+		det, err := s.clients.IPDiscoverer.DetectPublicIPv4s(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("auto-detect public IP: %w", err)
+		}
+		res.Detection = det
+		inputs = det.IPs
+		slog.Info("acl: auto-detected caller IP", "ips", det.IPs, "checks", det.Checks, "failed_checks", len(det.Failures))
+	}
+	for _, in := range inputs {
+		canonical, err := canonicalCIDR(in)
+		if err != nil {
+			return nil, err
+		}
+		if !containsCIDR(res.Added, canonical) {
+			res.Added = append(res.Added, canonical)
+		}
 	}
 
 	ipset, err := s.findIPSetSummary(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-
 	addrs, lockToken, err := s.fetchIPSetAddresses(ctx, ipset.id, ipset.name)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	if containsCIDR(addrs, canonical) {
-		slog.Info("acl: entry already present", "cidr", canonical)
-	} else {
-		addrs = append(addrs, canonical)
-		sort.Strings(addrs)
-		if _, err := s.clients.WAF.UpdateIPSet(ctx, &wafv2.UpdateIPSetInput{
-			Name:      aws.String(ipset.name),
-			Id:        aws.String(ipset.id),
-			Scope:     scopeCloudFront,
-			Addresses: addrs,
-			LockToken: aws.String(lockToken),
-		}); err != nil {
-			return "", fmt.Errorf("UpdateIPSet: %w", err)
+	var missing []string
+	for _, c := range res.Added {
+		if containsCIDR(addrs, c) {
+			slog.Info("acl: entry already present", "cidr", c)
+		} else {
+			missing = append(missing, c)
 		}
-		slog.Info("acl: added", "cidr", canonical, "total_entries", len(addrs))
+	}
+	if len(missing) > 0 {
+		addrs = append(append([]string(nil), addrs...), missing...)
+		sort.Strings(addrs)
+		if err := s.updateIPSetAddresses(ctx, ipset, addrs, lockToken); err != nil {
+			return nil, err
+		}
+		slog.Info("acl: added", "cidrs", missing, "total_entries", len(addrs))
 	}
 
-	if err := s.writeACLTimestamp(ctx, canonical); err != nil {
-		// non-fatal; the IP set itself is the source of truth
-		slog.Warn("acl: failed to record timestamp", "cidr", canonical, "error", err)
+	for _, c := range res.Added {
+		if err := s.writeACLTimestamp(ctx, c); err != nil {
+			// non-fatal; the IP set itself is the source of truth
+			slog.Warn("acl: failed to record timestamp", "cidr", c, "error", err)
+		}
 	}
-	return canonical, nil
+	return res, nil
 }
 
 // ListACL returns every CIDR currently in the WAFv2 IP set, paired
@@ -166,9 +187,11 @@ type ACLDeleteAllPlan struct {
 	// Delete are the entries to remove; Keep the ones --keep-mine keeps.
 	Delete []ACLEntry
 	Keep   []ACLEntry
-	// MyIP is the caller's public IPv4 address (--keep-mine only).
-	MyIP     string
-	KeepMine bool
+	// MyIPs are the caller's public IPv4 addresses (--keep-mine only),
+	// detected as `acl add` does; Detection is that detection.
+	MyIPs     []string
+	Detection *awsx.DetectedIPs
+	KeepMine  bool
 	// Stale are CIDRs that have an added-at record in SSM but are not
 	// in the IP set (left behind by edits outside nakama). They are
 	// removed too; that changes nobody's access.
@@ -181,16 +204,18 @@ type ACLDeleteAllResult struct {
 	// Remaining is the IP set after the update: the kept entries plus
 	// any added after the plan was made.
 	Remaining []string `json:"remaining"`
-	MyIP      string   `json:"my_ip,omitempty"`
+	// MyIP is the first of MyIPs, kept for the output before Issue #104.
+	MyIP  string   `json:"my_ip,omitempty"`
+	MyIPs []string `json:"my_ips,omitempty"`
 	// Gone are planned entries someone else removed in the meantime.
 	Gone              []string `json:"gone,omitempty"`
 	TimestampsRemoved int      `json:"timestamps_removed"`
 }
 
 // PlanACLDeleteAll lists the entries `acl delete all` removes. With
-// keepMine, the caller's public IP is detected (as `acl add` does) and
-// every entry containing it is kept; failing to detect it is an error,
-// so that the caller is never locked out by surprise.
+// keepMine, the caller's public IPs are detected (as `acl add` does)
+// and every entry containing one of them is kept; detecting none is an
+// error, so that the caller is never locked out by surprise.
 func (s *Service) PlanACLDeleteAll(ctx context.Context, keepMine bool) (*ACLDeleteAllPlan, error) {
 	ipset, err := s.findIPSetSummary(ctx)
 	if err != nil {
@@ -203,19 +228,27 @@ func (s *Service) PlanACLDeleteAll(ctx context.Context, keepMine bool) (*ACLDele
 	timestamps := s.fetchAllACLTimestamps(ctx)
 	p := &ACLDeleteAllPlan{KeepMine: keepMine}
 
-	var mine net.IP
+	var mine []net.IP
 	if keepMine {
-		ip, err := s.clients.IPDiscoverer.PublicIPv4(ctx)
+		det, err := s.clients.IPDiscoverer.DetectPublicIPv4s(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("detect your public IP for --keep-mine: %w", err)
 		}
-		if mine = net.ParseIP(strings.TrimSpace(ip)).To4(); mine == nil {
-			return nil, fmt.Errorf("detect your public IP for --keep-mine: %q is not an IPv4 address", ip)
+		for _, ip := range det.IPs {
+			v4 := net.ParseIP(strings.TrimSpace(ip)).To4()
+			if v4 == nil {
+				return nil, fmt.Errorf("detect your public IP for --keep-mine: %q is not an IPv4 address", ip)
+			}
+			mine = append(mine, v4)
+			p.MyIPs = append(p.MyIPs, v4.String())
 		}
-		p.MyIP = mine.String()
+		if len(mine) == 0 {
+			return nil, errors.New("detect your public IP for --keep-mine: no address found")
+		}
+		p.Detection = det
 	}
 	for _, e := range aclEntries(addrs, timestamps) {
-		if mine != nil && cidrContains(e.CIDR, mine) {
+		if cidrContainsAny(e.CIDR, mine) {
 			p.Keep = append(p.Keep, e)
 			continue
 		}
@@ -245,7 +278,10 @@ func (s *Service) DeleteACLAll(ctx context.Context, p *ACLDeleteAllPlan) (*ACLDe
 	if err != nil {
 		return nil, err
 	}
-	res := &ACLDeleteAllResult{MyIP: p.MyIP, Deleted: []string{}}
+	res := &ACLDeleteAllResult{MyIPs: p.MyIPs, Deleted: []string{}}
+	if len(p.MyIPs) > 0 {
+		res.MyIP = p.MyIPs[0]
+	}
 	var planned []string
 	for _, e := range p.Delete {
 		if containsCIDR(addrs, e.CIDR) {
@@ -330,11 +366,19 @@ func withoutCIDRs(addrs, remove []string) []string {
 	return out
 }
 
-// cidrContains reports whether the CIDR includes ip. An unparsable
-// CIDR (WAF does not accept one) contains nothing.
-func cidrContains(cidr string, ip net.IP) bool {
+// cidrContainsAny reports whether the CIDR includes one of ips. An
+// unparsable CIDR (WAF does not accept one) contains nothing.
+func cidrContainsAny(cidr string, ips []net.IP) bool {
 	_, n, err := net.ParseCIDR(cidr)
-	return err == nil && n.Contains(ip)
+	if err != nil {
+		return false
+	}
+	for _, ip := range ips {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // updateIPSetAddresses replaces the IP set's addresses. The lock token
