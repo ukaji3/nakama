@@ -254,6 +254,18 @@ func TestIPCheckNetwork(t *testing.T) {
 	}
 }
 
+func TestNewIPCheckTransport_LeavesItsArgumentAlone(t *testing.T) {
+	t.Parallel()
+	base := &http.Transport{}
+	tr := newIPCheckTransport(base, ipCheckSites, nil)
+	if tr == base || base.DisableKeepAlives || base.DialContext != nil {
+		t.Errorf("the transport passed in was changed")
+	}
+	if !tr.DisableKeepAlives || tr.DialContext == nil {
+		t.Errorf("the returned transport is not adapted")
+	}
+}
+
 func TestIPCheckSites(t *testing.T) {
 	t.Parallel()
 	var names []string
