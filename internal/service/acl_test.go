@@ -141,14 +141,29 @@ func (f *fakeACLSSM) DeleteParameter(_ context.Context, in *ssm.DeleteParameterI
 }
 
 type fakeIP struct {
-	ip    string
-	err   error
-	calls int
+	ip  string
+	ips []string // DetectPublicIPv4s; nil means {ip}
+	err error
+	// failures are failed checks DetectPublicIPv4s reports beside ips.
+	failures []awsx.IPCheckFailure
+	calls    int
 }
 
 func (f *fakeIP) PublicIPv4(context.Context) (string, error) {
 	f.calls++
 	return f.ip, f.err
+}
+
+func (f *fakeIP) DetectPublicIPv4s(context.Context) (*awsx.DetectedIPs, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	ips := f.ips
+	if ips == nil {
+		ips = []string{f.ip}
+	}
+	return &awsx.DetectedIPs{IPs: ips, Checks: 6, Failures: f.failures}, nil
 }
 
 // aclService: the IP set holds addrs, and every CIDR in stamped has an
