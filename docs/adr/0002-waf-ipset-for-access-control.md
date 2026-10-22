@@ -65,3 +65,7 @@ traffic whose source IP is in the IP set.
 
 - <https://docs.aws.amazon.com/waf/latest/developerguide/cloudfront-features.html>
 - <https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/distribution-web-awswaf.html>
+
+## 追記 (2026-10-23, Issue #104)
+
+引数なしの `acl add` は、`https://checkip.amazonaws.com/` と `https://ifconfig.io/ip` に 3 回ずつ問い合わせ、見つかった公開の IPv4 アドレスをすべて登録するようになった (出口を冗長化したネットワークのため)。ADR 0025 を参照。

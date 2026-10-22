@@ -40,10 +40,10 @@
 | カテゴリ | サブコマンド | 機能 |
 |---|---|---|
 | 基盤 | `nakama aws init` | nakama 環境基盤 (VPC / Subnet / NAT インスタンス / WAF / IP set / IAM) を作成または再利用。既存の NAT Gateway があれば削除し EIP を解放して NAT インスタンスへ移行。最後に NAT インスタンスの転送を確認し、壊れていれば直す。直らなければ失敗する (Issue #87) |
-| アクセス制御 | `nakama aws acl add [IP\|CIDR]` | アクセス元 IP を WAFv2 IP set に追加 (省略時は `https://checkip.amazonaws.com/` で自動取得) |
+| アクセス制御 | `nakama aws acl add [IP\|CIDR]` | アクセス元 IP を WAFv2 IP set に追加。省略時は `https://checkip.amazonaws.com/` と `https://ifconfig.io/ip` に 3 回ずつ問い合わせ、見つかった公開の IPv4 アドレスを重複なしですべて追加する (出口を冗長化したネットワークのため。Issue #104) |
 | アクセス制御 | `nakama aws acl list` | IP set の内容を一覧 |
 | アクセス制御 | `nakama aws acl delete <IP\|CIDR>...` | IP set からエントリを削除。複数を指定すると 1 回の更新でまとめて消す。1 つでも未登録なら何も消さずにエラー (Issue #99) |
-| アクセス制御 | `nakama aws acl delete all [--keep-mine] [--yes]` | IP set のエントリをすべて削除し、SSM の追加日時 (IP set に無い残骸を含む) も消す。消す一覧を表示し、全環境がブラウザから 403 になることを示して確認を取る (`--yes` で省略)。`--keep-mine` は現在の接続元 IP を含むエントリを残す (Issue #99) |
+| アクセス制御 | `nakama aws acl delete all [--keep-mine] [--yes]` | IP set のエントリをすべて削除し、SSM の追加日時 (IP set に無い残骸を含む) も消す。消す一覧を表示し、全環境がブラウザから 403 になることを示して確認を取る (`--yes` で省略)。`--keep-mine` は現在の接続元 IP (`acl add` と同じ方法で調べる。複数のことがある) のどれかを含むエントリを残す (Issue #99 / #104) |
 | インスタンス | `nakama aws create --name <n> --instance-type <t> [--with-admin\|--with-role <role>]` | EC2 (Ubuntu 26.04, EBS 20 GiB) を private subnet に作成、code-server を導入、CloudFront distribution を VPC Origin 経由で作成、パスワードを Parameter Store に保存。インスタンスタイプの CPU アーキ (x86_64 / arm64=Graviton) を自動判定し対応する Ubuntu AMI を選択。`--with-admin` は AdministratorAccess を持つ共有ロール `nakama-instance-role-admin` を、`--with-role <role>` は既存の任意 IAM ロールをインスタンスに付与 (両者は排他)。いずれの場合も**リソース作成前**に `iam:SimulatePrincipalPolicy` で呼び出し元の権限をプリフライトし、権限不足なら何も作らずエラー (ADR 0010)。user-data は **Kiro CLI / Kiro Crew / gateway サービスを既定で導入**する (`--no-kiro` でスキップ。Issue #68) |
 | インスタンス | `nakama aws create ... --bare` | code-server / CloudFront distribution / VPC Origin / パスワードを作らず EC2 + ENI + instance role + SSM メタデータのみを用意する軽量モード。`/nakama/<n>/meta/kind=bare` で種別を記録 (未記録は従来の code-server インスタンス)。`list` の TYPE 列は BARE。`open` は `ssh setup` / `connect` を案内してエラー。`update` は OS 更新のみ。`connect` / `ssh` / `tunnel` / `backup` / `restore` / `edit` / `start` / `stop` / `delete` は通常どおり動作する。Kiro の既定導入は通常インスタンスと同じ |
 | インスタンス | `nakama aws create ... --no-kiro` | user-data での Kiro CLI / Kiro Crew の既定導入をスキップする。導入手順は `internal/kiro/install.sh` を唯一の情報源とし、user-data と `--preset kiro` が同一のスクリプトを共有する (Issue #68) |
@@ -95,7 +95,7 @@
 
 - `<name>`: `^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$` (DNS 安全)。`start` / `stop` / `status` / `restart` は `tunnel` サブコマンド名と曖昧になるため**予約名**とし、`create` の新規名として拒否する (既存インスタンスの操作は影響しない。ADR 0017)
 - `<IP>`: IPv4 単独 (`/32` 自動付与) または IPv4 CIDR。**IPv6 は v1 非対応**
-- `acl delete all`: `all` は単独で指定する (IP との併用はエラー)。確認の後に追加されたエントリは消さない。元から空なら何もせず正常終了。`--keep-mine` は `acl add` と同じ方法 (`https://checkip.amazonaws.com/`) で接続元 IP を調べ、検出に失敗した場合や IPv4 でない場合は何も消さずにエラー。どのエントリにも含まれていなければ警告する。`--keep-mine` は `all` 専用
+- `acl delete all`: `all` は単独で指定する (IP との併用はエラー)。確認の後に追加されたエントリは消さない。元から空なら何もせず正常終了。`--keep-mine` は `acl add` と同じ方法で接続元 IP を調べ、1 つも検出できなければ何も消さずにエラー。どのエントリにも含まれていなければ警告する。`--keep-mine` は `all` 専用
 - `<instance-type>`: `ec2:DescribeInstanceTypes` で存在を事前検証し CPU アーキ (x86_64 / arm64) を判定 (create / edit 双方)。存在しないタイプはインスタンスを停止せず即時エラー (`instance type %q does not exist`)。Graviton (arm64) タイプ指定時は arm64 版 Ubuntu AMI を自動選択する。`edit` での**アーキ跨ぎ変更は不可** (別アーキへは delete → create)
 - `--ebs <size>`: 現在のサイズより大きい整数 (GiB)
 - `--with-admin` / `--with-role <role>` (create と、削除済みインスタンスの restore): 相互排他。`--with-role` のロール名は `^[\w+=,.@-]{1,64}$` (IAM ロール命名規則) で事前検証し、`iam:GetRole` で存在確認 (未存在は即エラー)。trust policy が `ec2.amazonaws.com` の `sts:AssumeRole` を許可していないロールも即エラー。指定ロールに AmazonSSMManagedInstanceCore / AdministratorAccess のいずれも付いていない場合は警告 (SSM 接続・パスワード取得が動かない可能性)。いずれのフラグでも、リソース作成前に `iam:SimulatePrincipalPolicy` で `iam:PassRole` (+ 未作成分の `iam:CreateRole` / `iam:AttachRolePolicy` / `iam:CreateInstanceProfile` / `iam:AddRoleToInstanceProfile`) を検査し、拒否があれば何も作らずエラー (fail-closed。呼び出し元には `iam:SimulatePrincipalPolicy` 権限が追加で必要)
@@ -213,6 +213,8 @@
 25. `nakama aws acl delete <IP1> <IP2>` で両方が 1 回の更新で消え、片方が未登録なら何も消えない。`nakama aws acl delete all --keep-mine` は確認の後、接続元 IP を含むエントリだけを残し、ブラウザからのアクセスは通り続ける。`nakama aws acl delete all` は確認の後に IP set を空にし、ブラウザからのアクセスは 403 になる。どちらも消したエントリの追加日時が SSM から消える (Issue #99)
 
 26. `nakama aws create` で作ったインスタンス (code-server 版・bare 版、x86_64・arm64) では、AWS CLI v2 が AWS 公式のインストールスクリプトで ubuntu ユーザーの `~/.local/aws-cli` に入り (`~/.local/bin/aws`)、CPU に合った版で、権限の昇格を禁じた状態 (`setpriv --no-new-privs`) でも動く。snap の `aws-cli` と `/usr/local/bin/aws` は無い。`nakama aws update <n>` は AWS CLI を更新し、Kiro Crew があれば `kirocrew update` と `kirocrew restart` を実行して、結果に AWS CLI の版と Kiro Crew の結果を出す。Issue #101 より前に作ったインスタンスの snap の AWS CLI には触れない。update の出力が長くても再起動の要否が失われない (Issue #101)
+
+27. 引数なしの `nakama aws acl add` は、`https://checkip.amazonaws.com/` と `https://ifconfig.io/ip` に 3 回ずつ、毎回新しい接続で問い合わせる (チェックサイトへの直接の接続は IPv4)。見つかった公開の IPv4 アドレスを重複なしで、1 回の更新ですべて追加する。IPv6・プライベートアドレス・IP でない答えは使わない。一部の問い合わせが失敗したら警告して見つかったものを追加し、全部失敗したら何も追加せずにエラーになる。追加が 1 つなら出力は従来と同じ。`acl delete all --keep-mine` は同じ方法で調べ、見つかったどれかを含むエントリを残す (Issue #104)
 
 ## 付録 A. 機能別 IAM 権限マトリクス
 

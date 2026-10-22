@@ -91,9 +91,11 @@
 <p class="cmd-caption">PowerShell で実行 (いまの接続元 IP を自動で調べて登録します)</p>
 <pre><code>nakama aws acl add</code></pre>
 
+<p>nakama は 2 つのサイト (checkip.amazonaws.com と ifconfig.io) に 3 回ずつ問い合わせ、見つかった IP をすべて登録します。会社のネットワークなどで外への出口が複数あり、接続のたびに出口が変わる場合でも、見えた出口はまとめて許可されます。IP が複数見つかると、<code>added:</code> の行が複数出ます。一部の問い合わせが失敗したときは警告が出ます (見つかった IP は登録されます)。</p>
+
 <p>登録できたかは <code>acl list</code> で確認できます。IP を明示したい場合や、まとまった範囲を許可したい場合は引数で渡します。</p>
 <pre><code>nakama aws acl add 203.0.113.10          # 1 つの IP (自動で /32 が付きます)
-nakama aws acl add 203.0.113.0/24        # 範囲で指定 (会社の出口が複数ある場合など)
+nakama aws acl add 203.0.113.0/24        # 範囲で指定 (会社の出口が多い場合など)
 nakama aws acl list                      # 登録済みの一覧
 nakama aws acl delete 203.0.113.10/32    # 削除 (複数を並べてまとめて消すこともできます)</code></pre>
 
@@ -103,7 +105,7 @@ nakama aws acl delete 203.0.113.10/32    # 削除 (複数を並べてまとめ�
 
 <div class="callout warn" role="note">
   <span class="title">IP アドレスは変わります</span>
-  <p>自宅の回線は再接続で IP が変わることがあり、会社のネットワークは出口が複数あって日によって変わることもあります。「昨日は開けたのに今日は 403 になる」ときは、まず <code>nakama aws acl add</code> をもう一度実行してください。</p>
+  <p>自宅の回線は再接続で IP が変わることがあり、会社のネットワークは出口が複数あって日によって変わることもあります。<code>acl add</code> の 6 回の問い合わせで、すべての出口が見えるとは限りません。「昨日は開けたのに今日は 403 になる」「ときどき 403 になる」ときは、まず <code>nakama aws acl add</code> をもう一度実行してください。出口の範囲が分かっていれば、範囲で登録するのが確実です。</p>
   <p>使わなくなった IP は <code>acl delete</code> で消しておくと安全です。</p>
 </div>
 
