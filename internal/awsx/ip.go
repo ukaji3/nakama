@@ -120,7 +120,8 @@ func NewHTTPIPDiscoverer() IPDiscoverer {
 // dialFunc is net.Dialer.DialContext's signature.
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
-// newIPCheckTransport adapts tr for DetectPublicIPv4s:
+// newIPCheckTransport returns a copy of tr adapted for
+// DetectPublicIPv4s (tr itself is left alone):
 //
 //   - every request opens a new connection (no keep-alive, and HTTP/2
 //     connections are single-use with it), so that a network that picks
@@ -143,11 +144,12 @@ func newIPCheckTransport(tr *http.Transport, sites []ipCheckSite, dial dialFunc)
 			hosts[u.Hostname()] = true
 		}
 	}
-	tr.DisableKeepAlives = true
-	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+	c := tr.Clone()
+	c.DisableKeepAlives = true
+	c.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return dial(ctx, ipCheckNetwork(network, addr, hosts), addr)
 	}
-	return tr
+	return c
 }
 
 // ipCheckNetwork is the network to dial addr on: "tcp4" for a check
