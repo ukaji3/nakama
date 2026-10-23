@@ -1,7 +1,7 @@
 # nakama 設計書 (v1)
 
-> Status: 初版
-> Last updated: 2026-07-08
+> Status: v0.24.0 時点の実装に合わせて改訂
+> Last updated: 2026-10-24
 
 要件定義書: [requirements.md](requirements.md)
 
@@ -38,21 +38,33 @@
   /nakama/<name>/meta/vpc-origin-id     (String)
   /nakama/<name>/meta/iam-role          (String, --with-admin/--with-role 時のみ)
   /nakama/<name>/meta/instance-profile  (String, --with-admin/--with-role 時のみ)
+  /nakama/<name>/meta/kind              (String, "bare"。--bare 時のみ。未記録は code-server。§8.17)
+  /nakama/<name>/meta/kirocrew-distribution-id     (String, kirocrew enable 時のみ。§8.19)
+  /nakama/<name>/meta/kirocrew-distribution-domain (String, kirocrew enable 時のみ。§8.19)
   /nakama/_meta/initialized             (String, "true")
   /nakama/_meta/version                 (String, semver)
-  /nakama/_meta/acl/<ip>                (String, RFC3339 timestamp)
+  /nakama/_meta/acl/<cidr>              (String, RFC3339 timestamp。CIDR の "/" は "_" に置換。例: 203.0.113.5_32)
 ```
+
+- `--bare` のインスタンスは、code-server・VPC Origin・CloudFront distribution・パスワードを持たない (§8.17)。パスワードと distribution 系のメタキーも書かない。
+- `nakama aws kirocrew enable` は、インスタンスごとに Kiro Crew 専用の distribution をもう 1 つ作る。オリジンは同じ VPC Origin (code-server:8080) で、WAF も共有する (§8.19、ADR 0020)。
 
 ## 2. パッケージ構成
 
 ```
 github.com/ukaji3/nakama
-├── cmd/nakama/                  // エントリーポイント
+├── cmd/nakama/                  // エントリーポイント (Windows のダブルクリック起動の判定を含む。ADR 0022)
 ├── internal/
-│   ├── cli/                     // cobra コマンド木
-│   ├── awsx/                    // AWS SDK v2 ラッパー interface (mockable)
-│   ├── service/                 // ユースケース層 (init, instance, acl)
-│   ├── userdata/                // cloud-init User Data テンプレ (//go:embed)
+│   ├── cli/                     // cobra コマンド木 (aws_<command>.go)
+│   ├── service/                 // ユースケース層 (init, instance, acl, backup/restore, connect, tunnel, ssh, kirocrew, doctor など)
+│   ├── awsx/                    // AWS SDK v2 ラッパー interface (mockable) と資格情報解決 (§13)
+│   ├── awshelper/               // サービス横断の補助 (タグ型の変換、ポーリング、エラー判定)
+│   ├── signin/                  // `aws login` プロトコルのネイティブ実装 (OAuth 2.0 + PKCE + DPoP。ADR 0016、§13.3)
+│   ├── proxy/                   // outbound のプロキシ解決 (環境変数 + Windows WinHTTP/PAC。ADR 0015、§14)
+│   ├── cliproxy/                // `aws cli shell` 用のプロキシ・TLS 傍受の検出と AWS_CA_BUNDLE の生成 (ADR 0018)
+│   ├── userdata/                // cloud-init User Data テンプレ (//go:embed。code-server / bare / restore)
+│   ├── awscli/                  // インスタンスに AWS CLI v2 を入れる・更新するシェル手順の唯一の定義 (ADR 0024)
+│   ├── kiro/                    // インスタンスに Kiro CLI / Kiro Crew を入れるシェル手順の唯一の定義 (§8.18)
 │   ├── browser/                 // ブラウザ起動 (detached, 注入可能な Launcher。ADR 0012)
 │   ├── naming/                  // リソース命名規約
 │   ├── tagging/                 // タグスキーマ
@@ -60,11 +72,17 @@ github.com/ukaji3/nakama
 │   ├── config/                  // 固定値 (region, CIDR, AZ, SSM パスなど)
 │   └── version/                 // ビルド時に -ldflags で注入される version 情報
 ├── third_party/
-│   └── session-manager-plugin/  // 案3: 公式 plugin を版固定で取り込み (Apache-2.0)
+│   ├── session-manager-plugin/  // 案3: 公式 plugin を版固定で取り込み (Apache-2.0。取り込み元は PINNED.md)
+│   └── twinj-uuid/              // plugin が使う twinj/uuid。公開版と API 互換が無いため同梱 (§12)
+├── tools/
+│   └── gen-third-party-notices/ // THIRD-PARTY-NOTICES の生成と鮮度検査 (`make notices` / CI)
+├── scripts/
+│   └── vendor-ssm-plugin.sh     // session-manager-plugin の取り込みスクリプト
 └── docs/
     ├── requirements.md
     ├── design.md
-    └── adr/
+    ├── adr/
+    └── tutorial/                // 利用者向け HTML チュートリアル (図の生成・検査スクリプトは tutorial/tools/)
 ```
 
 ## 3. リソース命名規約
@@ -119,7 +137,7 @@ github.com/ukaji3/nakama
 | interface | カバー範囲 |
 |---|---|
 | `EC2API` | VPC, AvailabilityZones (Describe), Subnet (Modify: MapPublicIpOnLaunch), IGW, NAT GW (Describe/Delete, 旧 NAT GW 移行専用。ADR 0007 で新規作成はしない), EIP (Allocate/Describe/Release), RTB (Describe/Create/AssociateRoute), Route (Create/Replace), ENI, SG, Instance (Run/Describe/Start/Stop/Reboot/Terminate/ModifyAttribute incl. SourceDestCheck), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
-| `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + Tagging) |
+| `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + GetDistributionConfig + Tagging), Function (Create/Describe/Update/Publish/Delete。Kiro Crew 画面へのリダイレクト用。§8.19) |
 | `WAFAPI` | IPSet (CRUD), WebACL (Create/Get/List/Update; Delete は共有・恒久リソースのため非対応)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
 | `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) + Session Manager (`StartSession` / `TerminateSession`) |
 | `TaggingAPI` | `ResourceGroupsTaggingAPI.GetResources` のみ |
@@ -135,27 +153,38 @@ github.com/ukaji3/nakama
 - ルート: `nakama` (PersistentPreRunE で slog ハンドラ初期化)
 - 親コマンド: `nakama aws`
 - `backup` は `acl` と同様のサブコマンド群: `backup {create|list|note|delete}`。`restore` は破壊的操作のため `start`/`stop` と並ぶ独立コマンド
-- グローバルフラグ: `--verbose`, `--output`
-- 各サブコマンドは `errNotImplemented` を返すスタブで開始 (本ドキュメント時点)
-- 実装は `internal/service/*` に委譲する設計
+- グローバルフラグ: `--verbose` (`-v`), `--output` (`-o`, `table` | `json` | `yaml`)
+- CLI 層はフラグを解析して `internal/service` の `*Input` を組み立て、表示を担う。AWS リソースへの処理は Service 層に委譲する。CLI が `awsx` / `signin` を直接呼ぶのは、`awsx.NewClients` と、`login` / `profile` の資格情報まわり (§13.1) だけ
+- `cmd/nakama` は、Service 層の `*service.ExitCodeError` を受け取ると、その終了コードで終了する (`connect <name> <command>` のリモート終了コードの伝搬。ADR 0021)
 
-## 7. Service 層 (本ドキュメント時点で未実装)
+## 7. Service 層
+
+`internal/service` の `Service` (`NewService(*awsx.Clients)`) が全ユースケースを持つ。テスト用のフック (`connect` / `tunnel` / `ssh`) は nil なら本番の既定を使う。
 
 ```go
-// 例: instance create のシグネチャ案
+// instance create (internal/service/instance_create.go)
 type CreateInstanceInput struct {
     Name              string
     InstanceType      string
-    EBSGiB            int32
-    PinnedCSVersion   string
+    EBSGiB            int32         // 0 なら config.EBSDefaultGiB (20)
+    CodeServerVersion string        // 空なら最新
+    WithAdmin         bool          // ADR 0010。WithRole と排他
+    WithRole          string        // ADR 0010。WithAdmin と排他
+    Provision         ProvisionSpec // --setup / --dotfiles / --preset (§8.16)
+    Bare              bool          // §8.17
+    NoKiro            bool          // §8.18
 }
 
 type CreateInstanceOutput struct {
-    InstanceID         string
-    DistributionID     string
-    DistributionDomain string
-    Password           string // SSM 経由で書き込んだ生パスワード
+    Name, InstanceID, ENIID, SecurityGroupID, VPCOriginID string
+    DistributionID, DistributionDomain, URL               string
+    Password                 string // SSM に SecureString で書いた生パスワード。CLI は --show-password が無ければ消す
+    IAMRole, InstanceProfile string
+    Bare                     bool
+    Provision                *ProvisionResult // 失敗しても create は失敗にしない
 }
+
+func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*CreateInstanceOutput, error)
 ```
 
 CLI はフラグから `*Input` を組み立て、Service を呼び出すだけにする。
@@ -265,14 +294,6 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 4. `--keep N` 指定時: 当該 `<name>` のスナップショットを `backup-time` 降順で並べ、N 件超過分を `DeleteSnapshot` (prune)
 5. ラベル / 取得時刻 / 状態 / メモを出力 (snapshot-id は `-o json` のみ)
 
-### 8.6 `nakama aws backup note`
-
-1. `--label` で当該 `<name>` のスナップショットを解決
-2. `--note <text>` 指定時: `CreateTags` で `nakama:note=<text>` を上書き。空文字明示時: `DeleteTags` で `nakama:note` を除去 (`--note` の省略は CLI がエラーにする)
-3. 更新後のラベル / メモを出力
-
-> Description はスナップショット作成後に変更できないため、メモ編集の正は常に `nakama:note` タグ側とする。
-
 ### 8.5 `nakama aws restore`
 
 モードは SSM の `/nakama/<name>/meta/instance-id` の有無で決まる。ある場合はインプレース復元 (下の 1〜10)。無い場合 (インスタンスが削除済み) は、同じ名前のインスタンスを作り直す (§8.5.1、ADR 0023)。記録はあるのに EC2 が無い (`terminated` か `NotFound`) 場合は、`delete --force` で残りを片付けるよう案内してエラーにする。
@@ -308,6 +329,14 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 6. code-server なら private DNS → VPC origin → distribution を作り、それぞれ作った直後に記録する (失敗しても `delete` で片付けられるように)
 7. インプレース復元の 3〜8 と同じ手順 (`replaceRootVolume`) でルートを差し替える。起動直後のボリュームは削除される
 8. NAT インスタンスの電源を再調整し、code-server なら distribution の `Deployed` を待つ。停止のまま終了する。URL・パスワード・プライベート IP は新しく、Kiro Crew の画面は `kirocrew enable` のやり直しが要る
+
+### 8.6 `nakama aws backup note`
+
+1. `--label` で当該 `<name>` のスナップショットを解決
+2. `--note <text>` 指定時: `CreateTags` で `nakama:note=<text>` を上書き。空文字明示時: `DeleteTags` で `nakama:note` を除去 (`--note` の省略は CLI がエラーにする)
+3. 更新後のラベル / メモを出力
+
+> Description はスナップショット作成後に変更できないため、メモ編集の正は常に `nakama:note` タグ側とする。
 
 ### 8.7 `nakama aws connect`
 
@@ -617,23 +646,26 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 
 | 層 | テスト方針 |
 |---|---|
-| `internal/userdata` | テンプレ展開のユニットテスト |
+| `internal/userdata` / `internal/awscli` / `internal/kiro` | テンプレ展開のユニットテストに加え、埋め込んだシェルを本物の bash で、外部コマンドを模したスタブを PATH の先頭に置いて実行する (文字列の照合だけでは見つからない不具合のため。§8.18)。埋め込みスクリプトの改行が LF であることも検査する (`lf_test.go`) |
 | `internal/naming` / `internal/tagging` | ピュア関数のテーブル駆動テスト |
-| `internal/awsx` | interface 設計のみテスト (実 API は呼ばない) |
-| `internal/service` | 自家製 fake / `gomock` で AWS interface をモック化したユニットテスト |
+| `internal/awsx` | 資格情報解決の分岐は `resolverHooks` を差し替えて検証する。IP 検出は `httptest` のサーバーで検証する。実 API は呼ばない |
+| `internal/signin` / `internal/proxy` / `internal/cliproxy` | `httptest` のサーバーと、差し替えた依存 (時計、HTTP クライアント、`t.Setenv` による環境変数) で検証する |
+| `internal/service` | AWS interface を自家製 fake (`fakeCreateEC2` など) で差し替えたユニットテスト。Run Command で送るスクリプトの一部 (`update`、`kirocrew`、`connect` のコマンド実行など) は bash とスタブで実行する。CloudFront の構成のように SDK の型に項目が増えうるものは、reflect で項目を列挙して漏れを検出する |
 | `internal/cli` | cobra のフラグ解析と委譲テスト |
 | 実 AWS E2E | 手動 (CI には載せない) |
 
 ## 10. CI
 
-GitHub Actions で以下を main / PR で実行:
+GitHub Actions (`.github/workflows/ci.yml`) で以下を main への push と PR で実行する。Actions は commit SHA で固定する。
 
-- `go vet ./...`
-- `go test -race ./...`
-- `go build ./...`
-- `govulncheck ./...`
-- (任意) `golangci-lint`
+- Linux (ubuntu-latest): `go mod tidy` で差分が出ないこと、`gofmt -s` (third_party を除く)、`go vet ./...`、`go test -race -count=1 ./...`、ビルドと `--help` / `version` のスモークテスト
 - Windows (windows-latest): `go vet ./...` + `go test -count=1 ./...` (`-race` なし。race ランタイムが Windows では cgo / gcc に依存するため) + ビルド & スモークテスト
+- `govulncheck ./...`
+- `golangci-lint run` (設定は `.golangci.yml`。gosec などを有効化)
+- THIRD-PARTY-NOTICES の鮮度 (`go run ./tools/gen-third-party-notices -check`)
+- `goreleaser check` と、publish しない snapshot ビルド
+
+タグの push では `.github/workflows/release.yml` が GoReleaser でリリースを作る。依存の更新は Dependabot (`.github/dependabot.yml`) が提案する。
 
 ## 11. 用語注
 
@@ -645,15 +677,18 @@ GitHub Actions で以下を main / PR で実行:
 詳細根拠は [adr/0005-aws-connect-via-session-manager.md](adr/0005-aws-connect-via-session-manager.md)。
 
 - AWS 公式 `aws/session-manager-plugin` は Go module 未公開 (リポジトリ root に go.mod が無く `vendor/` 方式)。そのため **特定 commit/tag のソースを `third_party/session-manager-plugin/` にコピーして版固定**する (案3)。
-- コピーには go.mod を付与し依存 (aws-sdk-go-v2 / gorilla/websocket / twinj/uuid / golang.org/x/crypto / seelog 等) を pin。nakama の go.mod に下記を追加し、公式 import パスを保ったままローカル固定する:
+- コピーには go.mod を付与し依存 (aws-sdk-go-v2 / gorilla/websocket / twinj/uuid / golang.org/x/crypto / seelog 等) を pin。nakama の go.mod には次のように書き、公式 import パスを保ったままローカル固定する (require の版はダミーの pseudo-version):
 
 ```
-require github.com/aws/session-manager-plugin v1.x.x   // 取り込み版に対応する placeholder
+require github.com/aws/session-manager-plugin v0.0.0-00010101000000-000000000000
 replace github.com/aws/session-manager-plugin => ./third_party/session-manager-plugin
+replace github.com/twinj/uuid => ./third_party/twinj-uuid
 ```
+
+- `twinj/uuid` は、公開されている版が取り込み版の plugin と API 互換でないため、plugin の `vendor/` にあった版を `third_party/twinj-uuid/` に同梱して replace する。
 
 - 取り込むパッケージ: `src/sessionmanagerplugin/session` (+ `shellsession` / `portsession`) / `datachannel` / `communicator` / `message` / `encryption` / `log` / `config` / `sessionutil` / `retry` / `websocketutil` / `version`。`ssmcli` 系は取り込まない。
-- Apache-2.0 のため取り込みツリーに `LICENSE` / `NOTICE` を保持。取り込み元 commit は ADR 0005 に記録。
+- Apache-2.0 のため取り込みツリーに `LICENSE` / `NOTICE` を保持。取り込み元の tag / commit と、取り込み後に当て直すローカルパッチは `third_party/session-manager-plugin/PINNED.md` に記録する。取り込みは `scripts/vendor-ssm-plugin.sh [tag]` で行う。
 - 追加実装:
   - `internal/awsx`: `SSMAPI` に `StartSession` / `TerminateSession` を追加し、解決済 `aws.Credentials` + region + SSM endpoint を `session.Session` 構築用に取り出す口を設ける
   - `internal/service/connect.go`: instance-id 解決、モード→`DocumentName`/`Parameters` 組立、`StartSession`、plugin セッション起動
@@ -768,7 +803,7 @@ profilestore への自動 save & load (alias 既定はアカウント ID、
 
 ## 14. アウトバウンド通信のプロキシ解決 (ADR 0015)
 
-nakama の outbound HTTP(S) 経路は 3 つあり、いずれも `internal/proxy` を
+nakama の outbound HTTP(S) 経路は 5 つあり、いずれも `internal/proxy` を
 通してプロキシを解決する (third_party は非改変):
 
 | 経路 | 注入方法 |
@@ -776,6 +811,8 @@ nakama の outbound HTTP(S) 経路は 3 つあり、いずれも `internal/proxy
 | AWS SDK 全クライアント | `internal/awsx` の `loadConfig` で `config.WithHTTPClient(BuildableClient.WithTransportOptions(...))` により `Transport.Proxy = proxy.Func()` を設定。active profile / 既定チェーンの両パスが同一関数を通る |
 | Session Manager data-channel (WSS) | `service.RunSessionRunner` (session-runner 子プロセス) で `websocket.DefaultDialer.Proxy = proxy.Func()`。vendored plugin の websocketutil はこの package 変数を参照するためパッチ不要。副作用は子プロセス内に閉じる |
 | checkip / ifconfig.io (`IPDiscoverer`) | `internal/awsx/ip.go` で `proxy.NewTransport()` (http.DefaultTransport の Clone に Proxy 差し替え) を使用。`DetectPublicIPv4s` 用はさらに keep-alive を切り、チェックサイトへの直接の接続を IPv4 にする (§8.23) |
+| AWS Sign-In のトークン API (`internal/signin`) | 既定の HTTP クライアントが `proxy.NewTransport()` + 30 秒タイムアウト (§13.3) |
+| `nakama aws cli shell` の環境検出 (`internal/cliproxy`) | `proxy.Func()` で解決したプロキシを経由して STS エンドポイントに接続し、検証済みチェーンのルートで TLS 傍受を判定する (ADR 0018、§8.13) |
 
 `proxy.Func()` の解決順序 (二段構え):
 

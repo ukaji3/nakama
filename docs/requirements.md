@@ -261,7 +261,7 @@
 | R5 | NAT のegressコスト | NAT Gateway を廃し NAT インスタンス (`t4g.nano`) を採用 (ADR 0007)。電源を code-server のライフサイクルに連動させ、全停止時は NAT インスタンスも停止して固定費をゼロに近づける。EIP は付与せず停止中の public IPv4 課金も回避 |
 | R6 | 稼働中スナップショットはクラッシュコンシステント | 重要時は `stop` 後に `backup create` する旨を明記。`restore` はインプレースで破壊的なため確認を要求 (`--yes` で省略)。削除済みインスタンスの復元も確認を要求し、URL とパスワードが変わることを示す |
 | R7 | `--keep` 未指定スナップショットのコスト累積 | `--keep N` の利用を推奨。CLI は常駐しないため prune は `backup create` 実行時のみ |
-| R8 | 取り込んだ `session-manager-plugin` の upstream 追随は手動 | 取り込み元 commit/tag を ADR 0005 に記録し、定期的に re-sync |
+| R8 | 取り込んだ `session-manager-plugin` の upstream 追随は手動 | 取り込み元 commit/tag を `third_party/session-manager-plugin/PINNED.md` に記録し、`scripts/vendor-ssm-plugin.sh` で定期的に re-sync |
 | R9 | `connect` には呼び出し側プリンシパルに `ssm:StartSession` 等が必要 (instance role とは別) | 前提条件 §3 に明記。`init` では付与しない (利用者責務) |
 | R10 | plugin 取り込みによるバイナリサイズ増 | PoC で実測し許容範囲を確認 |
 | R11 | Session Manager の独自プロトコル変更・コマンド終了コード伝播の制約 | 取り込み版を pin。終了コードの非互換は制限事項として扱う |
