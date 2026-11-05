@@ -47,7 +47,7 @@ tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 n
 |---|---|
 | `nakama aws login` / `profile` | サインイン / 複数の AWS アカウントの切り替え |
 | `nakama aws init` | 共通の土台を作る。NAT インスタンスの点検と修理も行う |
-| `nakama aws acl add` / `list` / `delete` | ブラウザからのアクセスを許可する IP の管理 |
+| `nakama aws acl add` / `list` / `delete` / `prune` | ブラウザからのアクセスを許可する IP の管理 (`prune` は長く `acl add` していない IP をまとめて消す) |
 | `nakama aws create` | 開発環境を作る (`--bare` で code-server なしの軽量版) |
 | `nakama aws list` / `info` | 一覧 / 詳細 |
 | `nakama aws open` | ブラウザで開く |

@@ -204,7 +204,7 @@ func featurePermissionMatrix() []FeaturePermission {
 		},
 		{
 			Feature:  "acl",
-			Commands: "nakama aws acl add / list / delete",
+			Commands: "nakama aws acl add / list / delete / prune",
 			Actions: []string{
 				"ssm:DeleteParameter",
 				"ssm:GetParametersByPath",

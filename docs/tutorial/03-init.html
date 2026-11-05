@@ -99,9 +99,9 @@ nakama aws acl add 203.0.113.0/24        # 範囲で指定 (会社の出口が�
 nakama aws acl list                      # 登録済みの一覧
 nakama aws acl delete 203.0.113.10/32    # 削除 (複数を並べてまとめて消すこともできます)</code></pre>
 
-<p><code>acl list</code> は次のように表示されます。</p>
-<pre class="output"><code>CIDR                  ADDED_AT
-203.0.113.10/32       2026-09-13T00:12:04Z</code></pre>
+<p><code>acl list</code> は次のように表示されます。<code>ADDED_AT</code> は <code>acl add</code> で最後に追加・確認した時刻 (登録済みの IP でも <code>acl add</code> のたびに書き直されます)、<code>AGE</code> はそれからの日数です。</p>
+<pre class="output"><code>CIDR                  ADDED_AT              AGE
+203.0.113.10/32       2026-09-13T00:12:04Z  0d</code></pre>
 
 <div class="callout warn" role="note">
   <span class="title">IP アドレスは変わります</span>
@@ -114,6 +114,14 @@ nakama aws acl delete 203.0.113.10/32    # 削除 (複数を並べてまとめ�
 <pre><code>nakama aws acl delete all --keep-mine    # いまの自分の IP を含むものだけ残して、ほかを消す
 nakama aws acl delete all                # すべて消す</code></pre>
 <p>どちらも、消す一覧を表示して確認を求めます。<code>y</code> と入力して <kbd>Enter</kbd> で実行します (<code>--yes</code> で確認を省けます)。</p>
+
+<p>しばらく使っていない IP だけを消すには <code>acl prune</code> を使います。<code>acl add</code> で最後に追加・確認してから指定の期間 (<code>30d</code> は 30 日) が過ぎたエントリを消します。いまの自分の IP を含むエントリは古くても残り、nakama の外で足したエントリ (時刻の記録が無いもの) は消さずに警告します。こちらも消す一覧と残す一覧を表示して確認を求めます。</p>
+<pre><code>nakama aws acl prune --older-than 30d    # 30 日を超えて acl add していないものを消す</code></pre>
+
+<div class="callout warn" role="note">
+  <span class="title">時刻を更新するのは <code>acl add</code> だけです</span>
+  <p><code>nakama aws open</code> で開いたり、ブラウザで使ったりしても、時刻は更新されません。毎日使っている IP でも、しばらく <code>acl add</code> していなければ古く見えます。その場所から使い続けるなら、<code>acl prune</code> の前に <code>nakama aws acl add</code> を実行してください。</p>
+</div>
 
 <div class="callout danger" role="note">
   <span class="title"><code>acl delete all</code> は自分も締め出します</span>
