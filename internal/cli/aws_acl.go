@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,6 +25,7 @@ func newAWSACLCommand() *cobra.Command {
 		newAWSACLAddCommand(),
 		newAWSACLListCommand(),
 		newAWSACLDeleteCommand(),
+		newAWSACLPruneCommand(),
 	)
 	return cmd
 }
@@ -103,7 +107,12 @@ func newAWSACLListCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List allowlisted source IPs",
-		Args:  cobra.NoArgs,
+		Long: `Lists the allowlist entries. ADDED_AT is when "nakama aws acl add"
+last added or confirmed the entry (it records the time again on every
+run, also for an entry that is already there), and AGE the whole days
+since then. Opening or using an environment does not update it. Entries
+added outside nakama have neither.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := withCancel(cmd)
 			clients, err := awsx.NewClients(ctx)
@@ -114,7 +123,7 @@ func newAWSACLListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderOutput(cmd.OutOrStdout(), global.Output, entries, formatACLTable(entries))
+			return renderOutput(cmd.OutOrStdout(), global.Output, entries, formatACLTable(entries, time.Now()))
 		},
 	}
 }
@@ -298,14 +307,199 @@ func aclDeleteAllSummary(p *service.ACLDeleteAllPlan, r *service.ACLDeleteAllRes
 	return b.String()
 }
 
-func formatACLTable(entries []service.ACLEntry) string {
+func formatACLTable(entries []service.ACLEntry, now time.Time) string {
 	if len(entries) == 0 {
 		return "(allowlist is empty)"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-20s  %s\n", "CIDR", "ADDED_AT")
+	fmt.Fprintf(&b, "%-20s  %-20s  %s\n", "CIDR", "ADDED_AT", "AGE")
 	for _, e := range entries {
-		fmt.Fprintf(&b, "%-20s  %s\n", e.CIDR, e.AddedAt)
+		fmt.Fprintf(&b, "%-20s  %-20s  %s\n", e.CIDR, e.AddedAt, aclAge(e, now))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// aclAge is the whole days since "acl add" last confirmed the entry
+// ("12d"), or "-" without an added-at record.
+func aclAge(e service.ACLEntry, now time.Time) string {
+	t, ok := e.AddedTime()
+	if !ok {
+		return "-"
+	}
+	d := now.Sub(t)
+	if d < 0 {
+		d = 0
+	}
+	return fmt.Sprintf("%dd", int64(d/(24*time.Hour)))
+}
+
+func newAWSACLPruneCommand() *cobra.Command {
+	var olderThan string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "prune --older-than <age>",
+		Short: "Remove the entries that \"acl add\" has not confirmed for a given time",
+		Long: `Removes, in a single update, the allowlist entries that
+"nakama aws acl add" last added or confirmed longer ago than --older-than:
+whole days ("30d") or a Go duration ("36h").
+
+Only "acl add" records that time. It records it again on every run, also
+for an entry that is already there. Opening ("nakama aws open") or using
+an environment does not, so an address you use every day still looks old
+if you have not run "acl add" from it since; run "nakama aws acl add"
+first to keep it. "nakama aws acl list" shows the time and its age.
+
+Old entries that contain one of your current public IPs (detected as
+"acl add" does) are kept, so that you do not lock yourself out; if no IP
+can be detected, nothing is removed. Entries with no added-at record
+(added outside nakama) are kept with a warning. prune lists what it
+removes and keeps and asks first (--yes skips the question). When no
+entry is old, the allowlist is not changed.`,
+		Example: `  nakama aws acl prune --older-than 30d
+  nakama aws acl prune --older-than 90d --yes`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := withCancel(cmd)
+			age, err := parseACLAge(olderThan)
+			if err != nil {
+				return err
+			}
+			clients, err := awsx.NewClients(ctx)
+			if err != nil {
+				return err
+			}
+			return runACLPrune(ctx, cmd, service.NewService(clients), age, strings.TrimSpace(olderThan), yes)
+		},
+	}
+	cmd.Flags().StringVar(&olderThan, "older-than", "",
+		"Remove the entries last confirmed by \"acl add\" longer ago than this: days (30d) or a duration (36h) (required)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
+	_ = cmd.MarkFlagRequired("older-than")
+	return cmd
+}
+
+// maxACLAgeDays keeps --older-than within a time.Duration.
+const maxACLAgeDays = math.MaxInt64 / int64(24*time.Hour)
+
+// parseACLAge parses --older-than: a positive whole number of days
+// ("30d") or a positive Go duration ("36h").
+func parseACLAge(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	bad := fmt.Errorf("invalid --older-than %q: give a positive number of days (30d) or a duration (36h)", s)
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.ParseInt(days, 10, 64)
+		if err != nil || n <= 0 || n > maxACLAgeDays {
+			return 0, bad
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, bad
+	}
+	return d, nil
+}
+
+func runACLPrune(ctx context.Context, cmd *cobra.Command, svc *service.Service, age time.Duration, olderThan string, yes bool) error {
+	now := time.Now()
+	plan, err := svc.PlanACLPrune(ctx, now.Add(-age))
+	if err != nil {
+		return err
+	}
+	warnFailedIPChecks(cmd.ErrOrStderr(), plan.Detection,
+		"if your network has more than one exit, the old entries of one that was not detected are deleted too")
+	if len(plan.Unrecorded) > 0 {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: kept %s with no added-at record (added outside nakama): %s; remove them with \"nakama aws acl delete\" if they are not needed\n",
+			entryCount(len(plan.Unrecorded)), strings.Join(aclCIDRs(plan.Unrecorded), ", "))
+	}
+	if len(plan.Delete) > 0 && !yes {
+		if _, err := io.WriteString(cmd.OutOrStdout(), aclPrunePrompt(plan, olderThan, now)); err != nil {
+			return err
+		}
+		ok, err := readYesNo()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("aborted")
+		}
+	}
+	res, err := svc.PruneACL(ctx, plan)
+	if err != nil {
+		return err
+	}
+	return renderOutput(cmd.OutOrStdout(), global.Output, res, aclPruneSummary(plan, res, olderThan))
+}
+
+func aclCIDRs(entries []service.ACLEntry) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.CIDR)
+	}
+	return out
+}
+
+// aclPrunePrompt renders the confirmation question of "acl prune".
+// Pure function: unit-tested.
+func aclPrunePrompt(p *service.ACLPrunePlan, olderThan string, now time.Time) string {
+	var b strings.Builder
+	total := len(p.Delete) + len(p.Keep) + len(p.Mine) + len(p.Unrecorded)
+	fmt.Fprintf(&b, "Delete %d of %s from the allowlist (WAF IP set nakama-allowed-ips),\n", len(p.Delete), entryCount(total))
+	fmt.Fprintf(&b, "last confirmed by \"nakama aws acl add\" more than %s ago (before %s):\n",
+		olderThan, p.Cutoff.UTC().Format(time.RFC3339))
+	writeACLAgedEntries(&b, p.Delete, now)
+	if len(p.Mine) > 0 {
+		fmt.Fprintf(&b, "Keep, though old (contains %s):\n", yourIPs(p.MyIPs))
+		writeACLAgedEntries(&b, p.Mine, now)
+	}
+	if len(p.Keep) > 0 {
+		b.WriteString("Keep (confirmed since then):\n")
+		writeACLAgedEntries(&b, p.Keep, now)
+	}
+	if len(p.Unrecorded) > 0 {
+		b.WriteString("Keep (no added-at record):\n")
+		writeACLEntries(&b, p.Unrecorded)
+	}
+	b.WriteString("Browsers at the deleted addresses will get 403 from every nakama environment (Kiro Crew included)\n" +
+		"until they are added again with \"nakama aws acl add\".\n")
+	b.WriteString("connect, ssh and tunnel are not affected. [y/N]: ")
+	return b.String()
+}
+
+// writeACLAgedEntries writes entries that have an added-at record, with
+// their age.
+func writeACLAgedEntries(b *strings.Builder, entries []service.ACLEntry, now time.Time) {
+	for _, e := range entries {
+		fmt.Fprintf(b, "  %-20s  added %s, %s ago\n", e.CIDR, e.AddedAt, aclAge(e, now))
+	}
+}
+
+// aclPruneSummary is the text output after "acl prune".
+func aclPruneSummary(p *service.ACLPrunePlan, r *service.ACLPruneResult, olderThan string) string {
+	var b strings.Builder
+	for _, c := range r.Deleted {
+		fmt.Fprintf(&b, "deleted: %s\n", c)
+	}
+	switch {
+	case len(p.Delete)+len(p.Keep)+len(p.Mine)+len(p.Unrecorded) == 0:
+		b.WriteString("nothing to prune: the allowlist is empty")
+	case len(p.Delete) == 0 && len(p.Mine) == 0:
+		fmt.Fprintf(&b, "nothing to prune: no entry was last confirmed by \"acl add\" more than %s ago", olderThan)
+	case len(p.Delete) == 0:
+		fmt.Fprintf(&b, "nothing to prune: every old entry contains %s", yourIPs(p.MyIPs))
+	case len(r.Deleted) == 0:
+		b.WriteString("nothing deleted: the old entries changed after the question")
+	case len(r.Remaining) == 0:
+		fmt.Fprintf(&b, "deleted %s; the allowlist is now empty (add your IP with \"nakama aws acl add\")", entryCount(len(r.Deleted)))
+	default:
+		fmt.Fprintf(&b, "deleted %s; remaining: %s", entryCount(len(r.Deleted)), strings.Join(r.Remaining, ", "))
+	}
+	if len(r.Refreshed) > 0 {
+		fmt.Fprintf(&b, "\nkept, confirmed again in the meantime: %s", strings.Join(r.Refreshed, ", "))
+	}
+	if len(r.Gone) > 0 {
+		fmt.Fprintf(&b, "\nalready removed by someone else: %s", strings.Join(r.Gone, ", "))
+	}
+	return b.String()
 }

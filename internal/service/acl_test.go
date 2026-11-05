@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -120,9 +121,13 @@ type fakeACLSSM struct {
 	awsx.SSMAPI
 	params  map[string]string
 	deleted []string
+	pathErr error // GetParametersByPath fails with it
 }
 
 func (f *fakeACLSSM) GetParametersByPath(context.Context, *ssm.GetParametersByPathInput, ...func(*ssm.Options)) (*ssm.GetParametersByPathOutput, error) {
+	if f.pathErr != nil {
+		return nil, f.pathErr
+	}
 	out := &ssm.GetParametersByPathOutput{}
 	for k, v := range f.params {
 		out.Parameters = append(out.Parameters, ssmtypes.Parameter{Name: aws.String(k), Value: aws.String(v)})
@@ -471,5 +476,244 @@ func TestDeleteACLAll_AlreadyEmptyChangesNothing(t *testing.T) {
 	}
 	if res.TimestampsRemoved != 1 || len(ssmf.params) != 0 || res.Deleted == nil {
 		t.Errorf("the stale record should go: %+v", res)
+	}
+}
+
+// --- prune ----------------------------------------------------------------
+
+// pruneCutoff is the cutoff of the prune tests: entries last confirmed
+// before it are old.
+var pruneCutoff = time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+
+// pruneService: the IP set holds the keys of stamps; a non-empty value
+// is the entry's added-at record. The caller's IP is 153.242.166.137.
+func pruneService(stamps map[string]string) (*Service, *fakeACLWAF, *fakeACLSSM, *fakeIP) {
+	var addrs []string
+	for c := range stamps {
+		addrs = append(addrs, c)
+	}
+	svc, waf, ssmf, ip := aclService(sortedCopy(addrs))
+	for c, ts := range stamps {
+		if ts != "" {
+			ssmf.params[aclTimestampPath(c)] = ts
+		}
+	}
+	return svc, waf, ssmf, ip
+}
+
+func cidrsOf(entries []ACLEntry) string {
+	var out []string
+	for _, e := range entries {
+		out = append(out, e.CIDR)
+	}
+	return strings.Join(out, ",")
+}
+
+// mixedPruneStamps has one entry of every kind, the boundary included.
+var mixedPruneStamps = map[string]string{
+	"203.0.113.5/32":  "2026-09-01T00:00:00Z", // old
+	"198.51.100.9/32": "2026-10-06T23:59:59Z", // one second before the cutoff: old
+	"198.51.100.8/32": "2026-10-07T00:00:00Z", // exactly the cutoff: not old
+	"198.51.100.7/32": "2026-11-01T00:00:00Z", // recent
+	"153.242.0.0/16":  "2026-08-01T00:00:00Z", // old, but contains my IP
+	"10.0.0.0/8":      "",                     // added outside nakama
+	"192.0.2.0/24":    "not-a-time",           // a record that does not parse
+}
+
+func TestPlanACLPrune_SortsTheEntries(t *testing.T) {
+	t.Parallel()
+	svc, waf, ssmf, ip := pruneService(mixedPruneStamps)
+	p, err := svc.PlanACLPrune(context.Background(), pruneCutoff)
+	if err != nil {
+		t.Fatalf("PlanACLPrune: %v", err)
+	}
+	if got := cidrsOf(p.Delete); got != "198.51.100.9/32,203.0.113.5/32" {
+		t.Errorf("delete = %s", got)
+	}
+	if got := cidrsOf(p.Keep); got != "198.51.100.7/32,198.51.100.8/32" {
+		t.Errorf("keep = %s, want the recent one and the one exactly at the cutoff", got)
+	}
+	if got := cidrsOf(p.Mine); got != "153.242.0.0/16" {
+		t.Errorf("mine = %s", got)
+	}
+	if got := cidrsOf(p.Unrecorded); got != "10.0.0.0/8,192.0.2.0/24" {
+		t.Errorf("unrecorded = %s", got)
+	}
+	if strings.Join(p.MyIPs, ",") != "153.242.166.137" || p.Detection == nil || ip.calls != 1 || !p.Cutoff.Equal(pruneCutoff) {
+		t.Errorf("plan = %+v (detections %d)", p, ip.calls)
+	}
+	if len(waf.updates) != 0 || len(ssmf.deleted) != 0 {
+		t.Errorf("planning must not change anything")
+	}
+}
+
+func TestPruneACL_DeletesOnlyTheOldEntries(t *testing.T) {
+	t.Parallel()
+	svc, waf, ssmf, _ := pruneService(mixedPruneStamps)
+	p, err := svc.PlanACLPrune(context.Background(), pruneCutoff)
+	if err != nil {
+		t.Fatalf("PlanACLPrune: %v", err)
+	}
+	res, err := svc.PruneACL(context.Background(), p)
+	if err != nil {
+		t.Fatalf("PruneACL: %v", err)
+	}
+	want := "10.0.0.0/8,153.242.0.0/16,192.0.2.0/24,198.51.100.7/32,198.51.100.8/32"
+	if len(waf.updates) != 1 || strings.Join(sortedCopy(waf.updates[0]), ",") != want {
+		t.Errorf("updates = %v, want one update keeping %s", waf.updates, want)
+	}
+	if strings.Join(res.Deleted, ",") != "198.51.100.9/32,203.0.113.5/32" || strings.Join(res.Remaining, ",") != want {
+		t.Errorf("result = %+v", res)
+	}
+	if got := strings.Join(sortedCopy(ssmf.deleted), ","); got != "198.51.100.9/32,203.0.113.5/32" || res.TimestampsRemoved != 2 {
+		t.Errorf("records deleted = %s (count %d), want only the deleted entries'", got, res.TimestampsRemoved)
+	}
+}
+
+// TestPruneACL_ActsOnTheIPSetReadAgain: what changed between the
+// question and the answer is respected.
+func TestPruneACL_ActsOnTheIPSetReadAgain(t *testing.T) {
+	t.Parallel()
+	svc, waf, ssmf, _ := pruneService(map[string]string{
+		"203.0.113.5/32":  "2026-09-01T00:00:00Z",
+		"203.0.113.6/32":  "2026-09-01T00:00:00Z",
+		"198.51.100.9/32": "2026-09-01T00:00:00Z",
+		"198.51.100.7/32": "2026-11-01T00:00:00Z",
+	})
+	p, err := svc.PlanACLPrune(context.Background(), pruneCutoff)
+	if err != nil {
+		t.Fatalf("PlanACLPrune: %v", err)
+	}
+	if got := cidrsOf(p.Delete); got != "198.51.100.9/32,203.0.113.5/32,203.0.113.6/32" {
+		t.Fatalf("delete = %s", got)
+	}
+	// Meanwhile: someone adds 192.0.2.50 (with acl add), someone removes
+	// 203.0.113.6 outside nakama (its record stays), and someone runs
+	// acl add from 198.51.100.9 (its record is refreshed).
+	waf.addrs = []string{"198.51.100.7/32", "198.51.100.9/32", "192.0.2.50/32", "203.0.113.5/32"}
+	ssmf.params[aclTimestampPath("192.0.2.50/32")] = "2026-11-06T00:00:00Z"
+	ssmf.params[aclTimestampPath("198.51.100.9/32")] = "2026-11-06T00:00:00Z"
+
+	res, err := svc.PruneACL(context.Background(), p)
+	if err != nil {
+		t.Fatalf("PruneACL: %v", err)
+	}
+	if len(waf.updates) != 1 || strings.Join(sortedCopy(waf.updates[0]), ",") != "192.0.2.50/32,198.51.100.7/32,198.51.100.9/32" {
+		t.Errorf("updates = %v, want one update removing only 203.0.113.5", waf.updates)
+	}
+	if strings.Join(res.Deleted, ",") != "203.0.113.5/32" || strings.Join(res.Gone, ",") != "203.0.113.6/32" ||
+		strings.Join(res.Refreshed, ",") != "198.51.100.9/32" {
+		t.Errorf("result = %+v", res)
+	}
+	// The gone entry's old record goes too; the refreshed one stays.
+	if got := strings.Join(sortedCopy(ssmf.deleted), ","); got != "203.0.113.5/32,203.0.113.6/32" || res.TimestampsRemoved != 2 {
+		t.Errorf("records deleted = %s (count %d)", got, res.TimestampsRemoved)
+	}
+	if ssmf.params[aclTimestampPath("198.51.100.9/32")] == "" || ssmf.params[aclTimestampPath("192.0.2.50/32")] == "" {
+		t.Errorf("the records of entries confirmed in the meantime must stay: %v", ssmf.params)
+	}
+}
+
+func TestPruneACL_NothingOldChangesNothing(t *testing.T) {
+	t.Parallel()
+	for name, stamps := range map[string]map[string]string{
+		"empty":      {},
+		"recent":     {"198.51.100.7/32": "2026-11-01T00:00:00Z", "10.0.0.0/8": ""},
+		"only mine":  {"153.242.166.137/32": "2026-08-01T00:00:00Z", "198.51.100.7/32": "2026-11-01T00:00:00Z"},
+		"unrecorded": {"10.0.0.0/8": "", "192.0.2.0/24": ""},
+	} {
+		svc, waf, ssmf, ip := pruneService(stamps)
+		p, err := svc.PlanACLPrune(context.Background(), pruneCutoff)
+		if err != nil {
+			t.Fatalf("%s: PlanACLPrune: %v", name, err)
+		}
+		if len(p.Delete) != 0 {
+			t.Errorf("%s: delete = %v", name, p.Delete)
+		}
+		if wantCalls := len(p.Mine); ip.calls != wantCalls {
+			t.Errorf("%s: %d detections; detect only when an entry is old", name, ip.calls)
+		}
+		// Whatever the IP set holds now, nothing is updated.
+		waf.addrs = append(waf.addrs, "192.0.2.99/32")
+		res, err := svc.PruneACL(context.Background(), p)
+		if err != nil {
+			t.Fatalf("%s: PruneACL: %v", name, err)
+		}
+		if len(waf.updates) != 0 || len(ssmf.deleted) != 0 || res.Deleted == nil || len(res.Deleted) != 0 {
+			t.Errorf("%s: nothing may change: updates %v, records %v, result %+v", name, waf.updates, ssmf.deleted, res)
+		}
+		if len(res.Remaining) != len(stamps) || res.Remaining == nil {
+			t.Errorf("%s: remaining = %v", name, res.Remaining)
+		}
+	}
+}
+
+func TestPruneACL_EveryEntryOld(t *testing.T) {
+	t.Parallel()
+	svc, waf, ssmf, _ := pruneService(map[string]string{
+		"203.0.113.5/32": "2026-09-01T00:00:00Z",
+		"192.0.2.0/24":   "2026-01-01T00:00:00Z",
+	})
+	p, err := svc.PlanACLPrune(context.Background(), pruneCutoff)
+	if err != nil {
+		t.Fatalf("PlanACLPrune: %v", err)
+	}
+	res, err := svc.PruneACL(context.Background(), p)
+	if err != nil {
+		t.Fatalf("PruneACL: %v", err)
+	}
+	if len(waf.updates) != 1 || waf.updates[0] == nil || len(waf.updates[0]) != 0 {
+		t.Errorf("updates = %#v, want a single update to an empty list", waf.updates)
+	}
+	if len(res.Deleted) != 2 || res.Remaining == nil || len(res.Remaining) != 0 || len(ssmf.params) != 0 {
+		t.Errorf("result = %+v, records left %v", res, ssmf.params)
+	}
+}
+
+func TestPlanACLPrune_FailsClosed(t *testing.T) {
+	t.Parallel()
+	old := map[string]string{"203.0.113.5/32": "2026-09-01T00:00:00Z"}
+	for cause, ip := range map[string]*fakeIP{
+		"timeout":          {err: errors.New("dial tcp: timeout")},
+		"not an IPv4":      {ip: "2001:db8::1"},
+		"no address found": {ips: []string{}},
+	} {
+		svc, waf, ssmf, _ := pruneService(old)
+		svc.clients.IPDiscoverer = ip
+		if _, err := svc.PlanACLPrune(context.Background(), pruneCutoff); err == nil ||
+			!strings.Contains(err.Error(), "detect your public IP") || !strings.Contains(err.Error(), cause) {
+			t.Errorf("error = %v, want a detection error saying %q", err, cause)
+		}
+		if len(waf.updates) != 0 || len(ssmf.deleted) != 0 {
+			t.Errorf("nothing may change")
+		}
+	}
+
+	// Without the records every entry would look added outside nakama.
+	svc, waf, ssmf, _ := pruneService(old)
+	ssmf.pathErr = errors.New("AccessDenied")
+	if _, err := svc.PlanACLPrune(context.Background(), pruneCutoff); err == nil || !strings.Contains(err.Error(), "added-at records") {
+		t.Errorf("plan error = %v, want the records' read error", err)
+	}
+	ssmf.pathErr = nil
+	p, err := svc.PlanACLPrune(context.Background(), pruneCutoff)
+	if err != nil {
+		t.Fatalf("PlanACLPrune: %v", err)
+	}
+	ssmf.pathErr = errors.New("AccessDenied")
+	if _, err := svc.PruneACL(context.Background(), p); err == nil || len(waf.updates) != 0 {
+		t.Errorf("PruneACL error = %v, updates %v; want an error before any change", err, waf.updates)
+	}
+}
+
+func TestACLEntry_AddedTime(t *testing.T) {
+	t.Parallel()
+	if got, ok := (ACLEntry{AddedAt: "2026-09-01T00:00:00Z"}).AddedTime(); !ok || !got.Equal(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("AddedTime = %v, %v", got, ok)
+	}
+	for _, s := range []string{"", "not-a-time", "2026-09-01"} {
+		if _, ok := (ACLEntry{AddedAt: s}).AddedTime(); ok {
+			t.Errorf("AddedTime(%q) ok, want not", s)
+		}
 	}
 }

@@ -30,6 +30,14 @@ type ACLEntry struct {
 	AddedAt string `json:"added_at,omitempty"`
 }
 
+// AddedTime parses AddedAt: when "acl add" last added or confirmed the
+// entry (it writes the record again on every run). ok is false without
+// a record, or with one that does not parse.
+func (e ACLEntry) AddedTime() (t time.Time, ok bool) {
+	t, err := time.Parse(time.RFC3339, e.AddedAt)
+	return t, err == nil
+}
+
 // ACLAddResult is what AddACL put in the allowlist.
 type ACLAddResult struct {
 	// Added are the canonical CIDRs, now all in the IP set: the given
@@ -230,22 +238,10 @@ func (s *Service) PlanACLDeleteAll(ctx context.Context, keepMine bool) (*ACLDele
 
 	var mine []net.IP
 	if keepMine {
-		det, err := s.clients.IPDiscoverer.DetectPublicIPv4s(ctx)
+		mine, p.MyIPs, p.Detection, err = s.detectMyIPs(ctx, "detect your public IP for --keep-mine")
 		if err != nil {
-			return nil, fmt.Errorf("detect your public IP for --keep-mine: %w", err)
+			return nil, err
 		}
-		for _, ip := range det.IPs {
-			v4 := net.ParseIP(strings.TrimSpace(ip)).To4()
-			if v4 == nil {
-				return nil, fmt.Errorf("detect your public IP for --keep-mine: %q is not an IPv4 address", ip)
-			}
-			mine = append(mine, v4)
-			p.MyIPs = append(p.MyIPs, v4.String())
-		}
-		if len(mine) == 0 {
-			return nil, errors.New("detect your public IP for --keep-mine: no address found")
-		}
-		p.Detection = det
 	}
 	for _, e := range aclEntries(addrs, timestamps) {
 		if cidrContainsAny(e.CIDR, mine) {
@@ -317,7 +313,191 @@ func (s *Service) DeleteACLAll(ctx context.Context, p *ACLDeleteAllPlan) (*ACLDe
 	return res, nil
 }
 
+// ACLPrunePlan is what `nakama aws acl prune` will do, resolved with
+// read-only calls so that the CLI can show it before asking. An entry
+// is old when "acl add" last added or confirmed it before Cutoff.
+type ACLPrunePlan struct {
+	Cutoff time.Time
+	// Delete are the old entries to remove.
+	Delete []ACLEntry
+	// Keep are the entries confirmed at or after Cutoff.
+	Keep []ACLEntry
+	// Mine are old entries kept because they contain one of MyIPs.
+	Mine []ACLEntry
+	// Unrecorded are entries without a usable added-at record (added
+	// outside nakama). prune never deletes them.
+	Unrecorded []ACLEntry
+	// MyIPs are the caller's public IPv4 addresses, detected as
+	// `acl add` does (only when some entry is old); Detection is that
+	// detection.
+	MyIPs     []string
+	Detection *awsx.DetectedIPs
+}
+
+// ACLPruneResult reports what `acl prune` changed.
+type ACLPruneResult struct {
+	Deleted []string `json:"deleted"`
+	// Remaining is the IP set after the update, including any entry
+	// added after the plan was made.
+	Remaining []string `json:"remaining"`
+	MyIPs     []string `json:"my_ips,omitempty"`
+	// Gone are planned entries someone else removed in the meantime.
+	Gone []string `json:"gone,omitempty"`
+	// Refreshed are planned entries whose added-at record is no longer
+	// old when read again ("acl add" confirmed them in the meantime, or
+	// the record went): they are kept.
+	Refreshed         []string `json:"refreshed,omitempty"`
+	TimestampsRemoved int      `json:"timestamps_removed"`
+}
+
+// PlanACLPrune sorts the entries of the IP set by their added-at
+// record against cutoff. When some entry is old, the caller's public
+// IPs are detected (as `acl add` does) and the old entries containing
+// one are kept; detecting none is an error, so that the caller is never
+// locked out by surprise. The records must be readable: without them
+// every entry would look as if it had been added outside nakama.
+func (s *Service) PlanACLPrune(ctx context.Context, cutoff time.Time) (*ACLPrunePlan, error) {
+	ipset, err := s.findIPSetSummary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	addrs, _, err := s.fetchIPSetAddresses(ctx, ipset.id, ipset.name)
+	if err != nil {
+		return nil, err
+	}
+	timestamps, err := s.fetchACLTimestamps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	p := &ACLPrunePlan{Cutoff: cutoff}
+	var old []ACLEntry
+	for _, e := range aclEntries(addrs, timestamps) {
+		t, ok := e.AddedTime()
+		switch {
+		case !ok:
+			p.Unrecorded = append(p.Unrecorded, e)
+		case t.Before(cutoff):
+			old = append(old, e)
+		default:
+			p.Keep = append(p.Keep, e)
+		}
+	}
+	if len(old) == 0 {
+		return p, nil
+	}
+	mine, myIPs, det, err := s.detectMyIPs(ctx, "detect your public IP (prune keeps the entries that contain it)")
+	if err != nil {
+		return nil, err
+	}
+	p.MyIPs, p.Detection = myIPs, det
+	for _, e := range old {
+		if cidrContainsAny(e.CIDR, mine) {
+			p.Mine = append(p.Mine, e)
+		} else {
+			p.Delete = append(p.Delete, e)
+		}
+	}
+	return p, nil
+}
+
+// PruneACL carries out a plan from PlanACLPrune. It reads the IP set
+// and the added-at records again and removes, with a single update, the
+// planned entries that are still there and still old: an entry added or
+// confirmed after the plan stays. With nothing planned it changes
+// nothing and does not call AWS.
+func (s *Service) PruneACL(ctx context.Context, p *ACLPrunePlan) (*ACLPruneResult, error) {
+	if p == nil {
+		return nil, errors.New("acl prune: no plan")
+	}
+	res := &ACLPruneResult{Deleted: []string{}, Remaining: []string{}, MyIPs: p.MyIPs}
+	if len(p.Delete) == 0 {
+		for _, group := range [][]ACLEntry{p.Keep, p.Mine, p.Unrecorded} {
+			for _, e := range group {
+				res.Remaining = append(res.Remaining, e.CIDR)
+			}
+		}
+		sort.Strings(res.Remaining)
+		return res, nil
+	}
+	ipset, err := s.findIPSetSummary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	addrs, lockToken, err := s.fetchIPSetAddresses(ctx, ipset.id, ipset.name)
+	if err != nil {
+		return nil, err
+	}
+	timestamps, err := s.fetchACLTimestamps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	isOld := func(cidr string) bool {
+		t, ok := ACLEntry{AddedAt: timestamps[cidr]}.AddedTime()
+		return ok && t.Before(p.Cutoff)
+	}
+	var planned []string
+	for _, e := range p.Delete {
+		switch {
+		case !containsCIDR(addrs, e.CIDR):
+			res.Gone = append(res.Gone, e.CIDR)
+		case !isOld(e.CIDR):
+			res.Refreshed = append(res.Refreshed, e.CIDR)
+		default:
+			planned = append(planned, e.CIDR)
+		}
+	}
+	remaining := withoutCIDRs(addrs, planned)
+	if len(planned) > 0 {
+		if err := s.updateIPSetAddresses(ctx, ipset, remaining, lockToken); err != nil {
+			return nil, err
+		}
+		slog.Info("acl: pruned", "deleted", len(planned), "remaining_entries", len(remaining))
+	}
+	res.Deleted = append(res.Deleted, planned...)
+	res.Remaining = append(res.Remaining, remaining...)
+	sort.Strings(res.Remaining)
+
+	// The records of the deleted entries, and of the gone ones that are
+	// still old (a fresh one belongs to an "acl add" in progress).
+	cleanup := append([]string(nil), planned...)
+	for _, c := range res.Gone {
+		if isOld(c) {
+			cleanup = append(cleanup, c)
+		}
+	}
+	for _, c := range cleanup {
+		if s.deleteACLTimestamp(ctx, c) {
+			res.TimestampsRemoved++
+		}
+	}
+	return res, nil
+}
+
 // --- helpers --------------------------------------------------------------
+
+// detectMyIPs detects the caller's public IPv4 addresses as `acl add`
+// does, as parsed IPs and as strings. Detecting none, or an answer that
+// is not IPv4, is an error prefixed with why.
+func (s *Service) detectMyIPs(ctx context.Context, why string) ([]net.IP, []string, *awsx.DetectedIPs, error) {
+	det, err := s.clients.IPDiscoverer.DetectPublicIPv4s(ctx)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("%s: %w", why, err)
+	}
+	var mine []net.IP
+	var strs []string
+	for _, ip := range det.IPs {
+		v4 := net.ParseIP(strings.TrimSpace(ip)).To4()
+		if v4 == nil {
+			return nil, nil, nil, fmt.Errorf("%s: %q is not an IPv4 address", why, ip)
+		}
+		mine = append(mine, v4)
+		strs = append(strs, v4.String())
+	}
+	if len(mine) == 0 {
+		return nil, nil, nil, fmt.Errorf("%s: no address found", why)
+	}
+	return mine, strs, det, nil
+}
 
 type ipSetSummary struct {
 	id   string
@@ -479,8 +659,18 @@ func (s *Service) writeACLTimestamp(ctx context.Context, canonical string) error
 }
 
 // fetchAllACLTimestamps returns a CIDR -> timestamp map populated
-// from SSM. Errors are logged and an empty map is returned.
+// from SSM. Errors are logged and what was read before is returned.
 func (s *Service) fetchAllACLTimestamps(ctx context.Context) map[string]string {
+	out, err := s.fetchACLTimestamps(ctx)
+	if err != nil {
+		slog.Warn("acl: GetParametersByPath failed", "error", err)
+	}
+	return out
+}
+
+// fetchACLTimestamps is fetchAllACLTimestamps for the callers that
+// decide by the records: it returns the error (and the partial map).
+func (s *Service) fetchACLTimestamps(ctx context.Context) (map[string]string, error) {
 	out := map[string]string{}
 	var nextToken *string
 	for {
@@ -490,8 +680,7 @@ func (s *Service) fetchAllACLTimestamps(ctx context.Context) map[string]string {
 			NextToken: nextToken,
 		})
 		if err != nil {
-			slog.Warn("acl: GetParametersByPath failed", "error", err)
-			return out
+			return out, fmt.Errorf("read the added-at records: GetParametersByPath: %w", err)
 		}
 		for _, p := range page.Parameters {
 			if p.Name == nil || p.Value == nil {
@@ -507,5 +696,5 @@ func (s *Service) fetchAllACLTimestamps(ctx context.Context) map[string]string {
 		}
 		nextToken = page.NextToken
 	}
-	return out
+	return out, nil
 }
