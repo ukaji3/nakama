@@ -29,6 +29,9 @@ with concrete advice:
   capability: *   one line per feature (create, connect, backup, ...)
                   stating whether the caller's IAM policies allow it
   tunnels         locally recorded tunnels and dead forwards
+  version         whether a newer nakama release is out (asks
+                  api.github.com; warn when this binary is old or the
+                  check fails, never fail)
 
 The command is strictly read-only: it changes no AWS resource and no
 local configuration, and never prints credentials, tokens or passwords.

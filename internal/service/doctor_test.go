@@ -15,6 +15,7 @@ import (
 
 	"github.com/ukaji3/nakama/internal/awsx"
 	"github.com/ukaji3/nakama/internal/cliproxy"
+	"github.com/ukaji3/nakama/internal/version"
 )
 
 // fakeDoctorIAM answers SimulatePrincipalPolicy with a scripted result.
@@ -83,8 +84,15 @@ func doctorOptsNoAWS(det *cliproxy.Detection, detErr error) DoctorOptions {
 		detect: func(context.Context) (*cliproxy.Detection, error) {
 			return det, detErr
 		},
-		tunnelNames: func() ([]string, error) { return nil, nil },
+		tunnelNames:   func() ([]string, error) { return nil, nil },
+		latestRelease: upToDate,
 	}
+}
+
+// upToDate stands in for the GitHub check, so that no test reaches
+// api.github.com.
+func upToDate(context.Context) version.CheckResult {
+	return version.CheckResult{Current: "v0.24.0", Latest: "v0.24.0", Status: version.StatusUpToDate}
 }
 
 func TestDiagnoseCredentialFailureStillRunsLocalChecks(t *testing.T) {
@@ -211,7 +219,8 @@ func doctorAWSOpts(t *testing.T, acl []ACLEntry, ip string, ipErr error, iamFake
 			}
 			return ip, nil
 		},
-		tunnelNames: func() ([]string, error) { return nil, nil },
+		tunnelNames:   func() ([]string, error) { return nil, nil },
+		latestRelease: upToDate,
 	}
 }
 
@@ -405,5 +414,68 @@ func TestDiagnoseTunnelsStaleState(t *testing.T) {
 	c := checkByName(t, Diagnose(context.Background(), opts), "tunnels")
 	if c.Status != CheckWarn || !strings.Contains(c.Detail, "does not answer") {
 		t.Errorf("check = %+v, want a warn about the stale daemon", c)
+	}
+}
+
+func TestDiagnoseVersion(t *testing.T) {
+	const page = "https://github.com/ukaji3/nakama/releases/tag/v0.25.0"
+	tests := []struct {
+		name       string
+		res        version.CheckResult
+		wantStatus CheckStatus
+		wantDetail string
+		wantAdvice string
+	}{
+		{"up to date", version.CheckResult{Current: "0.25.0", Latest: "v0.25.0", URL: page, Status: version.StatusUpToDate},
+			CheckOK, "0.25.0 is the latest release", ""},
+		{"ahead", version.CheckResult{Current: "0.26.0-rc.1", Latest: "v0.25.0", URL: page, Status: version.StatusAhead},
+			CheckOK, "newer than the latest release (v0.25.0)", ""},
+		{"outdated", version.CheckResult{Current: "0.24.0", Latest: "v0.25.0", URL: page, Status: version.StatusOutdated},
+			CheckWarn, "0.24.0 is out of date; the latest release is v0.25.0", "download v0.25.0 from " + page},
+		{"development", version.CheckResult{Current: "dev", Latest: "v0.25.0", URL: page, Status: version.StatusDevelopment},
+			CheckSkip, "dev is a development build", ""},
+		{"check failed", version.CheckResult{Current: "0.24.0", Status: version.StatusUnknown, Err: errors.New("GitHub answered with status 403")},
+			CheckWarn, "could not check for a newer release: GitHub answered with status 403", "api.github.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// With and without credentials: the check runs either way.
+			for _, opts := range []DoctorOptions{
+				doctorOptsNoAWS(&cliproxy.Detection{}, nil),
+				doctorAWSOpts(t, nil, "203.0.113.10", nil, &fakeDoctorIAM{}),
+			} {
+				opts.latestRelease = func(context.Context) version.CheckResult { return tt.res }
+				rep := Diagnose(context.Background(), opts)
+				c := checkByName(t, rep, "version")
+				if c.Status != tt.wantStatus || !strings.Contains(c.Detail, tt.wantDetail) || !strings.Contains(c.Advice, tt.wantAdvice) {
+					t.Errorf("version check = %+v, want %s with detail containing %q and advice containing %q",
+						c, tt.wantStatus, tt.wantDetail, tt.wantAdvice)
+				}
+				if tt.wantAdvice == "" && c.Advice != "" {
+					t.Errorf("advice = %q, want none", c.Advice)
+				}
+				if last := rep.Checks[len(rep.Checks)-1].Name; last != "version" {
+					t.Errorf("last check = %q, want version (appended after the existing ones)", last)
+				}
+			}
+		})
+	}
+}
+
+func TestDiagnoseVersionNeverFails(t *testing.T) {
+	// An old version and a failed check are warnings: neither may turn a
+	// clean diagnosis into a failure.
+	for _, st := range []version.Status{version.StatusOutdated, version.StatusUnknown} {
+		opts := doctorAWSOpts(t, []ACLEntry{{CIDR: "203.0.113.10/32"}}, "203.0.113.10", nil, &fakeDoctorIAM{})
+		opts.latestRelease = func(context.Context) version.CheckResult {
+			return version.CheckResult{Current: "0.24.0", Latest: "v0.25.0", Status: st, Err: errors.New("timeout")}
+		}
+		rep := Diagnose(context.Background(), opts)
+		if rep.Fails != 0 {
+			t.Errorf("%s: Fails = %d, want 0", st, rep.Fails)
+		}
+		if rep.Warns != 1 {
+			t.Errorf("%s: Warns = %d, want 1 (the version check only): %+v", st, rep.Warns, rep.Checks)
+		}
 	}
 }
