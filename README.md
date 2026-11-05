@@ -39,6 +39,8 @@ tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 n
 
 **ソースから** (Go 1.26 以上): `go install github.com/ukaji3/nakama/cmd/nakama@latest`
 
+**新しい版の確認**: `nakama version --check` (と `nakama aws doctor`) は GitHub (`api.github.com`) に問い合わせ、使っている版が最新かを表示します。古ければ、上と同じ手順で入れ替えてください。nakama が GitHub に問い合わせるのは、この 2 つのコマンドのときだけです。
+
 ## 主なコマンド
 
 | コマンド | 用途 |
