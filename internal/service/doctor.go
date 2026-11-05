@@ -16,7 +16,9 @@ import (
 
 	"github.com/ukaji3/nakama/internal/awsx"
 	"github.com/ukaji3/nakama/internal/cliproxy"
+	"github.com/ukaji3/nakama/internal/config"
 	"github.com/ukaji3/nakama/internal/profilestore"
+	"github.com/ukaji3/nakama/internal/version"
 )
 
 // CheckStatus is the outcome of one diagnostic check.
@@ -89,6 +91,8 @@ type DoctorOptions struct {
 	tunnelNames func() ([]string, error)
 	// tunnelStatus overrides the per-tunnel status probe in tests.
 	tunnelStatus func(ctx context.Context, name string) (*TunnelStatus, error)
+	// latestRelease overrides the latest-release check in tests.
+	latestRelease func(ctx context.Context) version.CheckResult
 }
 
 // Diagnose runs the read-only environment diagnosis behind
@@ -96,7 +100,8 @@ type DoctorOptions struct {
 // the cliproxy detector from ADR 0018), credential resolution, WAF
 // allowlist membership for this machine's public IP, one capability
 // line per feature derived from featurePermissionMatrix (permissions.go),
-// and the local tunnel state. It performs no mutation of any kind and
+// the local tunnel state, and whether a newer nakama release is out
+// (the GitHub Releases API). It performs no mutation of any kind and
 // never returns credentials, tokens or passwords in the report.
 func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 	rep := &DoctorReport{}
@@ -114,6 +119,7 @@ func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 			rep.add(DoctorCheck{Name: name, Status: CheckSkip, Detail: "skipped: no AWS credentials"})
 		}
 		diagnoseTunnels(ctx, opts, rep)
+		diagnoseVersion(ctx, opts, rep)
 		return rep
 	}
 
@@ -121,6 +127,7 @@ func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 	diagnoseWAF(ctx, opts, rep)
 	diagnoseCapabilities(ctx, opts, rep)
 	diagnoseTunnels(ctx, opts, rep)
+	diagnoseVersion(ctx, opts, rep)
 	return rep
 }
 
@@ -418,6 +425,40 @@ func diagnoseTunnels(ctx context.Context, opts DoctorOptions, rep *DoctorReport)
 			Detail: fmt.Sprintf("%d tunnel(s) healthy: %s", len(names), strings.Join(names, ", ")),
 		})
 	}
+}
+
+// diagnoseVersion reports whether a newer nakama release is out. It asks
+// api.github.com, and is never a fail: a network that blocks GitHub or
+// an old version is no reason to fail the diagnosis.
+func diagnoseVersion(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
+	check := opts.latestRelease
+	if check == nil {
+		check = func(ctx context.Context) version.CheckResult {
+			return version.Checker{}.Check(ctx, version.Version)
+		}
+	}
+	r := check(ctx)
+	c := DoctorCheck{Name: "version"}
+	switch r.Status {
+	case version.StatusUpToDate:
+		c.Status = CheckOK
+		c.Detail = r.Current + " is the latest release"
+	case version.StatusAhead:
+		c.Status = CheckOK
+		c.Detail = fmt.Sprintf("%s is newer than the latest release (%s)", r.Current, r.Latest)
+	case version.StatusOutdated:
+		c.Status = CheckWarn
+		c.Detail = fmt.Sprintf("%s is out of date; the latest release is %s", r.Current, r.Latest)
+		c.Advice = "download " + r.Latest + " from " + r.URL
+	case version.StatusDevelopment:
+		c.Status = CheckSkip
+		c.Detail = fmt.Sprintf("skipped: %s is a development build, not compared with the latest release (%s)", r.Current, r.Latest)
+	default:
+		c.Status = CheckWarn
+		c.Detail = fmt.Sprintf("could not check for a newer release: %v", r.Err)
+		c.Advice = "the check asks api.github.com; where that is blocked, compare `nakama version` with " + config.ReleasesURL
+	}
+	rep.add(c)
 }
 
 // listTunnelStateNames returns the instance names that have a tunnel

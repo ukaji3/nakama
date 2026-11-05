@@ -1,4 +1,5 @@
-// Package version exposes build-time version metadata.
+// Package version exposes build-time version metadata, and compares it
+// with the latest release on GitHub (check.go).
 //
 // Values are injected via -ldflags at build time (see Makefile).
 package version

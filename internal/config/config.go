@@ -89,6 +89,16 @@ const CheckIPURL = "https://checkip.amazonaws.com/"
 // /ip answers with the address alone, whatever the User-Agent.
 const IfconfigIOURL = "https://ifconfig.io/ip"
 
+// LatestReleaseURL is the GitHub REST API endpoint `nakama version
+// --check` and `nakama aws doctor` ask for the latest release. GitHub
+// answers with the newest release that is neither a draft nor a
+// prerelease.
+const LatestReleaseURL = "https://api.github.com/repos/ukaji3/nakama/releases/latest"
+
+// ReleasesURL is the nakama releases page; a release's own page is
+// ReleasesURL + "/tag/" + its tag.
+const ReleasesURL = "https://github.com/ukaji3/nakama/releases"
+
 // CloudFrontVPCOriginsPrefixListName is the AWS-managed prefix list
 // whose addresses are used by CloudFront's service-managed ENIs to
 // reach VPC origins. The actual ID is region-specific and resolved
