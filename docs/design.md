@@ -70,7 +70,7 @@ github.com/ukaji3/nakama
 │   ├── tagging/                 // タグスキーマ
 │   ├── profilestore/            // マルチアカウントプロファイルの永続化 (~/.config/nakama, ADR 0011)
 │   ├── config/                  // 固定値 (region, CIDR, AZ, SSM パスなど)
-│   └── version/                 // ビルド時に -ldflags で注入される version 情報
+│   └── version/                 // ビルド時に -ldflags で注入される version 情報と、最新リリースとの比較 (§8.24)
 ├── third_party/
 │   ├── session-manager-plugin/  // 案3: 公式 plugin を版固定で取り込み (Apache-2.0。取り込み元は PINNED.md)
 │   └── twinj-uuid/              // plugin が使う twinj/uuid。公開版と API 互換が無いため同梱 (§12)
@@ -548,7 +548,8 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 
 - **構成**: `service.Diagnose(ctx, DoctorOptions)` が `DoctorReport{Checks[], OKs/Warns/Fails/Skips}` を返し、CLI が表形式または `-o json` で描画して fail>0 なら `ExitCodeError{1}`
 - **資格情報未解決でも動く**: CLI は `awsx.NewClients` の失敗を診断結果 (credentials=fail) として扱い、ローカル診断 (proxy / tls) を継続する。AWS 依存項目は skip (終了コードに影響しない)
-- **各項目の実装**: proxy/tls = ADR 0018 の `cliproxy.Detector` を再利用 (`ProxyAuthError` は方式別の案内に変換) / credentials = `Clients.AccountID`・`CallerARN` + profilestore の active profile / waf-allowlist = `ListACL` + `IPDiscoverer.PublicIPv4` を CIDR 包含判定 / capability = 後述の権限マトリクス / tunnels = 状態ファイル走査 + `GetTunnelStatus`
+- **各項目の実装**: proxy/tls = ADR 0018 の `cliproxy.Detector` を再利用 (`ProxyAuthError` は方式別の案内に変換) / credentials = `Clients.AccountID`・`CallerARN` + profilestore の active profile / waf-allowlist = `ListACL` + `IPDiscoverer.PublicIPv4` を CIDR 包含判定 / capability = 後述の権限マトリクス / tunnels = 状態ファイル走査 + `GetTunnelStatus` / version = `version.Checker` (§8.24)
+- **version 行**: AWS の外 (api.github.com) に問い合わせる唯一の項目で、資格情報が無くても最後に実行する。最新と、手元の方が新しい場合は ok、古ければ warn (Advice に新しい版のリリースページ)、確認できなければ warn (遮断されている場合の手での確かめ方を案内)、開発ビルドは skip。fail にはしない (GitHub に届くかと版の新しさは、nakama が動くかに関係しないため)
 - **機能別 capability 判定 (Issue #63)**: `internal/service/permissions.go` の `featurePermissionMatrix` が「機能 → 必要 IAM アクション」の唯一の情報源。doctor は Simulate 対象行のアクション和集合を `SimulatePrincipalPolicy` にチャンク (50) + Marker ページネーションで問い合わせ、機能ごとに ok / warn (不足アクション列挙) を 1 行ずつ表示する。不足は warn であり fail ではない (意図して権限を絞ったプリンシパルは「壊れた環境」ではない。fail は環境異常に予約)。判定は Resource `*` 評価のためリソース限定ポリシーで偽陰性があり得る旨を Advice に含める
 - **マトリクスの鮮度保証**: 双方向の乖離検出テスト (permissions_test.go)。順方向 = パッケージソースから `.clients.<SVC>.<Method>(` を抽出し、対応アクションが表に無ければ失敗。逆方向 = 表のアクションが抽出されず `implicitActions` (ResumeSession = vendored plugin 内部 / PassRole = EC2 が要求 / GetCallerIdentity = awsx 直呼び) にも無ければ失敗。暗黙宣言自体も「抽出されるようになったら失敗」で陳腐化を検出。requirements.md 付録 A は生成ブロックで、表とドキュメントの不一致も CI が検出する (`NAKAMA_UPDATE_PERMISSIONS_DOCS=1` で再生成)
 - **テスト容易性**: 検出・ACL・IP・tunnel 一覧/状態・profile を `DoctorOptions` の unexported フックで差し替え、ネットワークなしで全分岐を検証する
@@ -642,6 +643,19 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - **`--keep-mine`**: 見つかったどれかを含むエントリを残す。確認の文と結果は「your IP X」または「one of your IPs X, Y」と書く。JSON の結果には `my_ips` を加え、`my_ip` (先頭) も残す。
 - **`open` / `doctor`**: `PublicIPv4` (checkip に 1 回) のまま。
 
+### 8.24 `nakama version --check` — 新しい版の確認
+
+利用者は Releases から手で入れるので、新しい版に気づけるように、頼まれたときだけ GitHub に最新のリリースを問い合わせる。自己更新はしない。
+
+- **問い合わせ先**: `GET https://api.github.com/repos/ukaji3/nakama/releases/latest` (`config.LatestReleaseURL`)。GitHub は draft でも prerelease でもない最新のリリースを返す。`Accept: application/vnd.github+json`、`X-GitHub-Api-Version: 2022-11-28`、`User-Agent: nakama/<版>` を付け、トークンは送らない (未認証の上限は送信元 IP ごとに 1 時間 60 回)。
+- **問い合わせる場面**: `version --check` と `aws doctor` (§8.15) だけ。引数なしの `version` (CI のスモークテストも含む) とほかのコマンドは通信せず、出力も変えない。定期的な確認・結果のキャッシュはしない。
+- **通信** (`version.Checker`): `proxy.NewTransport()` (§14) と、全体で 5 秒の `http.Client.Timeout` (`version.CheckTimeout`)。クライアントは `Check` のたびに作るので、`--check` が無ければトランスポートも作らない。応答は 1 MiB まで読み、`tag_name` だけを使う。リリースページの URL は応答の `html_url` を使わず、検証したタグから `config.ReleasesURL + "/tag/" + <tag>` を組み立てる。
+- **比較** (`internal/version/check.go`): semver 2.0.0 の優先順位。先頭の `v` は無視する (タグは `v0.24.0`、GoReleaser のリリースバイナリは `{{.Version}}` の `0.24.0` を報告する)。数字は数値で比べ、プレリリースはその版より前、プレリリースの識別子は数字なら数値・それ以外は ASCII 順、ビルドメタデータは無視する。golang.org/x/mod/semver は依存グラフに無く、比較は数十行で済むので、依存は足さない。
+- **開発ビルド**: 版が semver でないもの (`dev`、`git describe --always` のハッシュ) と、`make build` の `git describe --tags --dirty` の形 (`v0.24.0-3-g9010bd5`、`-dirty` 付き) は比較しない。後者は semver としてはタグのプレリリースに見え、古いと誤って言うため。最新の版と URL は表示する。
+- **結果** (`version.CheckResult`): Status は up-to-date / outdated / ahead (手元の方が新しい) / development / unknown。接続できない、タイムアウト、200 以外、壊れた JSON、版でないタグは unknown とその理由 (`Err`) になり、呼び出し側は警告だけにする。`X-RateLimit-Remaining: 0` の 403 / 429 はレート制限として伝える。
+- **CLI**: `current :` / `latest  :` / `release :` / `status  :` の 4 行。unknown のときは `current :` の行と、stderr の `warning: could not check for a newer version: <理由>`。終了コードは古くても失敗しても 0。`-o` は効かない (引数なしの `version` と同じ)。
+- **テスト**: `httptest` のサーバーで各 Status、HTTP エラー、レート制限、タイムアウト、壊れた JSON、プロキシの環境変数の尊重を確かめる。doctor のテストは確認の関数を差し替える。どのテストも api.github.com に問い合わせない。
+
 ## 9. テスト戦略
 
 | 層 | テスト方針 |
@@ -649,7 +663,7 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 | `internal/userdata` / `internal/awscli` / `internal/kiro` | テンプレ展開のユニットテストに加え、埋め込んだシェルを本物の bash で、外部コマンドを模したスタブを PATH の先頭に置いて実行する (文字列の照合だけでは見つからない不具合のため。§8.18)。埋め込みスクリプトの改行が LF であることも検査する (`lf_test.go`) |
 | `internal/naming` / `internal/tagging` | ピュア関数のテーブル駆動テスト |
 | `internal/awsx` | 資格情報解決の分岐は `resolverHooks` を差し替えて検証する。IP 検出は `httptest` のサーバーで検証する。実 API は呼ばない |
-| `internal/signin` / `internal/proxy` / `internal/cliproxy` | `httptest` のサーバーと、差し替えた依存 (時計、HTTP クライアント、`t.Setenv` による環境変数) で検証する |
+| `internal/signin` / `internal/proxy` / `internal/cliproxy` / `internal/version` | `httptest` のサーバーと、差し替えた依存 (時計、HTTP クライアント、`t.Setenv` による環境変数) で検証する |
 | `internal/service` | AWS interface を自家製 fake (`fakeCreateEC2` など) で差し替えたユニットテスト。Run Command で送るスクリプトの一部 (`update`、`kirocrew`、`connect` のコマンド実行など) は bash とスタブで実行する。CloudFront の構成のように SDK の型に項目が増えうるものは、reflect で項目を列挙して漏れを検出する |
 | `internal/cli` | cobra のフラグ解析と委譲テスト |
 | 実 AWS E2E | 手動 (CI には載せない) |
@@ -803,7 +817,7 @@ profilestore への自動 save & load (alias 既定はアカウント ID、
 
 ## 14. アウトバウンド通信のプロキシ解決 (ADR 0015)
 
-nakama の outbound HTTP(S) 経路は 5 つあり、いずれも `internal/proxy` を
+nakama の outbound HTTP(S) 経路は 6 つあり、いずれも `internal/proxy` を
 通してプロキシを解決する (third_party は非改変):
 
 | 経路 | 注入方法 |
@@ -813,6 +827,7 @@ nakama の outbound HTTP(S) 経路は 5 つあり、いずれも `internal/proxy
 | checkip / ifconfig.io (`IPDiscoverer`) | `internal/awsx/ip.go` で `proxy.NewTransport()` (http.DefaultTransport の Clone に Proxy 差し替え) を使用。`DetectPublicIPv4s` 用はさらに keep-alive を切り、チェックサイトへの直接の接続を IPv4 にする (§8.23) |
 | AWS Sign-In のトークン API (`internal/signin`) | 既定の HTTP クライアントが `proxy.NewTransport()` + 30 秒タイムアウト (§13.3) |
 | `nakama aws cli shell` の環境検出 (`internal/cliproxy`) | `proxy.Func()` で解決したプロキシを経由して STS エンドポイントに接続し、検証済みチェーンのルートで TLS 傍受を判定する (ADR 0018、§8.13) |
+| GitHub Releases API (`internal/version`) | `version --check` と `doctor` のときだけ `api.github.com` に問い合わせる。`proxy.NewTransport()` + 5 秒のタイムアウト (§8.24) |
 
 `proxy.Func()` の解決順序 (二段構え):
 

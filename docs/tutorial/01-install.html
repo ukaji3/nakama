@@ -134,6 +134,13 @@ sudo install -m 0755 /tmp/nakama/nakama /usr/local/bin/nakama
 nakama version</code></pre>
 <p>macOS では <code>linux</code> の代わりに <code>darwin</code>、Apple Silicon なら <code>darwin_arm64</code> (または両対応の <code>darwin_universal</code>) を選びます。</p>
 
+<div class="callout tip" role="note" id="new-version">
+  <span class="title">新しい版が出ているかを確かめる</span>
+  <p>nakama はよく更新されます。次のコマンドは GitHub に問い合わせて、いま使っている版・最新の版・入手先の URL を表示します。古ければ、この章と同じ手順で新しい版に置き換えてください。</p>
+  <pre><code>nakama version --check</code></pre>
+  <p><code>nakama aws doctor</code> も同じ確認をします。nakama が GitHub に問い合わせるのは、この 2 つのコマンドを実行したときだけです。会社のネットワークで GitHub に届かないときは警告が出るだけで、ほかの動作には影響しません。</p>
+</div>
+
 <h2 id="login">3. AWS にサインインする</h2>
 <p>nakama を使うには、まず「どの AWS アカウントとして操作するか」を決めます。<code>nakama aws login</code> を実行すると、ブラウザが開いて AWS のサインイン画面が表示されます。</p>
 

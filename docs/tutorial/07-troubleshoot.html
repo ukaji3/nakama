@@ -62,8 +62,9 @@
 [skip] waf-allowlist   skipped: no AWS credentials
 [skip] capabilities    skipped: no AWS credentials
 [ ok ] tunnels         no tunnels recorded
+[ ok ] version         0.24.0 is the latest release
 
-3 ok, 0 warn, 1 fail, 2 skipped</code></pre>
+4 ok, 0 warn, 1 fail, 2 skipped</code></pre>
 
 <h2 id="read">2. 出力の読み方</h2>
 <div class="table-wrap">
@@ -89,6 +90,7 @@
     <tr><td><code>waf-allowlist</code></td><td>自分の接続元 IP が許可リストに入っているか (<a href="03-init.html#acl">第 3 章</a>)</td></tr>
     <tr><td><code>capability: ...</code></td><td>機能ごとに、必要な IAM 権限が揃っているか</td></tr>
     <tr><td><code>tunnels</code></td><td>このパソコンに記録されたポート転送が生きているか (<a href="05-use.html#tunnel">第 5 章「ポート転送」</a>)</td></tr>
+    <tr><td><code>version</code></td><td>新しい版の nakama が出ているか (GitHub に問い合わせます)。古ければ <code>warn</code> で、入手先が出ます。会社のネットワークで GitHub に届かないときも <code>warn</code> ですが、nakama の動作には関係ありません (<a href="01-install.html#new-version">第 1 章</a>)</td></tr>
   </tbody>
 </table>
 </div>

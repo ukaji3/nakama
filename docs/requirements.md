@@ -32,6 +32,7 @@
 - ビルド環境: Go 1.26+ (`go.mod` の `go` 行)
 - 実行環境: Linux / macOS / Windows
 - ネットワーク: HTTP(S) プロキシ環境では自動検出で対応 (優先順位: `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` 環境変数 → Windows のみ OS 設定 (WinHTTP/IE 静的設定・PAC)。macOS/Linux の OS 設定検出は非対応で環境変数のみ。TLS 検証は OS 証明書ストアを使用するため企業 CA の追加設定は不要。ADR 0015)
+- 版の確認の通信先: `nakama version --check` と `nakama aws doctor` は GitHub (`api.github.com`) にも問い合わせる。ほかのコマンドは問い合わせない。届かなくても nakama の動作には影響しない (警告だけ)
 
 ## 4. 機能要件
 
@@ -75,7 +76,8 @@
 | 接続 | `nakama aws kirocrew <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` / `kirocrew enable <n>` / `kirocrew disable <n>` | Kiro Crew の Web 画面を **code-server 経由で**ブラウザに開く (ADR 0020)。enable は、Kiro Crew 専用の CloudFront distribution、インスタンス上の nginx (127.0.0.1:15476)、code-server の proxy-domain と trusted-origins、既存の distribution の `/proxy/5476*` を新しい distribution へ 302 で転送する Function を作る (冪等)。開くときは、code-server の自動ログイン (ADR 0012 の方式) と Kiro Crew のトークン受け渡しを、1 回のブラウザ起動で行う。トークンは RSA-OAEP で暗号化して受け取る。Kiro Crew は CloudFront に直接さらさない。disable と delete で片付ける。bare は対象外 |
 | 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
 | 認証 | `nakama aws login [--remote] [--name <alias>]` | AWS Management Console のセッションを使いネイティブにサインイン (OAuth 2.0 authorization code + PKCE + DPoP、aws CLI 不要。ADR 0016)。ブラウザ起動 (不可なら URL 表示で待機継続) → 127.0.0.1 のコールバックで認可コード受領 (10 分タイムアウト、state 検証) → AWS CLI 互換キャッシュ (`~/.aws/login/cache/`) へ保存 → STS で識別確認 → nakama profile へ**自動 save & load**。`--remote` は SSH/headless 向けにブラウザの検証コード貼り付けで完了。`~/.aws/config` は変更しない。要 `SignInLocalDevelopmentAccess` ポリシー |
-| 診断 | `nakama aws doctor [-o json]` | 環境を読み取り専用で一括診断し、各項目を ok / warn / fail + 対処案内で表示する: プロキシ解決 (ADR 0015 の解決器) と AWS 到達性、TLS インスペクション検出 (ADR 0018 の検出エンジン再利用)、資格情報の解決元 (アカウント / identity / active profile)、自 IP の WAF 許可リスト登録、機能別の IAM 権限充足 (付録 A のマトリクスを SimulatePrincipalPolicy で判定し、機能ごとに ok / 不足アクションを表示)、ローカル tunnel 状態。fail があれば終了コード非 0。資格情報未解決でもローカル診断は継続。機微情報は出力しない |
+| 診断 | `nakama aws doctor [-o json]` | 環境を読み取り専用で一括診断し、各項目を ok / warn / fail + 対処案内で表示する: プロキシ解決 (ADR 0015 の解決器) と AWS 到達性、TLS インスペクション検出 (ADR 0018 の検出エンジン再利用)、資格情報の解決元 (アカウント / identity / active profile)、自 IP の WAF 許可リスト登録、機能別の IAM 権限充足 (付録 A のマトリクスを SimulatePrincipalPolicy で判定し、機能ごとに ok / 不足アクションを表示)、ローカル tunnel 状態、nakama の版が最新か (`version --check` と同じ確認。古い・確認できないときは warn、開発ビルドは skip)。fail があれば終了コード非 0。資格情報未解決でもローカル診断は継続。機微情報は出力しない |
+| 診断 | `nakama version [--check]` | 版・コミット・ビルド日時を表示する (通信しない)。`--check` は GitHub の Releases API (`https://api.github.com/repos/ukaji3/nakama/releases/latest`) に問い合わせ、今の版・最新の版・リリースページの URL と、最新 / 古い / 手元の方が新しい / 開発ビルド (比較しない) のどれかを表示する。問い合わせの失敗 (遮断、レート制限、5 秒のタイムアウト、壊れた応答) は警告だけで、古い場合も含めて終了コードは 0 |
 | CLI 支援 | `nakama aws cli shell [--shell <path>]` | **Windows 専用**。OS のプロキシ設定 (WinHTTP/PAC) を自動解決し、TLS インスペクション検出時は OS ストア検証済みの企業 CA チェーン + Amazon Trust Services ルートを `AWS_CA_BUNDLE` 用 PEM に書き出した上で、`HTTP(S)_PROXY`/`NO_PROXY`/`AWS_CA_BUNDLE` を注入したサブシェル (親シェルと同種を自動判別) を起動する。exit で復帰し、親シェル・レジストリ・`~/.aws/config` に恒久的変更を残さない。NTLM/Negotiate 認証プロキシは検出して回避策を案内。他 OS では Windows 専用である旨を表示してエラー (ADR 0018)。サブシェルの PATH の先頭に nakama.exe のフォルダーを入れる (ADR 0022) |
 | 起動支援 | nakama.exe のダブルクリック | **Windows 専用**。引数なしでエクスプローラーから起動されたとき、Windows PowerShell を同じウィンドウで開く。PATH の先頭に nakama.exe のフォルダーを入れ、`cli shell` と同じプロキシ・CA の設定を注入する。設定はそのウィンドウの中だけで、レジストリ・ユーザー環境変数は変更しない。検出に失敗しても理由を表示して PATH だけのシェルを開く。シェルの実行中は Ctrl-C で nakama が終わらない (ADR 0022) |
 | プロファイル | `nakama aws profile save [--name <alias>]` | 現在の `aws login` セッション (login_session 識別子 + STS identity) をアカウント ID キーで nakama のレジストリ (`~/.config/nakama`) に保存。active profile は無視して「今 login しているもの」を保存し、同一アカウントの再 save は上書き。alias 省略時はアカウント ID。login_session が無い資格情報 (SSO・アクセスキー等) はエラー (ADR 0011) |
@@ -173,6 +175,7 @@
 - `tunnel` の資格情報失効 (login refresh token 最長 12h) 後の自動復旧 (該当転送は dead 表示。再 `nakama aws login` + `tunnel restart <n>` で復旧)
 - macOS の OS プロキシ設定 (システム設定) の自動検出 (リリースバイナリは CGO_ENABLED=0 のため。環境変数での指定は可。ADR 0015)
 - WebSocket (CONNECT トンネル上のアップグレード) を遮断する監査型プロキシ環境での `connect` 動作保証
+- nakama 自身の更新 (自己更新) と、版の自動・定期的な確認。版の確認は `version --check` と `doctor` を実行したときだけで、結果は保存せず、GitHub のトークンも使わない
 
 ## 8. 受け入れ基準
 
@@ -192,7 +195,7 @@
 14. (手動 E2E) TLS インスペクションを行う企業プロキシ配下の Windows で `nakama aws cli shell` を実行すると、プロキシ・CA・疎通確認のバナーが表示されてサブシェルが開き、その中で `aws s3 ls` が追加設定なしで成功する。`exit` 後、親シェル・レジストリ・`~/.aws/config` に変更が残らない。Windows 以外の OS では Windows 専用オプションである案内を表示して終了する
 15. `nakama aws ssh setup <n>` 実行後、表示された `Include` 行を `~/.ssh/config` に追加すると `ssh nakama-<n>` で ubuntu としてログインでき、デスクトップ版 VS Code の Remote-SSH からも同じ Host 名で接続できる (手動 E2E)。同コマンドの再実行で `authorized_keys` に重複エントリが増えない。`~/.ssh/config` は変更されない。sshd 不在・権限不足時は原因の分かるエラーになる
 
-16. `nakama aws doctor` が固定項目 (proxy / tls / credentials / waf-allowlist / tunnels) に加えて機能別の capability 行 (付録 A の Simulate 対象機能ごとに 1 行) を表示し、全権限がある環境では fail が 0 で終了コード 0 になる。資格情報が解決できない環境でも proxy / tls の診断結果が表示され、AWS 依存項目は skip 表示になる。プロキシ認証要求・エンドポイント未到達は fail、機能に必要なアクションの不足 (不足分を detail に列挙)・WAF 未登録・権限検証不能 (`iam:SimulatePrincipalPolicy` なし)・dead な転送は warn になる。判定は Resource `*` でのシミュレーションのためリソース限定ポリシーでは偽陰性があり得る (その旨を対処案内に含める)。実行によって AWS リソースとローカル設定が一切変更されない
+16. `nakama aws doctor` が固定項目 (proxy / tls / credentials / waf-allowlist / tunnels / version) に加えて機能別の capability 行 (付録 A の Simulate 対象機能ごとに 1 行) を表示し、全権限がある環境では fail が 0 で終了コード 0 になる。資格情報が解決できない環境でも proxy / tls の診断結果が表示され、AWS 依存項目は skip 表示になる。プロキシ認証要求・エンドポイント未到達は fail、機能に必要なアクションの不足 (不足分を detail に列挙)・WAF 未登録・権限検証不能 (`iam:SimulatePrincipalPolicy` なし)・dead な転送・nakama の版が古い・版を確認できない (基準 28) は warn になる。判定は Resource `*` でのシミュレーションのためリソース限定ポリシーでは偽陰性があり得る (その旨を対処案内に含める)。実行によって AWS リソースとローカル設定が一切変更されない
 
 17. `nakama aws create --preset kiro` の完了後、インスタンス上に kiro-cli が導入され Kiro Crew の gateway が systemd で稼働している (Issue #20 の内容)。`--setup ./s.sh` はスクリプトが ubuntu として実行され、`--dotfiles <URL>` はリポジトリが `~/.dotfiles` に配置されて慣例どおり適用される。いずれかのステップが失敗しても create は成功扱いで終了し、警告・ログパス・再実行コマンドが表示される。`nakama aws setup rerun <n>` で同じステップを再実行できる (手動 E2E)
 
@@ -215,6 +218,8 @@
 26. `nakama aws create` で作ったインスタンス (code-server 版・bare 版、x86_64・arm64) では、AWS CLI v2 が AWS 公式のインストールスクリプトで ubuntu ユーザーの `~/.local/aws-cli` に入り (`~/.local/bin/aws`)、CPU に合った版で、権限の昇格を禁じた状態 (`setpriv --no-new-privs`) でも動く。snap の `aws-cli` と `/usr/local/bin/aws` は無い。`nakama aws update <n>` は AWS CLI を更新し、Kiro Crew があれば `kirocrew update` と `kirocrew restart` を実行して、結果に AWS CLI の版と Kiro Crew の結果を出す。Issue #101 より前に作ったインスタンスの snap の AWS CLI には触れない。update の出力が長くても再起動の要否が失われない (Issue #101)
 
 27. 引数なしの `nakama aws acl add` は、`https://checkip.amazonaws.com/` と `https://ifconfig.io/ip` に 3 回ずつ、毎回新しい接続で問い合わせる (チェックサイトへの直接の接続は IPv4)。見つかった公開の IPv4 アドレスを重複なしで、1 回の更新ですべて追加する。IPv6・プライベートアドレス・IP でない答えは使わない。一部の問い合わせが失敗したら警告して見つかったものを追加し、全部失敗したら何も追加せずにエラーになる。追加が 1 つなら出力は従来と同じ。`acl delete all --keep-mine` は同じ方法で調べ、見つかったどれかを含むエントリを残す (Issue #104)
+
+28. `nakama version --check` は GitHub の最新リリース (draft と prerelease を除く) と比べて、今の版・最新の版・リリースページの URL を表示する。版は数値で比べ (v0.9.0 < v0.10.0、v0.24.0 と 0.24.0 は同じ、プレリリースはその版より前)、開発ビルド (`dev` やコミットのハッシュなど semver でないもの、`make build` の `git describe` の形) は比較しない。問い合わせに失敗しても (遮断、レート制限、5 秒のタイムアウト、壊れた応答) 警告だけで、古い場合も含めて終了コードは 0。引数なしの `nakama version` とほかのコマンドは GitHub に問い合わせず、出力も変わらない。`nakama aws doctor` の `version` 行は、最新 (または手元の方が新しい) なら ok、古ければ warn (新しい版と入手先)、確認できなければ warn、開発ビルドなら skip で、どれも doctor の終了コードを変えない。テストは本物の api.github.com に問い合わせない
 
 ## 付録 A. 機能別 IAM 権限マトリクス
 

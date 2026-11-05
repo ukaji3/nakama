@@ -101,6 +101,7 @@ KNOWN_COMMANDS = {
 # 実バイナリの --help から確認したフラグ (コマンド名 -> 使用可能なフラグ)
 KNOWN_FLAGS = {
     "nakama": {"--help", "--output", "-o", "--verbose", "-v"},
+    "nakama version": {"--check"},
     "nakama aws login": {"--remote", "--name"},
     "nakama aws profile save": {"--name"},
     "nakama aws create": {
