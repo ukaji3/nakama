@@ -663,7 +663,7 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - **期間** (CLI の `parseACLAge`): 正の整数の日数 (`30d`) か、正の Go の duration (`36h`)。境界 (cutoff) は「現在 − 期間」で、AWS を呼ぶ前に検査する。
 - **計画** (`PlanACLPrune`、読み取りだけ): IP set と追加日時を読み、エントリを分ける。追加日時が読めない・解釈できないものは `Unrecorded` (nakama の外で足したもの。消さない)、cutoff より前 (`Before`。ちょうどは古くない) は古い、それ以外は `Keep`。古いものがあるときだけ `DetectPublicIPv4s` で接続元 IP を調べ (§8.23)、どれかを含む古いエントリは `Mine` として残す。判定は `--keep-mine` と同じ `cidrContainsAny`。IP が 1 つも検出できなければエラー (締め出しを防ぐ)。追加日時の読み取り (`fetchACLTimestamps`) の失敗もエラーにする (読めないと全部が「nakama の外」に見え、利用者に誤った警告を出すため)。`list` と `delete all` は今までどおり警告だけで続ける。
 - **CLI**: `Unrecorded` があれば stderr に警告する。消すものがあれば、消すもの・残すもの (`Mine`、`Keep`、`Unrecorded`) を経過日数付きで表示して確認を取る (`--yes` で省略)。
-- **実行** (`PruneACL`): 消すものが無ければ AWS を呼ばずに終わる (IP set は更新しない)。あれば IP set と追加日時を読み直し、計画の `Delete` のうち、今も IP set にあり、今も cutoff より古いものだけを除いた一覧で、読み直しの lock token 付きの 1 回の `UpdateIPSet` をする。計画の後に足されたエントリは計画に無いので残り、その間に `acl add` で確かめ直されたエントリ (`Refreshed`) も残る。他から消されていたもの (`Gone`) は数えるだけ。
+- **実行** (`PruneACL`): IP set を読み直す。消すものが無ければ、結果の残りの一覧を作るだけで IP set は更新しない (追加日時も読まない)。あれば追加日時も読み直し、計画の `Delete` のうち、今も IP set にあり、今も cutoff より古いものだけを除いた一覧で、読み直しの lock token 付きの 1 回の `UpdateIPSet` をする。計画の後に足されたエントリは計画に無いので残り、その間に `acl add` で確かめ直されたエントリ (`Refreshed`) も残る。他から消されていたもの (`Gone`) は数えるだけ。
 - **後片付け**: 消したエントリの追加日時と、`Gone` のうち今も古い追加日時を `DeleteParameter` で消す (新しい追加日時は進行中の `acl add` のものなので触らない)。失敗は警告に留める。
 - **`acl list`**: ADDED_AT の隣に AGE (`now − 追加日時` の切り捨ての日数、未来なら 0d、記録が無ければ `-`) を出す。JSON / YAML の出力は変えない。
 - **時刻が更新される操作**: `acl add` だけ。`open` (§8.10 の WAF soft check) や code-server の利用では更新しない。毎日 `open` だけ使う利用者のエントリも古く見えるので、`prune` の前に `acl add` を勧める (ヘルプ、チュートリアル 3 章)。
