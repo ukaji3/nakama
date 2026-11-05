@@ -633,8 +633,10 @@ func TestPruneACL_NothingOldChangesNothing(t *testing.T) {
 		if wantCalls := len(p.Mine); ip.calls != wantCalls {
 			t.Errorf("%s: %d detections; detect only when an entry is old", name, ip.calls)
 		}
-		// Whatever the IP set holds now, nothing is updated.
+		// Someone adds an entry before the answer: nothing is updated,
+		// and Remaining is the IP set as it is now.
 		waf.addrs = append(waf.addrs, "192.0.2.99/32")
+		want := strings.Join(sortedCopy(waf.addrs), ",")
 		res, err := svc.PruneACL(context.Background(), p)
 		if err != nil {
 			t.Fatalf("%s: PruneACL: %v", name, err)
@@ -642,8 +644,8 @@ func TestPruneACL_NothingOldChangesNothing(t *testing.T) {
 		if len(waf.updates) != 0 || len(ssmf.deleted) != 0 || res.Deleted == nil || len(res.Deleted) != 0 {
 			t.Errorf("%s: nothing may change: updates %v, records %v, result %+v", name, waf.updates, ssmf.deleted, res)
 		}
-		if len(res.Remaining) != len(stamps) || res.Remaining == nil {
-			t.Errorf("%s: remaining = %v", name, res.Remaining)
+		if strings.Join(res.Remaining, ",") != want {
+			t.Errorf("%s: remaining = %v, want %s", name, res.Remaining, want)
 		}
 	}
 }

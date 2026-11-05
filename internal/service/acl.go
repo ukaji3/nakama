@@ -401,23 +401,13 @@ func (s *Service) PlanACLPrune(ctx context.Context, cutoff time.Time) (*ACLPrune
 }
 
 // PruneACL carries out a plan from PlanACLPrune. It reads the IP set
-// and the added-at records again and removes, with a single update, the
-// planned entries that are still there and still old: an entry added or
-// confirmed after the plan stays. With nothing planned it changes
-// nothing and does not call AWS.
+// again and removes, with a single update, the planned entries that are
+// still there and still old by the added-at records read again: an
+// entry added or confirmed after the plan stays. With nothing planned
+// it only reads the IP set (for Remaining) and does not update it.
 func (s *Service) PruneACL(ctx context.Context, p *ACLPrunePlan) (*ACLPruneResult, error) {
 	if p == nil {
 		return nil, errors.New("acl prune: no plan")
-	}
-	res := &ACLPruneResult{Deleted: []string{}, Remaining: []string{}, MyIPs: p.MyIPs}
-	if len(p.Delete) == 0 {
-		for _, group := range [][]ACLEntry{p.Keep, p.Mine, p.Unrecorded} {
-			for _, e := range group {
-				res.Remaining = append(res.Remaining, e.CIDR)
-			}
-		}
-		sort.Strings(res.Remaining)
-		return res, nil
 	}
 	ipset, err := s.findIPSetSummary(ctx)
 	if err != nil {
@@ -427,10 +417,13 @@ func (s *Service) PruneACL(ctx context.Context, p *ACLPrunePlan) (*ACLPruneResul
 	if err != nil {
 		return nil, err
 	}
-	timestamps, err := s.fetchACLTimestamps(ctx)
-	if err != nil {
-		return nil, err
+	timestamps := map[string]string{}
+	if len(p.Delete) > 0 {
+		if timestamps, err = s.fetchACLTimestamps(ctx); err != nil {
+			return nil, err
+		}
 	}
+	res := &ACLPruneResult{Deleted: []string{}, Remaining: []string{}, MyIPs: p.MyIPs}
 	isOld := func(cidr string) bool {
 		t, ok := ACLEntry{AddedAt: timestamps[cidr]}.AddedTime()
 		return ok && t.Before(p.Cutoff)
