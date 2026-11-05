@@ -125,9 +125,13 @@ func runUpdateScript(t *testing.T, script string, env []string, prepare func(hom
 	}
 	callLog := filepath.Join(dir, "calls.log")
 
-	s := strings.ReplaceAll(script, updateLogPath, logPath)
-	s = strings.ReplaceAll(s, "/var/run/reboot-required", rebootFlag)
-	s = strings.ReplaceAll(s, "/home/ubuntu/", home+"/")
+	// One pass, so a temporary directory under /home/ubuntu/ is not
+	// redirected a second time.
+	s := strings.NewReplacer(
+		updateLogPath, logPath,
+		"/var/run/reboot-required", rebootFlag,
+		"/home/ubuntu/", home+"/",
+	).Replace(script)
 	cmd := exec.Command("bash", "-c", s)
 	cmd.Env = append(append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
