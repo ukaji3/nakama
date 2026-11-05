@@ -80,9 +80,10 @@
   <tbody>
     <tr><td><code>nakama aws init</code></td><td>共通の土台を作成 (冪等)</td><td>—</td></tr>
     <tr><td><code>nakama aws acl add [IP|CIDR]</code></td><td>許可 IP を追加 (省略時は自動検出。見つかった IP をすべて追加)</td><td>—</td></tr>
-    <tr><td><code>nakama aws acl list</code></td><td>許可 IP を一覧</td><td>—</td></tr>
+    <tr><td><code>nakama aws acl list</code></td><td>許可 IP を一覧 (最後に <code>acl add</code> した時刻と、それからの日数)</td><td>—</td></tr>
     <tr><td><code>nakama aws acl delete &lt;IP|CIDR&gt;...</code></td><td>許可 IP を削除 (複数可)</td><td>—</td></tr>
     <tr><td><code>nakama aws acl delete all</code></td><td>許可 IP をすべて削除 (全環境がブラウザから 403 になる)</td><td><code>--keep-mine</code> (自分の IP を含むものを残す)、<code>-y, --yes</code></td></tr>
+    <tr><td><code>nakama aws acl prune --older-than &lt;期間&gt;</code></td><td>最後に <code>acl add</code> してから期間 (<code>30d</code> など) が過ぎた許可 IP を削除 (自分の IP を含むもの・時刻の記録が無いものは残す)</td><td><code>-y, --yes</code></td></tr>
   </tbody>
 </table>
 </div>

@@ -43,7 +43,7 @@
   /nakama/<name>/meta/kirocrew-distribution-domain (String, kirocrew enable 時のみ。§8.19)
   /nakama/_meta/initialized             (String, "true")
   /nakama/_meta/version                 (String, semver)
-  /nakama/_meta/acl/<cidr>              (String, RFC3339 timestamp。CIDR の "/" は "_" に置換。例: 203.0.113.5_32)
+  /nakama/_meta/acl/<cidr>              (String, RFC3339 timestamp。acl add のたびに書き直す (最後に追加・確認した時刻)。CIDR の "/" は "_" に置換。例: 203.0.113.5_32)
 ```
 
 - `--bare` のインスタンスは、code-server・VPC Origin・CloudFront distribution・パスワードを持たない (§8.17)。パスワードと distribution 系のメタキーも書かない。
@@ -144,7 +144,7 @@ github.com/ukaji3/nakama
 | `STSAPI` | `GetCallerIdentity` (AWS アカウント ID / 呼び出し元 ARN 解決。ARN は `--with-admin`/`--with-role` プリフライトの PolicySourceArn に使用) |
 | `IAMAPI` | Role, InstanceProfile, AttachRolePolicy, PutRolePolicy, SimulatePrincipalPolicy, ListInstanceProfilesForRole, ListAttachedRolePolicies |
 | `AMIResolver` | SSM 公式パラメータ経由で Ubuntu 26.04 AMI をアーキ別 (amd64 / arm64) に解決 (`LatestUbuntu2604(arch)`) |
-| `IPDiscoverer` | `PublicIPv4`: `https://checkip.amazonaws.com/` に 1 回 GET し、Public IPv4 を返す (`open` / `doctor`)。`DetectPublicIPv4s`: checkip と `https://ifconfig.io/ip` に 3 回ずつ問い合わせ、公開の IPv4 アドレスを重複なしで返す (`acl add` / `acl delete all --keep-mine`。§8.23) |
+| `IPDiscoverer` | `PublicIPv4`: `https://checkip.amazonaws.com/` に 1 回 GET し、Public IPv4 を返す (`open` / `doctor`)。`DetectPublicIPv4s`: checkip と `https://ifconfig.io/ip` に 3 回ずつ問い合わせ、公開の IPv4 アドレスを重複なしで返す (`acl add` / `acl delete all --keep-mine` / `acl prune`。§8.23) |
 
 `Clients` 構造体が上記をすべて束ね、`NewClients(ctx)` がエントリポイント。
 
@@ -631,7 +631,7 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 
 ### 8.23 `nakama aws acl add` の接続元 IP の検出 (ADR 0025 / Issue #104)
 
-引数なしの `acl add` と `acl delete all --keep-mine` は、`IPDiscoverer.DetectPublicIPv4s` で接続元の IP を調べる。出口を冗長化したネットワーク (接続ごとに出口が選ばれる) で、見えた出口をすべて登録するため。
+引数なしの `acl add`、`acl delete all --keep-mine`、`acl prune` (§8.25) は、`IPDiscoverer.DetectPublicIPv4s` で接続元の IP を調べる。出口を冗長化したネットワーク (接続ごとに出口が選ばれる) で、見えた出口をすべて登録するため。
 
 - **チェックサイト** (`ipCheckSites`): `https://checkip.amazonaws.com/` と `https://ifconfig.io/ip`。ifconfig.io の `/` は User-Agent によって HTML を返すので、平文の `/ip` を使う。
 - **問い合わせ**: それぞれに `IPCheckRounds` (3) 回、計 6 回を同時に行う (1 回の上限は 5 秒)。
@@ -655,6 +655,19 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - **結果** (`version.CheckResult`): Status は up-to-date / outdated / ahead (手元の方が新しい) / development / unknown。接続できない、タイムアウト、200 以外、壊れた JSON、版でないタグは unknown とその理由 (`Err`) になり、呼び出し側は警告だけにする。`X-RateLimit-Remaining: 0` の 403 / 429 はレート制限として伝える。
 - **CLI**: `current :` / `latest  :` / `release :` / `status  :` の 4 行。unknown のときは `current :` の行と、stderr の `warning: could not check for a newer version: <理由>`。終了コードは古くても失敗しても 0。`-o` は効かない (引数なしの `version` と同じ)。
 - **テスト**: `httptest` のサーバーで各 Status、HTTP エラー、レート制限、タイムアウト、壊れた JSON、プロキシの環境変数の尊重を確かめる。doctor のテストは確認の関数を差し替える。どのテストも api.github.com に問い合わせない。
+
+### 8.25 `nakama aws acl prune` — 古い許可 IP の整理
+
+`acl add` は追加日時 (`/nakama/_meta/acl/<cidr>`) を毎回書き直すので、それは「最後に `acl add` で確かめた時刻」になる。`acl prune --older-than <期間>` はそれが古いエントリを消す。形は `acl delete all` (§8.21) の計画と実行の組と同じ。
+
+- **期間** (CLI の `parseACLAge`): 正の整数の日数 (`30d`) か、正の Go の duration (`36h`)。境界 (cutoff) は「現在 − 期間」で、AWS を呼ぶ前に検査する。
+- **計画** (`PlanACLPrune`、読み取りだけ): IP set と追加日時を読み、エントリを分ける。追加日時が読めない・解釈できないものは `Unrecorded` (nakama の外で足したもの。消さない)、cutoff より前 (`Before`。ちょうどは古くない) は古い、それ以外は `Keep`。古いものがあるときだけ `DetectPublicIPv4s` で接続元 IP を調べ (§8.23)、どれかを含む古いエントリは `Mine` として残す。判定は `--keep-mine` と同じ `cidrContainsAny`。IP が 1 つも検出できなければエラー (締め出しを防ぐ)。追加日時の読み取り (`fetchACLTimestamps`) の失敗もエラーにする (読めないと全部が「nakama の外」に見え、利用者に誤った警告を出すため)。`list` と `delete all` は今までどおり警告だけで続ける。
+- **CLI**: `Unrecorded` があれば stderr に警告する。消すものがあれば、消すもの・残すもの (`Mine`、`Keep`、`Unrecorded`) を経過日数付きで表示して確認を取る (`--yes` で省略)。
+- **実行** (`PruneACL`): 消すものが無ければ AWS を呼ばずに終わる (IP set は更新しない)。あれば IP set と追加日時を読み直し、計画の `Delete` のうち、今も IP set にあり、今も cutoff より古いものだけを除いた一覧で、読み直しの lock token 付きの 1 回の `UpdateIPSet` をする。計画の後に足されたエントリは計画に無いので残り、その間に `acl add` で確かめ直されたエントリ (`Refreshed`) も残る。他から消されていたもの (`Gone`) は数えるだけ。
+- **後片付け**: 消したエントリの追加日時と、`Gone` のうち今も古い追加日時を `DeleteParameter` で消す (新しい追加日時は進行中の `acl add` のものなので触らない)。失敗は警告に留める。
+- **`acl list`**: ADDED_AT の隣に AGE (`now − 追加日時` の切り捨ての日数、未来なら 0d、記録が無ければ `-`) を出す。JSON / YAML の出力は変えない。
+- **時刻が更新される操作**: `acl add` だけ。`open` (§8.10 の WAF soft check) や code-server の利用では更新しない。毎日 `open` だけ使う利用者のエントリも古く見えるので、`prune` の前に `acl add` を勧める (ヘルプ、チュートリアル 3 章)。
+- **権限**: 使う API (`ListIPSets`、`GetIPSet`、`UpdateIPSet`、`GetParametersByPath`、`DeleteParameter`) は `acl` の行にすべてある。追加の IAM 権限は要らない。
 
 ## 9. テスト戦略
 

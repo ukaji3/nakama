@@ -67,6 +67,7 @@ KNOWN_COMMANDS = {
     "nakama aws acl add",
     "nakama aws acl list",
     "nakama aws acl delete",
+    "nakama aws acl prune",
     "nakama aws create",
     "nakama aws list",
     "nakama aws info",
@@ -110,6 +111,7 @@ KNOWN_FLAGS = {
         "--no-kiro",
     },
     "nakama aws acl delete": {"--keep-mine", "--yes", "-y"},
+    "nakama aws acl prune": {"--older-than", "--yes", "-y"},
     "nakama aws list": {"--show-nat"},
     "nakama aws info": {"--show-password"},
     "nakama aws open": {"--no-auth", "--print-url", "--browser", "--timeout"},
@@ -135,7 +137,7 @@ VALUE_FLAGS = {
     "--name", "--instance-type", "--preset", "--setup", "--dotfiles",
     "--code-server-version", "--with-role", "--label", "--note", "--keep",
     "--ebs", "--retry", "--identity", "--port", "--timeout", "--browser",
-    "--shell", "--output", "-o", "-L", "--forward",
+    "--shell", "--output", "-o", "-L", "--forward", "--older-than",
 }
 
 # 名前の後ろに任意の外部コマンドを取るコマンド (それ以降は nakama の
