@@ -262,7 +262,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 3. インスタンスタイプの CPU アーキを解決 (`DescribeInstanceTypes` の `SupportedArchitectures`。存在検証も兼ね、不正な型はここで即時エラー) → 対応する Ubuntu 26.04 AMI (amd64 / arm64) を SSM で解決
 4. SSM PutParameter で 32 文字パスワードを SecureString として保存
 5. `internal/awsx.EC2API.DescribeManagedPrefixLists` で CloudFront prefix list ID 取得
-6. SG 作成 → 8080 inbound (prefix list) → `meta/security-group-id` を記録
+6. SG 作成 → `meta/security-group-id` を記録 → 8080 inbound (prefix list)
 7. ENI 作成 (Private subnet 1a) → `meta/eni-id` を記録
 8. NAT インスタンスを起動 (`ensureNATInstanceRunning`。停止中なら start して `running` まで待機。ADR 0007 の電源連動)
 9. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を AWS 公式のインストールスクリプトで ubuntu ユーザーに導入する (§8.22、ADR 0024)。Ubuntu の apt `awscli` は v1 と古いため purge する)。IAM instance profile は手順 2 で選択したもの (フラグ省略時は共有ベースプロファイル `nakama-instance-profile`)
@@ -273,19 +273,20 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 14. Distribution が `Deployed` まで待機
 15. URL + パスワード (+ 付与した IAM ロール / プロファイル) を stdout に出力
 
-各リソースは作った直後、待機に入る前に SSM に記録する (restore の作り直し §8.5.1 と同じ)。途中で失敗しても Ctrl-C で中断しても、記録されたものは `delete <n>` (§8.3) で消え、同じ名前で作り直せる。自動の巻き戻しはしない。記録の書き込みより前に中断されたもの (`RunInstances` の応答を受け取る前など) は記録されない。IAM ロール / プロファイルはインスタンスをまたいで共有するので、`delete` の対象ではない。
+各リソースは作った直後、待機に入る前に SSM に記録する (restore の作り直し §8.5.1 と同じ)。記録の書き込みは呼び出し元のキャンセルを受けない context (`context.WithoutCancel` に 30 秒のタイムアウト) で行う。作成の API が返った直後に Ctrl-C が来ても記録は残り、create は次の待機か作成で止まる。途中で失敗しても Ctrl-C で中断しても、記録されたものは `delete <n>` (§8.3) で消え、同じ名前で作り直せる。自動の巻き戻しはしない。SG・ENI・EC2 は、記録の書き込みが失敗したときや作成の応答を受け取る前に中断されたとき (SSM に ID が無いとき) も、`delete <n>` がタグで探して消す (§8.27)。VPC Origin と distribution はタグで探さないので、記録より前に中断されると残る。IAM ロール / プロファイルはインスタンスをまたいで共有するので、`delete` の対象ではない。
 
 ### 8.3 `nakama aws delete`
 
 1. 確認プロンプト
-2. Distribution → disable → wait → delete
-3. VpcOrigin → delete
-4. EC2 → terminate → wait
-5. 孤児 EBS ボリュームの掃除: `nakama:managed` + `nakama:name=<name>` + `nakama:component=ebs` タグ付きで `available` のボリュームを削除 (過去の restore が DeleteOnTermination=false のまま残したルートボリューム対策。terminate 直後の detach 遷移は短時間ポーリングで追従し、in-use のボリュームは削除しない)
-6. ENI → delete (terminate 完了後)
-7. SG → delete
-8. SSM `/nakama/<name>/*` を全削除
-9. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerStateExcluding`。削除対象を除外し、他に稼働中の code-server が無ければ NAT インスタンスも停止。ADR 0007)
+2. SSM `/nakama/<name>/meta/*` から各リソースの ID を読む。EC2・ENI・SG の ID が無ければ、その名前の nakama のタグで探す (§8.27)
+3. Distribution → disable → wait → delete
+4. VpcOrigin → delete
+5. EC2 → terminate → wait (タグで見つけたものはすべて)
+6. 孤児 EBS ボリュームの掃除: `nakama:managed` + `nakama:name=<name>` + `nakama:component=ebs` タグ付きで `available` のボリュームを削除 (過去の restore が DeleteOnTermination=false のまま残したルートボリューム対策。terminate 直後の detach 遷移は短時間ポーリングで追従し、in-use のボリュームは削除しない)
+7. ENI → delete (terminate 完了後。タグで見つけたものはすべて)
+8. SG → delete (タグで見つけたものはすべて)
+9. SSM `/nakama/<name>/*` を全削除
+10. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerStateExcluding`。削除対象を除外し、他に稼働中の code-server が無ければ NAT インスタンスも停止。ADR 0007)
 
 ### 8.4 `nakama aws backup create`
 
@@ -669,6 +670,19 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - **`acl list`**: ADDED_AT の隣に AGE (`now − 追加日時` の切り捨ての日数、未来なら 0d、記録が無ければ `-`) を出す。JSON / YAML の出力は変えない。
 - **時刻が更新される操作**: `acl add` だけ。`open` (§8.10 の WAF soft check) や code-server の利用では更新しない。毎日 `open` だけ使う利用者のエントリも古く見えるので、`prune` の前に `acl add` を勧める (ヘルプ、チュートリアル 3 章)。
 - **権限**: 使う API (`ListIPSets`、`GetIPSet`、`UpdateIPSet`、`GetParametersByPath`、`DeleteParameter`) は `acl` の行にすべてある。追加の IAM 権限は要らない。
+
+### 8.27 `nakama aws delete` — 記録の無い SG・ENI・EC2 をタグで探す
+
+create / restore が SG・ENI・EC2 を作ってから SSM に記録するまでの間に止まると (記録の書き込みの失敗、作成の応答を受け取る前の中断)、その ID は SSM に無い。`delete <n>` は、SSM に ID が無い種類についてだけ、その名前の nakama のタグで探す (`recordedOrTagged`)。SSM に ID があればそれだけを使い、タグでは探さない (従来どおり)。
+
+- **SG**: `DescribeSecurityGroups`。タグは `upsertInstanceSecurityGroup` と同じ (`nakama:managed=true` + `Name=nakama-sg-<n>` + `nakama:name=<n>`、`instanceResourceTags`)。`vpc-id` のフィルタは付けない (`DescribeVpcs` の権限を要らなくするため)。
+- **ENI**: `DescribeNetworkInterfaces`。タグは `upsertInstanceENI` と同じ (`Name=nakama-eni-<n>`)。`subnet-id` のフィルタは付けない。
+- **EC2**: `DescribeInstances`。タグは `runInstance` が付けるもの (`nakama:managed=true` + `nakama:name=<n>` + `nakama:component=ec2` + `Name=nakama-<n>`)。状態は pending / running / stopping / stopped (terminated と shutting-down は除く)。
+- **ほかの名前を拾わない**: EC2 のタグのフィルタは、ワイルドカードを含まない値では完全一致で、インスタンス名は `[a-z0-9-]` なので、`dev01` で `dev010` や `dev0` は拾わない。返った結果もタグ (EC2 は状態も) をもう一度確かめ (`carriesNakamaTags`)、合わないものは消さない。名前をまたいで残骸を探す掃除はしない。
+- **複数見つかったとき**: どれもその名前のタグを持つので、すべて消し、ID をログに出す。
+- **探せないとき**: 権限で拒否された (`UnauthorizedOperation` / `AccessDenied`) ときは警告して続け、記録されたものを消す。前の権限表に合わせて絞ったポリシーでも delete が動く。ほかのエラーでは、何も消さずにエラーで止まる (`--force` でも。SSM の読み取りの失敗と同じ理由で、黙って成功にしない)。
+- **権限**: `ec2:DescribeNetworkInterfaces` を `delete` の行に足した (SSM に ENI の記録が無いときだけ使う)。`ec2:DescribeInstances` と `ec2:DescribeSecurityGroups` は前からある。
+- **範囲外**: VPC Origin と distribution はタグで探さない。
 
 ## 9. テスト戦略
 
