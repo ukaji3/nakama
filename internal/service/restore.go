@@ -341,6 +341,9 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 		if err := s.writeInstanceMeta(ctx, p.Name, instanceMetaEntries(p.Name, meta)); err != nil {
 			return nil, fmt.Errorf("write instance metadata: %w", err)
 		}
+		if err := s.waitVPCOriginDeployed(ctx, meta.VPCOriginID); err != nil {
+			return nil, fmt.Errorf("wait vpc origin: %w", err)
+		}
 		if meta.DistributionID, meta.DistributionDomain, err = s.createInstanceDistribution(
 			ctx, p.Name, meta.VPCOriginID, privateDNS, net.base.WAFWebACLARN); err != nil {
 			return nil, fmt.Errorf("create distribution: %w", err)
