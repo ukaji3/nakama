@@ -74,6 +74,11 @@ func (s *Service) privateDNSNameForInstance(ctx context.Context, instanceID stri
 	return dns, err
 }
 
+// createInstanceVPCOrigin creates the VPC origin pointing at the
+// instance and returns its ID without waiting for it to be Deployed
+// (which takes up to 20 minutes). The caller records the ID first and
+// then calls waitVPCOriginDeployed, so that a failed or interrupted
+// wait still leaves the VPC origin where `nakama aws delete` finds it.
 func (s *Service) createInstanceVPCOrigin(ctx context.Context, instanceName, instanceID string) (string, error) {
 	out, err := s.clients.CloudFront.CreateVpcOrigin(ctx, &cloudfront.CreateVpcOriginInput{
 		VpcOriginEndpointConfig: &cftypes.VpcOriginEndpointConfig{
@@ -97,10 +102,6 @@ func (s *Service) createInstanceVPCOrigin(ctx context.Context, instanceName, ins
 	}
 	id := *out.VpcOrigin.Id
 	slog.Info("vpc origin: created, waiting for Deployed", "id", id)
-
-	if err := s.waitVPCOriginDeployed(ctx, id); err != nil {
-		return "", fmt.Errorf("wait vpc origin: %w", err)
-	}
 	return id, nil
 }
 

@@ -198,6 +198,20 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		return nil, fmt.Errorf("run instance: %w", err)
 	}
 
+	// From here on, every resource is recorded as soon as it exists and
+	// before anything waits on it, so that `nakama aws delete` can clean
+	// up after a failure or an interruption (as restore does).
+	meta := instanceMetaValues{
+		InstanceID:      instanceID,
+		ENIID:           eniID,
+		SecurityGroupID: sgID,
+		IAMRole:         selectedRoleName(roleSel),
+		InstanceProfile: selectedProfileName(roleSel),
+		Bare:            in.Bare,
+	}
+	if err := s.writeInstanceMeta(ctx, in.Name, instanceMetaEntries(in.Name, meta)); err != nil {
+		return nil, fmt.Errorf("write instance metadata: %w", err)
+	}
 	if err := s.waitInstanceRunning(ctx, instanceID); err != nil {
 		return nil, fmt.Errorf("wait instance running: %w", err)
 	}
@@ -205,46 +219,31 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	// The browser entry path (private DNS -> VPC origin -> distribution)
 	// exists only for code-server instances. Skipping it is what makes
 	// --bare fast: no CloudFront deploy wait (Issue #52).
-	var privateDNS, vpcOriginID, distID, distDomain string
 	if !in.Bare {
-		privateDNS, err = s.privateDNSNameForInstance(ctx, instanceID)
+		privateDNS, err := s.privateDNSNameForInstance(ctx, instanceID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve private DNS: %w", err)
 		}
 		slog.Info("create: private DNS resolved", "private_dns", privateDNS)
 
-		vpcOriginID, err = s.createInstanceVPCOrigin(ctx, in.Name, instanceID)
-		if err != nil {
+		if meta.VPCOriginID, err = s.createInstanceVPCOrigin(ctx, in.Name, instanceID); err != nil {
 			return nil, fmt.Errorf("create vpc origin: %w", err)
 		}
-	}
+		if err := s.writeInstanceMeta(ctx, in.Name, instanceMetaEntries(in.Name, meta)); err != nil {
+			return nil, fmt.Errorf("write instance metadata: %w", err)
+		}
+		if err := s.waitVPCOriginDeployed(ctx, meta.VPCOriginID); err != nil {
+			return nil, fmt.Errorf("wait vpc origin: %w", err)
+		}
 
-	if !in.Bare {
-		distID, distDomain, err = s.createInstanceDistribution(ctx, in.Name, vpcOriginID, privateDNS, base.WAFWebACLARN)
-		if err != nil {
+		if meta.DistributionID, meta.DistributionDomain, err = s.createInstanceDistribution(
+			ctx, in.Name, meta.VPCOriginID, privateDNS, base.WAFWebACLARN); err != nil {
 			return nil, fmt.Errorf("create distribution: %w", err)
 		}
-	}
-
-	// Persist instance metadata BEFORE waiting for the distribution
-	// to be Deployed. This way, if the Deployed wait times out,
-	// `nakama aws delete <name>` can still clean up everything.
-	if err := s.writeInstanceMeta(ctx, in.Name, instanceMetaEntries(in.Name, instanceMetaValues{
-		InstanceID:         instanceID,
-		ENIID:              eniID,
-		SecurityGroupID:    sgID,
-		VPCOriginID:        vpcOriginID,
-		DistributionID:     distID,
-		DistributionDomain: distDomain,
-		IAMRole:            selectedRoleName(roleSel),
-		InstanceProfile:    selectedProfileName(roleSel),
-		Bare:               in.Bare,
-	})); err != nil {
-		return nil, fmt.Errorf("write instance metadata: %w", err)
-	}
-
-	if !in.Bare {
-		if err := s.waitDistributionDeployed(ctx, distID); err != nil {
+		if err := s.writeInstanceMeta(ctx, in.Name, instanceMetaEntries(in.Name, meta)); err != nil {
+			return nil, fmt.Errorf("write instance metadata: %w", err)
+		}
+		if err := s.waitDistributionDeployed(ctx, meta.DistributionID); err != nil {
 			return nil, fmt.Errorf("wait distribution: %w", err)
 		}
 	}
@@ -254,21 +253,21 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		InstanceID:         instanceID,
 		ENIID:              eniID,
 		SecurityGroupID:    sgID,
-		VPCOriginID:        vpcOriginID,
-		DistributionID:     distID,
-		DistributionDomain: distDomain,
+		VPCOriginID:        meta.VPCOriginID,
+		DistributionID:     meta.DistributionID,
+		DistributionDomain: meta.DistributionDomain,
 		Password:           password,
 		Bare:               in.Bare,
-		IAMRole:            selectedRoleName(roleSel),
-		InstanceProfile:    selectedProfileName(roleSel),
+		IAMRole:            meta.IAMRole,
+		InstanceProfile:    meta.InstanceProfile,
 	}
-	if distDomain != "" {
-		out.URL = "https://" + distDomain
+	if out.DistributionDomain != "" {
+		out.URL = "https://" + out.DistributionDomain
 	}
 	slog.Info("create: completed",
 		"name", in.Name,
 		"instance_id", instanceID,
-		"distribution_id", distID,
+		"distribution_id", out.DistributionID,
 		"url", out.URL,
 	)
 
@@ -462,7 +461,9 @@ type instanceNetwork struct {
 
 // prepareInstanceNetwork discovers the base infrastructure and creates
 // (or reuses) the instance's security group and ENI. Shared by create
-// and by restore of a deleted instance (Issue #96).
+// and by restore of a deleted instance (Issue #96). Each of the two is
+// recorded as soon as it exists, so that `nakama aws delete` removes it
+// even when a later step (such as RunInstances) fails.
 func (s *Service) prepareInstanceNetwork(ctx context.Context, name string) (instanceNetwork, error) {
 	var n instanceNetwork
 	var err error
@@ -476,8 +477,14 @@ func (s *Service) prepareInstanceNetwork(ctx context.Context, name string) (inst
 	if n.sgID, err = s.upsertInstanceSecurityGroup(ctx, name, n.base.VPCID, prefixListID); err != nil {
 		return n, fmt.Errorf("security group: %w", err)
 	}
+	if err := s.writeInstanceMeta(ctx, name, map[string]string{ssmSGIDPath(name): n.sgID}); err != nil {
+		return n, fmt.Errorf("write instance metadata: %w", err)
+	}
 	if n.eniID, err = s.upsertInstanceENI(ctx, name, n.base.PrivateSubnet1aID, n.sgID); err != nil {
 		return n, fmt.Errorf("eni: %w", err)
+	}
+	if err := s.writeInstanceMeta(ctx, name, map[string]string{ssmENIIDPath(name): n.eniID}); err != nil {
+		return n, fmt.Errorf("write instance metadata: %w", err)
 	}
 	return n, nil
 }
