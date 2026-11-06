@@ -227,7 +227,7 @@
 
 30. `nakama aws create` が途中で失敗しても Ctrl-C で中断しても、それまでに作った SG・ENI・EC2・VPC Origin・distribution は、作った直後 (待機に入る前) に SSM に記録されている。作成の API が返った直後の Ctrl-C でも記録は残る (restore の作り直しも同じ)。そこから `nakama aws delete <n>` を実行すると記録されたものがすべて消え、同じ名前で作り直せる。成功したときに残る記録は、code-server 版・bare 版とも変わらない。フェイクを相手に、ENI の作成・`RunInstances`・`running` の待機・private DNS の解決・VPC Origin の `Deployed` 待ち・distribution の作成・distribution の `Deployed` 待ちのそれぞれで失敗とキャンセルを、SG・ENI の作成と `RunInstances` が返った直後にキャンセルを起こし、テストで確かめる
 
-31. SG・ENI・EC2 を作った直後の記録の書き込みが失敗しても、`nakama aws delete <n>` はそれらをその名前の nakama のタグで探して消す。SSM に ID があるものはタグで探さない。別の名前のもの (`dev01` に対する `dev010`・`dev0` のような前方一致を含む)、`nakama:managed` タグの無いもの、terminated・shutting-down の EC2 は消さない。同じ名前のものが複数あればすべて消す。タグでの検索が権限で拒否されたら警告して続け、記録されたものを消す。ほかのエラーでは何も消さずに止まる。フェイクを相手に、SG・ENI の作成直後と `RunInstances` の直後 (create と restore) で記録の書き込みを失敗させ、フィルタを無視する API も相手にして、テストで確かめる (設計 §8.27)
+31. SG・ENI・EC2 を作った直後の記録の書き込みが失敗しても、`nakama aws delete <n>` はそれらをその名前の nakama のタグで探して消す。SSM に ID があるものはタグで探さない。別の名前のもの (`dev01` に対する `dev010`・`dev0` のような前方一致を含む)、`nakama:managed` タグの無いもの、terminated・shutting-down の EC2 は消さない。同じ名前のものが複数あればすべて消し、見つけて消した ID をログに出す。タグでの検索が権限で拒否されたら、探せなかったことと足りない権限名を警告して続け、記録されたものを消す。ほかのエラーでは何も消さずに止まる。フェイクを相手に、SG・ENI の作成直後と `RunInstances` の直後 (create と restore) で記録の書き込みを失敗させ、フィルタを無視する API も相手にして、テストで確かめる (設計 §8.27)
 
 ## 付録 A. 機能別 IAM 権限マトリクス
 
