@@ -70,13 +70,14 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 		dst      *[]string
 		recorded string
 		what     string
+		action   string // the IAM action the lookup needs
 		find     func(context.Context, string) ([]string, error)
 	}{
-		{&instanceIDs, instanceID, "ec2 instance", s.findTaggedInstances},
-		{&eniIDs, eniID, "eni", s.findTaggedENIs},
-		{&sgIDs, sgID, "security group", s.findTaggedSecurityGroups},
+		{&instanceIDs, instanceID, "ec2 instance", "ec2:DescribeInstances", s.findTaggedInstances},
+		{&eniIDs, eniID, "eni", "ec2:DescribeNetworkInterfaces", s.findTaggedENIs},
+		{&sgIDs, sgID, "security group", "ec2:DescribeSecurityGroups", s.findTaggedSecurityGroups},
 	} {
-		ids, err := recordedOrTagged(ctx, in.Name, r.recorded, r.what, r.find)
+		ids, err := recordedOrTagged(ctx, in.Name, r.recorded, r.what, r.action, r.find)
 		if err != nil {
 			return err
 		}
@@ -183,17 +184,17 @@ var tagLookupDenied = []string{"UnauthorizedOperation", "AccessDenied"}
 
 // recordedOrTagged returns the ID SSM recorded or, when there is none,
 // every ID that find returns for the instance's tags. A lookup the IAM
-// policy denies only warns, so that a policy cut to an older permission
-// list keeps deleting what is recorded.
-func recordedOrTagged(ctx context.Context, name, recorded, what string,
+// policy denies only warns, naming the missing action, so that a policy
+// cut to an older permission list keeps deleting what is recorded.
+func recordedOrTagged(ctx context.Context, name, recorded, what, action string,
 	find func(context.Context, string) ([]string, error)) ([]string, error) {
 	if recorded != "" {
 		return []string{recorded}, nil
 	}
 	ids, err := find(ctx, name)
 	if awshelper.IsAPIError(err, tagLookupDenied...) {
-		slog.Warn("delete: not allowed to look up an unrecorded "+what+" by its tags; one left by an interrupted create would remain",
-			"name", name, "error", err)
+		slog.Warn("delete: could not look for an unrecorded "+what+" by its tags; one left by an interrupted create would remain",
+			"name", name, "missing_permission", action, "error", err)
 		return nil, nil
 	}
 	if err != nil {
@@ -404,7 +405,7 @@ func (s *Service) terminateInstanceAndWait(ctx context.Context, instanceID strin
 		}
 		return fmt.Errorf("TerminateInstances: %w", err)
 	}
-	return awshelper.Poll(ctx, awshelper.PollOptions{
+	err := awshelper.Poll(ctx, awshelper.PollOptions{
 		Interval:    10 * time.Second,
 		Timeout:     5 * time.Minute,
 		Description: fmt.Sprintf("instance %s terminated", instanceID),
@@ -427,6 +428,10 @@ func (s *Service) terminateInstanceAndWait(ctx context.Context, instanceID strin
 		}
 		return false, nil
 	})
+	if err == nil {
+		slog.Info("instance: terminated", "instance_id", instanceID)
+	}
+	return err
 }
 
 func (s *Service) deleteENI(ctx context.Context, id string) error {
