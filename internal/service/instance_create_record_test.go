@@ -771,3 +771,59 @@ func TestRestore_NewInstanceRecordsTheVPCOriginBeforeWaiting(t *testing.T) {
 		t.Errorf("vpc-origin-id = %q, want vo-1 recorded before the wait", got)
 	}
 }
+
+// TestDeleteInstance_TagLookupLogs pins what delete logs about its tag
+// lookups: every ID it found and removed, and, for a denied lookup, that
+// it could not look and which permission is missing. Not parallel:
+// captureLogs swaps the process-wide logger.
+func TestDeleteInstance_TagLookupLogs(t *testing.T) {
+	t.Run("found", func(t *testing.T) {
+		logs := captureLogs(t)
+		svc, ec2f, ssmf := newCreateAccount(&injector{})
+		seedForeignResources(ec2f)
+		deleteRemoves(t, svc, ec2f, ssmf, []string{
+			"TerminateInstances i-dev01-a", "TerminateInstances i-dev01-b",
+			"DeleteNetworkInterface eni-dev01-a", "DeleteNetworkInterface eni-dev01-b",
+			"DeleteSecurityGroup sg-dev01-a", "DeleteSecurityGroup sg-dev01-b",
+		})
+		out := logs.String()
+		for _, want := range []string{
+			`msg="delete: found by tags, not in SSM" name=dev01 resource="ec2 instance" ids="[i-dev01-a i-dev01-b]"`,
+			`msg="delete: found by tags, not in SSM" name=dev01 resource=eni ids="[eni-dev01-a eni-dev01-b]"`,
+			`msg="delete: found by tags, not in SSM" name=dev01 resource="security group" ids="[sg-dev01-a sg-dev01-b]"`,
+			`msg="instance: terminated" instance_id=i-dev01-a`,
+			`msg="instance: terminated" instance_id=i-dev01-b`,
+			`msg="eni: deleted" eni_id=eni-dev01-a`,
+			`msg="eni: deleted" eni_id=eni-dev01-b`,
+			`msg="sg: deleted" sg_id=sg-dev01-a`,
+			`msg="sg: deleted" sg_id=sg-dev01-b`,
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("log lacks %s\nlog:\n%s", want, out)
+			}
+		}
+	})
+	for _, c := range []struct{ lookup, what, action string }{
+		{"instance", "ec2 instance", "ec2:DescribeInstances"},
+		{"eni", "eni", "ec2:DescribeNetworkInterfaces"},
+		{"sg", "security group", "ec2:DescribeSecurityGroups"},
+	} {
+		t.Run(c.lookup+"/denied", func(t *testing.T) {
+			logs := captureLogs(t)
+			svc, ec2f, _ := newCreateAccount(&injector{})
+			ec2f.fail = map[string]string{c.lookup: "UnauthorizedOperation"}
+			if err := svc.DeleteInstance(context.Background(), DeleteInstanceInput{Name: "dev01"}); err != nil {
+				t.Fatalf("DeleteInstance: %v", err)
+			}
+			out := logs.String()
+			for _, want := range []string{
+				`level=WARN msg="delete: could not look for an unrecorded ` + c.what + ` by its tags;`,
+				"missing_permission=" + c.action + " ",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("log lacks %s\nlog:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
