@@ -679,8 +679,8 @@ create / restore が SG・ENI・EC2 を作ってから SSM に記録するまで
 - **ENI**: `DescribeNetworkInterfaces`。タグは `upsertInstanceENI` と同じ (`Name=nakama-eni-<n>`)。`subnet-id` のフィルタは付けない。
 - **EC2**: `DescribeInstances`。タグは `runInstance` が付けるもの (`nakama:managed=true` + `nakama:name=<n>` + `nakama:component=ec2` + `Name=nakama-<n>`)。状態は pending / running / stopping / stopped (terminated と shutting-down は除く)。
 - **ほかの名前を拾わない**: EC2 のタグのフィルタは、ワイルドカードを含まない値では完全一致で、インスタンス名は `[a-z0-9-]` なので、`dev01` で `dev010` や `dev0` は拾わない。返った結果もタグ (EC2 は状態も) をもう一度確かめ (`carriesNakamaTags`)、合わないものは消さない。名前をまたいで残骸を探す掃除はしない。
-- **複数見つかったとき**: どれもその名前のタグを持つので、すべて消し、ID をログに出す。
-- **探せないとき**: 権限で拒否された (`UnauthorizedOperation` / `AccessDenied`) ときは警告して続け、記録されたものを消す。前の権限表に合わせて絞ったポリシーでも delete が動く。ほかのエラーでは、何も消さずにエラーで止まる (`--force` でも。SSM の読み取りの失敗と同じ理由で、黙って成功にしない)。
+- **複数見つかったとき**: どれもその名前のタグを持つので、すべて消す。見つけた ID (`delete: found by tags, not in SSM`) と消した ID (`instance: terminated` / `eni: deleted` / `sg: deleted`) をログに出す。
+- **探せないとき**: 権限で拒否された (`UnauthorizedOperation` / `AccessDenied`) ときは、記録の無いものを探せなかったことと足りない権限名 (`missing_permission=ec2:DescribeInstances` / `ec2:DescribeNetworkInterfaces` / `ec2:DescribeSecurityGroups`) を警告して続け、記録されたものを消す。前の権限表に合わせて絞ったポリシーでも delete が動く。ほかのエラーでは、何も消さずにエラーで止まる (`--force` でも。SSM の読み取りの失敗と同じ理由で、黙って成功にしない)。
 - **権限**: `ec2:DescribeNetworkInterfaces` を `delete` の行に足した (SSM に ENI の記録が無いときだけ使う)。`ec2:DescribeInstances` と `ec2:DescribeSecurityGroups` は前からある。
 - **範囲外**: VPC Origin と distribution はタグで探さない。
 
