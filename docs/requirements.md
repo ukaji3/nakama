@@ -163,7 +163,7 @@
 - IPv6 ACL
 - 複数リージョン
 - 独自ドメイン / ACM 証明書
-- 部分失敗時の自動ロールバック (create / restore は各リソースを作った直後に記録するので、途中で失敗・中断しても利用者が `delete` で片付ける。受け入れ基準 30)
+- 部分失敗時の自動ロールバック (create / restore は各リソースを作った直後に記録するので、途中で失敗・中断しても利用者が `delete` で片付ける。受け入れ基準 30・31)
 - マルチテナント (1 アカウント = 1 環境)
 - code-server の任意バージョンへの固定アップグレード (`update` は latest 固定。特定版へのダウングレード/固定は非対応)
 - 自動 / スケジュール バックアップ (DLM・EventBridge 等)。v1 は手動 `backup create` のみ
@@ -225,7 +225,9 @@
 
 29. `nakama aws acl prune --older-than 30d` は、`acl add` で最後に追加・確認してから 30 日を超えたエントリだけを、確認の後に 1 回の更新で消し、その追加日時を SSM から消す。現在の接続元 IP を含むエントリと追加日時の無いエントリは残り (後者は警告が出る)、ブラウザからのアクセスは通り続ける。古いエントリが無ければ IP set は更新されない。`acl list` の AGE は `acl add` からの経過日数を示す
 
-30. `nakama aws create` が途中で失敗しても Ctrl-C で中断しても、それまでに作った SG・ENI・EC2・VPC Origin・distribution は、作った直後 (待機に入る前) に SSM に記録されている。そこから `nakama aws delete <n>` を実行すると記録されたものがすべて消え、同じ名前で作り直せる。成功したときに残る記録は、code-server 版・bare 版とも変わらない。フェイクを相手に、ENI の作成・`RunInstances`・`running` の待機・private DNS の解決・VPC Origin の `Deployed` 待ち・distribution の作成・distribution の `Deployed` 待ちのそれぞれで失敗とキャンセルを起こし、テストで確かめる
+30. `nakama aws create` が途中で失敗しても Ctrl-C で中断しても、それまでに作った SG・ENI・EC2・VPC Origin・distribution は、作った直後 (待機に入る前) に SSM に記録されている。作成の API が返った直後の Ctrl-C でも記録は残る (restore の作り直しも同じ)。そこから `nakama aws delete <n>` を実行すると記録されたものがすべて消え、同じ名前で作り直せる。成功したときに残る記録は、code-server 版・bare 版とも変わらない。フェイクを相手に、ENI の作成・`RunInstances`・`running` の待機・private DNS の解決・VPC Origin の `Deployed` 待ち・distribution の作成・distribution の `Deployed` 待ちのそれぞれで失敗とキャンセルを、SG・ENI の作成と `RunInstances` が返った直後にキャンセルを起こし、テストで確かめる
+
+31. SG・ENI・EC2 を作った直後の記録の書き込みが失敗しても、`nakama aws delete <n>` はそれらをその名前の nakama のタグで探して消す。SSM に ID があるものはタグで探さない。別の名前のもの (`dev01` に対する `dev010`・`dev0` のような前方一致を含む)、`nakama:managed` タグの無いもの、terminated・shutting-down の EC2 は消さない。同じ名前のものが複数あればすべて消す。タグでの検索が権限で拒否されたら警告して続け、記録されたものを消す。ほかのエラーでは何も消さずに止まる。フェイクを相手に、SG・ENI の作成直後と `RunInstances` の直後 (create と restore) で記録の書き込みを失敗させ、フィルタを無視する API も相手にして、テストで確かめる (設計 §8.27)
 
 ## 付録 A. 機能別 IAM 権限マトリクス
 
