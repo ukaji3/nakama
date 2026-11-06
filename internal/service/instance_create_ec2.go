@@ -38,17 +38,27 @@ func (s *Service) cloudFrontPrefixListID(ctx context.Context) (string, error) {
 		config.CloudFrontVPCOriginsPrefixListName)
 }
 
+// instanceResourceTags are the tags, besides nakama:managed, by which
+// upsertInstanceSecurityGroup and upsertInstanceENI find an existing
+// resource of the instance, and by which delete finds one that SSM has
+// no record of.
+func instanceResourceTags(instanceName, nameTag string) map[string]string {
+	return map[string]string{
+		tagging.NameTag: nameTag,
+		tagging.KeyName: instanceName,
+	}
+}
+
 // upsertInstanceSecurityGroup ensures a nakama-tagged SG exists for
-// this instance and that it has a single ingress rule allowing TCP
-// from the CloudFront managed prefix list to the code-server port.
-func (s *Service) upsertInstanceSecurityGroup(ctx context.Context, instanceName, vpcID, prefixListID string) (string, error) {
+// this instance. The caller records it and then adds the ingress rule
+// with ensureSGIngress, so that an interruption in between cannot leave
+// the SG unrecorded.
+func (s *Service) upsertInstanceSecurityGroup(ctx context.Context, instanceName, vpcID string) (string, error) {
 	sgName := naming.SecurityGroup(instanceName)
 
 	out, err := s.clients.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
-		Filters: append(nakamaTagFilters(map[string]string{
-			tagging.NameTag: sgName,
-			tagging.KeyName: instanceName,
-		}), ec2types.Filter{Name: aws.String("vpc-id"), Values: []string{vpcID}}),
+		Filters: append(nakamaTagFilters(instanceResourceTags(instanceName, sgName)),
+			ec2types.Filter{Name: aws.String("vpc-id"), Values: []string{vpcID}}),
 	})
 	if err != nil {
 		return "", fmt.Errorf("DescribeSecurityGroups: %w", err)
@@ -76,10 +86,6 @@ func (s *Service) upsertInstanceSecurityGroup(ctx context.Context, instanceName,
 		}
 		sgID = *c.GroupId
 		slog.Info("sg: created", "sg_id", sgID)
-	}
-
-	if err := s.ensureSGIngress(ctx, sgID, prefixListID); err != nil {
-		return "", err
 	}
 	return sgID, nil
 }
@@ -117,10 +123,8 @@ func (s *Service) upsertInstanceENI(ctx context.Context, instanceName, subnetID,
 	name := naming.ENI(instanceName)
 
 	out, err := s.clients.EC2.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
-		Filters: append(nakamaTagFilters(map[string]string{
-			tagging.NameTag: name,
-			tagging.KeyName: instanceName,
-		}), ec2types.Filter{Name: aws.String("subnet-id"), Values: []string{subnetID}}),
+		Filters: append(nakamaTagFilters(instanceResourceTags(instanceName, name)),
+			ec2types.Filter{Name: aws.String("subnet-id"), Values: []string{subnetID}}),
 	})
 	if err != nil {
 		return "", fmt.Errorf("DescribeNetworkInterfaces: %w", err)

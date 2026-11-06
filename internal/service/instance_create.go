@@ -369,7 +369,18 @@ func (s *Service) putPasswordSecure(ctx context.Context, name, password string) 
 	return err
 }
 
+// recordTimeout bounds a metadata write, which no longer stops when the
+// caller's context is cancelled (see writeInstanceMeta).
+const recordTimeout = 30 * time.Second
+
+// writeInstanceMeta records the IDs of resources that were just created.
+// It ignores the cancellation of ctx (bounded by recordTimeout instead):
+// a Ctrl-C that arrives right after a create call returned must still
+// leave that resource where `nakama aws delete` finds it. The caller's
+// next step runs on ctx again and stops there.
 func (s *Service) writeInstanceMeta(ctx context.Context, _ string, kv map[string]string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
 	for k, v := range kv {
 		_, err := s.clients.SSM.PutParameter(ctx, &ssm.PutParameterInput{
 			Name:      aws.String(k),
@@ -474,11 +485,14 @@ func (s *Service) prepareInstanceNetwork(ctx context.Context, name string) (inst
 	if err != nil {
 		return n, fmt.Errorf("resolve CloudFront prefix list: %w", err)
 	}
-	if n.sgID, err = s.upsertInstanceSecurityGroup(ctx, name, n.base.VPCID, prefixListID); err != nil {
+	if n.sgID, err = s.upsertInstanceSecurityGroup(ctx, name, n.base.VPCID); err != nil {
 		return n, fmt.Errorf("security group: %w", err)
 	}
 	if err := s.writeInstanceMeta(ctx, name, map[string]string{ssmSGIDPath(name): n.sgID}); err != nil {
 		return n, fmt.Errorf("write instance metadata: %w", err)
+	}
+	if err := s.ensureSGIngress(ctx, n.sgID, prefixListID); err != nil {
+		return n, fmt.Errorf("security group: %w", err)
 	}
 	if n.eniID, err = s.upsertInstanceENI(ctx, name, n.base.PrivateSubnet1aID, n.sgID); err != nil {
 		return n, fmt.Errorf("eni: %w", err)

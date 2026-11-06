@@ -417,6 +417,7 @@ func featurePermissionMatrix() []FeaturePermission {
 					"ec2:DeleteNetworkInterface",
 					"ec2:DeleteSecurityGroup",
 					"ec2:DeleteVolume",
+					"ec2:DescribeNetworkInterfaces",
 					"ec2:DescribeVolumes",
 					"ec2:TerminateInstances",
 					"ssm:DeleteParameters",
@@ -424,7 +425,8 @@ func featurePermissionMatrix() []FeaturePermission {
 				},
 			),
 			Note: "--bare で作成したインスタンスは cloudfront:* を使わない。" +
-				"cloudfront:*Function は kirocrew enable 済みのインスタンスでのみ使う",
+				"cloudfront:*Function は kirocrew enable 済みのインスタンスでのみ使う。" +
+				"ec2:DescribeNetworkInterfaces は SSM に ENI の記録が無いときだけ使い、拒否されたら警告して続ける",
 			Simulate: true,
 		},
 		{

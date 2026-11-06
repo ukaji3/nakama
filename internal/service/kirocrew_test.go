@@ -328,6 +328,16 @@ func (f *fakeKirocrewEC2) DescribeVolumes(context.Context, *ec2.DescribeVolumesI
 	return &ec2.DescribeVolumesOutput{}, nil
 }
 
+// delete looks up the ENI and SG by their tags when SSM has no record
+// of them: there are none.
+func (f *fakeKirocrewEC2) DescribeNetworkInterfaces(context.Context, *ec2.DescribeNetworkInterfacesInput, ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
+	return &ec2.DescribeNetworkInterfacesOutput{}, nil
+}
+
+func (f *fakeKirocrewEC2) DescribeSecurityGroups(context.Context, *ec2.DescribeSecurityGroupsInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
+	return &ec2.DescribeSecurityGroupsOutput{}, nil
+}
+
 func kirocrewTestParams() map[string]string {
 	return map[string]string{
 		ssmInstanceIDPath("dev01"):         testInstanceID,

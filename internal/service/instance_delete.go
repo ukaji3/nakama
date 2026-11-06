@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
 	"github.com/ukaji3/nakama/internal/awshelper"
+	"github.com/ukaji3/nakama/internal/naming"
 	"github.com/ukaji3/nakama/internal/tagging"
 )
 
@@ -60,9 +62,30 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 		*f.dst = v
 	}
 
+	// A create or restore stopped between creating the EC2 instance, ENI
+	// or security group and recording it leaves no ID in SSM. Those are
+	// found by the instance's nakama tags instead (docs/design.md §8.27).
+	var instanceIDs, eniIDs, sgIDs []string
+	for _, r := range []struct {
+		dst      *[]string
+		recorded string
+		what     string
+		find     func(context.Context, string) ([]string, error)
+	}{
+		{&instanceIDs, instanceID, "ec2 instance", s.findTaggedInstances},
+		{&eniIDs, eniID, "eni", s.findTaggedENIs},
+		{&sgIDs, sgID, "security group", s.findTaggedSecurityGroups},
+	} {
+		ids, err := recordedOrTagged(ctx, in.Name, r.recorded, r.what, r.find)
+		if err != nil {
+			return err
+		}
+		*r.dst = ids
+	}
+
 	slog.Info("delete: starting", "name", in.Name,
 		"distribution", distID, "kirocrew_distribution", crewID, "vpc_origin", vpcOriginID,
-		"instance", instanceID, "eni", eniID, "sg", sgID)
+		"instance", instanceIDs, "eni", eniIDs, "sg", sgIDs)
 
 	// The Kiro Crew distribution (ADR 0020) shares the VPC origin, so it
 	// must be gone before the VPC origin below can be deleted.
@@ -100,8 +123,8 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 			slog.Warn("delete: vpc origin failed (continuing due to --force)", "error", err)
 		}
 	}
-	if instanceID != "" {
-		if err := s.terminateInstanceAndWait(ctx, instanceID); err != nil {
+	for _, id := range instanceIDs {
+		if err := s.terminateInstanceAndWait(ctx, id); err != nil {
 			if !in.Force {
 				return fmt.Errorf("instance: %w", err)
 			}
@@ -120,16 +143,16 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 		slog.Warn("delete: orphaned volume sweep failed (continuing due to --force)", "error", err)
 	}
 
-	if eniID != "" {
-		if err := s.deleteENI(ctx, eniID); err != nil {
+	for _, id := range eniIDs {
+		if err := s.deleteENI(ctx, id); err != nil {
 			if !in.Force {
 				return fmt.Errorf("eni: %w", err)
 			}
 			slog.Warn("delete: eni failed (continuing due to --force)", "error", err)
 		}
 	}
-	if sgID != "" {
-		if err := s.deleteSG(ctx, sgID); err != nil {
+	for _, id := range sgIDs {
+		if err := s.deleteSG(ctx, id); err != nil {
 			if !in.Force {
 				return fmt.Errorf("sg: %w", err)
 			}
@@ -150,6 +173,119 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 	}
 	slog.Info("delete: completed", "name", in.Name)
 	return nil
+}
+
+// --- resources without a record --------------------------------------------
+
+// tagLookupDenied are the error codes of a tag lookup that the caller's
+// IAM policy does not allow.
+var tagLookupDenied = []string{"UnauthorizedOperation", "AccessDenied"}
+
+// recordedOrTagged returns the ID SSM recorded or, when there is none,
+// every ID that find returns for the instance's tags. A lookup the IAM
+// policy denies only warns, so that a policy cut to an older permission
+// list keeps deleting what is recorded.
+func recordedOrTagged(ctx context.Context, name, recorded, what string,
+	find func(context.Context, string) ([]string, error)) ([]string, error) {
+	if recorded != "" {
+		return []string{recorded}, nil
+	}
+	ids, err := find(ctx, name)
+	if awshelper.IsAPIError(err, tagLookupDenied...) {
+		slog.Warn("delete: not allowed to look up an unrecorded "+what+" by its tags; one left by an interrupted create would remain",
+			"name", name, "error", err)
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("look up an unrecorded %s: %w", what, err)
+	}
+	if len(ids) > 0 {
+		slog.Info("delete: found by tags, not in SSM", "name", name, "resource", what, "ids", ids)
+	}
+	return ids, nil
+}
+
+// carriesNakamaTags reports whether tags hold nakama:managed=true and
+// every tag of want with exactly that value. The lookups below check
+// what their filters returned once more, so that delete never takes a
+// resource of another instance or one nakama does not manage.
+func carriesNakamaTags(tags []ec2types.Tag, want map[string]string) bool {
+	have := awshelper.EC2MapTags(tags)
+	if have[tagging.KeyManaged] != tagging.ValueManagedTrue {
+		return false
+	}
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// findTaggedInstances returns the instances carrying the tags runInstance
+// gives the instance, except terminated and shutting-down ones.
+func (s *Service) findTaggedInstances(ctx context.Context, name string) ([]string, error) {
+	want := map[string]string{
+		tagging.NameTag:      naming.EC2(name),
+		tagging.KeyName:      name,
+		tagging.KeyComponent: tagging.ComponentEC2,
+	}
+	states := []string{"pending", "running", "stopping", "stopped"}
+	out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: append(nakamaTagFilters(want),
+			ec2types.Filter{Name: aws.String("instance-state-name"), Values: states}),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("DescribeInstances: %w", err)
+	}
+	var ids []string
+	for _, r := range out.Reservations {
+		for _, i := range r.Instances {
+			if i.InstanceId != nil && i.State != nil && slices.Contains(states, string(i.State.Name)) &&
+				carriesNakamaTags(i.Tags, want) {
+				ids = append(ids, *i.InstanceId)
+			}
+		}
+	}
+	return ids, nil
+}
+
+// findTaggedENIs returns the ENIs carrying the tags upsertInstanceENI
+// finds one by.
+func (s *Service) findTaggedENIs(ctx context.Context, name string) ([]string, error) {
+	want := instanceResourceTags(name, naming.ENI(name))
+	out, err := s.clients.EC2.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
+		Filters: nakamaTagFilters(want),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("DescribeNetworkInterfaces: %w", err)
+	}
+	var ids []string
+	for _, n := range out.NetworkInterfaces {
+		if n.NetworkInterfaceId != nil && carriesNakamaTags(n.TagSet, want) {
+			ids = append(ids, *n.NetworkInterfaceId)
+		}
+	}
+	return ids, nil
+}
+
+// findTaggedSecurityGroups returns the security groups carrying the tags
+// upsertInstanceSecurityGroup finds one by.
+func (s *Service) findTaggedSecurityGroups(ctx context.Context, name string) ([]string, error) {
+	want := instanceResourceTags(name, naming.SecurityGroup(name))
+	out, err := s.clients.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: nakamaTagFilters(want),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("DescribeSecurityGroups: %w", err)
+	}
+	var ids []string
+	for _, g := range out.SecurityGroups {
+		if g.GroupId != nil && carriesNakamaTags(g.Tags, want) {
+			ids = append(ids, *g.GroupId)
+		}
+	}
+	return ids, nil
 }
 
 // --- distribution ---------------------------------------------------------
