@@ -262,17 +262,18 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 3. インスタンスタイプの CPU アーキを解決 (`DescribeInstanceTypes` の `SupportedArchitectures`。存在検証も兼ね、不正な型はここで即時エラー) → 対応する Ubuntu 26.04 AMI (amd64 / arm64) を SSM で解決
 4. SSM PutParameter で 32 文字パスワードを SecureString として保存
 5. `internal/awsx.EC2API.DescribeManagedPrefixLists` で CloudFront prefix list ID 取得
-6. SG 作成 → 8080 inbound (prefix list)
-7. ENI 作成 (Private subnet 1a)
+6. SG 作成 → 8080 inbound (prefix list) → `meta/security-group-id` を記録
+7. ENI 作成 (Private subnet 1a) → `meta/eni-id` を記録
 8. NAT インスタンスを起動 (`ensureNATInstanceRunning`。停止中なら start して `running` まで待機。ADR 0007 の電源連動)
 9. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を AWS 公式のインストールスクリプトで ubuntu ユーザーに導入する (§8.22、ADR 0024)。Ubuntu の apt `awscli` は v1 と古いため purge する)。IAM instance profile は手順 2 で選択したもの (フラグ省略時は共有ベースプロファイル `nakama-instance-profile`)
-10. EC2 が `running` まで待機
-11. CloudFront `CreateVpcOrigin` (HTTP:8080)
+10. SSM に meta 情報 (`meta/instance-id` と ENI / SG。bare なら `meta/kind`、`--with-admin` / `--with-role` 時は `meta/iam-role` / `meta/instance-profile` も) を書き込み、EC2 が `running` まで待機
+11. CloudFront `CreateVpcOrigin` (HTTP:8080) → `meta/vpc-origin-id` を記録
 12. VpcOrigin が `Deployed` まで待機
-13. CloudFront `CreateDistribution` (Cache=Disabled, OriginRequestPolicy=AllViewer, WAF=ARN)
-14. SSM に meta 情報を書き込み (Distribution `Deployed` 待機の**前**に永続化。待機が timeout しても `delete` で掃除できるようにするため)。`--with-admin` / `--with-role` 時は `meta/iam-role` / `meta/instance-profile` も記録
-15. Distribution が `Deployed` まで待機
-16. URL + パスワード (+ 付与した IAM ロール / プロファイル) を stdout に出力
+13. CloudFront `CreateDistribution` (Cache=Disabled, OriginRequestPolicy=AllViewer, WAF=ARN) → `meta/distribution-id` / `meta/distribution-domain` を記録
+14. Distribution が `Deployed` まで待機
+15. URL + パスワード (+ 付与した IAM ロール / プロファイル) を stdout に出力
+
+各リソースは作った直後、待機に入る前に SSM に記録する (restore の作り直し §8.5.1 と同じ)。途中で失敗しても Ctrl-C で中断しても、記録されたものは `delete <n>` (§8.3) で消え、同じ名前で作り直せる。自動の巻き戻しはしない。記録の書き込みより前に中断されたもの (`RunInstances` の応答を受け取る前など) は記録されない。IAM ロール / プロファイルはインスタンスをまたいで共有するので、`delete` の対象ではない。
 
 ### 8.3 `nakama aws delete`
 
@@ -323,10 +324,10 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 
 1. `--with-admin` / `--with-role` があれば、create と同じくロールを先に用意する (ADR 0010 の事前検証)
 2. アーキに合う最新の Ubuntu 26.04 AMI を解決する。code-server なら新しいパスワードを生成して SSM に置く
-3. `prepareInstanceNetwork` (create と共通): 土台の発見、SG と ENI の作成
+3. `prepareInstanceNetwork` (create と共通): 土台の発見、SG と ENI の作成 (それぞれ作った直後に記録)
 4. user-data は `userdata.RenderRestore` の cloud-config。`ssh_deletekeys: false` で、バックアップの SSH ホスト鍵を残す (cloud-init は新しいインスタンス ID を見ると鍵を消して作り直すため)。code-server なら初回起動スクリプトを置き、`runcmd` で実行する。スクリプトは `~/.config/code-server/config.yaml` が無ければ何もせず (起動直後の新しいボリュームの場合)、あれば SSM の新しいパスワードで `password:` の行だけを置き換えて code-server を再起動し、版を SSM に書き戻す。ソフトウェアは入れ直さない
 5. NAT インスタンスを起動し、`runInstances` で EC2 を起動する (ルートは既定の 20 GiB。直後に差し替える)。instance-id / ENI / SG を記録してから `running` を待つ
-6. code-server なら private DNS → VPC origin → distribution を作り、それぞれ作った直後に記録する (失敗しても `delete` で片付けられるように)
+6. code-server なら private DNS → VPC origin → distribution を作り、それぞれ作った直後 (VPC origin は `Deployed` を待つ前) に記録する (失敗しても `delete` で片付けられるように)
 7. インプレース復元の 3〜8 と同じ手順 (`replaceRootVolume`) でルートを差し替える。起動直後のボリュームは削除される
 8. NAT インスタンスの電源を再調整し、code-server なら distribution の `Deployed` を待つ。停止のまま終了する。URL・パスワード・プライベート IP は新しく、Kiro Crew の画面は `kirocrew enable` のやり直しが要る
 
