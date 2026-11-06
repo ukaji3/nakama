@@ -163,7 +163,7 @@
 - IPv6 ACL
 - 複数リージョン
 - 独自ドメイン / ACM 証明書
-- 部分失敗時の自動ロールバック (孤児リソースは利用者が手動で `delete`)
+- 部分失敗時の自動ロールバック (create / restore は各リソースを作った直後に記録するので、途中で失敗・中断しても利用者が `delete` で片付ける。受け入れ基準 30)
 - マルチテナント (1 アカウント = 1 環境)
 - code-server の任意バージョンへの固定アップグレード (`update` は latest 固定。特定版へのダウングレード/固定は非対応)
 - 自動 / スケジュール バックアップ (DLM・EventBridge 等)。v1 は手動 `backup create` のみ
@@ -224,6 +224,8 @@
 28. `nakama version --check` は GitHub の最新リリース (draft と prerelease を除く) と比べて、今の版・最新の版・リリースページの URL を表示する。版は数値で比べ (v0.9.0 < v0.10.0、v0.24.0 と 0.24.0 は同じ、プレリリースはその版より前)、開発ビルド (`dev` やコミットのハッシュなど semver でないもの、`make build` の `git describe` の形) は比較しない。問い合わせに失敗しても (遮断、レート制限、5 秒のタイムアウト、壊れた応答) 警告だけで、古い場合も含めて終了コードは 0。引数なしの `nakama version` とほかのコマンドは GitHub に問い合わせず、出力も変わらない。`nakama aws doctor` の `version` 行は、最新 (または手元の方が新しい) なら ok、古ければ warn (新しい版と入手先)、確認できなければ warn、開発ビルドなら skip で、どれも doctor の終了コードを変えない。テストは本物の api.github.com に問い合わせない
 
 29. `nakama aws acl prune --older-than 30d` は、`acl add` で最後に追加・確認してから 30 日を超えたエントリだけを、確認の後に 1 回の更新で消し、その追加日時を SSM から消す。現在の接続元 IP を含むエントリと追加日時の無いエントリは残り (後者は警告が出る)、ブラウザからのアクセスは通り続ける。古いエントリが無ければ IP set は更新されない。`acl list` の AGE は `acl add` からの経過日数を示す
+
+30. `nakama aws create` が途中で失敗しても Ctrl-C で中断しても、それまでに作った SG・ENI・EC2・VPC Origin・distribution は、作った直後 (待機に入る前) に SSM に記録されている。そこから `nakama aws delete <n>` を実行すると記録されたものがすべて消え、同じ名前で作り直せる。成功したときに残る記録は、code-server 版・bare 版とも変わらない。フェイクを相手に、ENI の作成・`RunInstances`・`running` の待機・private DNS の解決・VPC Origin の `Deployed` 待ち・distribution の作成・distribution の `Deployed` 待ちのそれぞれで失敗とキャンセルを起こし、テストで確かめる
 
 ## 付録 A. 機能別 IAM 権限マトリクス
 
