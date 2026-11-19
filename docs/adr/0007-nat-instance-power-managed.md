@@ -1,6 +1,6 @@
 # ADR 0007: NAT Gateway を電源連動 NAT インスタンスへ置換
 
-- Status: Accepted
+- Status: Accepted (一部を ADR 0026 で置き換え: NAT Gateway も選べるようになり、新しい環境の既定は NAT Gateway。NAT インスタンスの電源連動は、NAT インスタンスを選んだ環境で引き続き有効)
 - Date: 2026-07-06
 - Context: nakama v1.x コスト最適化 (egress 経路)
 
