@@ -15,7 +15,7 @@ nakama aws open dev01                  # ブラウザで開く (パスワード�
 ## 特徴
 
 - **ブラウザだけで開発**: code-server に CloudFront 経由の HTTPS でつなぐ。手元に入れるのは nakama だけ
-- **止めればほぼ無料**: 外向き通信の中継 (NAT インスタンス) は、開発環境の電源に合わせて自動で止まる
+- **外向き通信の中継を選べる**: AWS が管理する NAT Gateway (新しい環境の既定。nakama が管理する OS が無い。常時課金) か、開発環境の電源に合わせて自動で止まる NAT インスタンス (止めればほぼ無料) を `init --nat` で選び、あとから切り替えられる
 - **aws CLI も SSH も不要**: サインインも、シェル (`connect`)・ポート転送 (`tunnel`)・ssh 接続 (`ssh`) も nakama だけで動く。受信ポートは開けない
 - **会社のプロキシにそのまま対応**: Windows のプロキシ設定と OS の証明書ストアを自動で使う
 - **安全側の既定**: アクセスは IP の許可リスト制。パスワードは AWS 上で管理し、手元のディスクには残さない。`~/.aws/config` は書き換えない
@@ -46,7 +46,7 @@ tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 n
 | コマンド | 用途 |
 |---|---|
 | `nakama aws login` / `profile` | サインイン / 複数の AWS アカウントの切り替え |
-| `nakama aws init` | 共通の土台を作る。NAT インスタンスの点検と修理も行う |
+| `nakama aws init` | 共通の土台を作る。外向き通信の中継 (`--nat gateway` / `--nat instance`) の選択と切り替え、NAT インスタンスの点検と修理も行う |
 | `nakama aws acl add` / `list` / `delete` / `prune` | ブラウザからのアクセスを許可する IP の管理 (`prune` は長く `acl add` していない IP をまとめて消す) |
 | `nakama aws create` | 開発環境を作る (`--bare` で code-server なしの軽量版) |
 | `nakama aws list` / `info` | 一覧 / 詳細 |
@@ -82,11 +82,14 @@ tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 n
 ```
 [ブラウザ] ──HTTPS──> [CloudFront + WAF (IP 許可リスト)] ──> [EC2 (private subnet): code-server]
                                                                   │
-[EC2] ──外向き通信──> [NAT インスタンス (t4g.nano)] ──> インターネット
+[EC2] ──外向き通信──> [NAT Gateway または NAT インスタンス (t4g.nano)] ──> インターネット
 ```
 
 - 開発環境は、インターネットから直接届かない場所 (private subnet) に置かれます。入口は CloudFront だけです。
-- 外向き通信の中継には、常時課金の NAT Gateway ではなく、小さな NAT インスタンスを使います。NAT インスタンスは、開発環境が 1 台でも動いている間だけ起動します。全部止めると、残る料金はディスクと WAF の基本料金くらいです。詳しくは[チュートリアル第 3 章](docs/tutorial/03-init.html#cost)を見てください。
+- 外向き通信の中継は、`nakama aws init --nat` で選びます。あとから切り替えることもできます。
+  - **NAT Gateway** (`--nat gateway`、新しい環境の既定): AWS が管理するので、nakama が更新する OS がありません。常に動いていて、開発環境を全部止めても時間料金と固定 IP (EIP) の料金がかかり、通信量にも料金がかかります。外向きの IP は固定です。
+  - **NAT インスタンス** (`--nat instance`): 小さな EC2 で、開発環境が 1 台でも動いている間だけ起動します。全部止めると、残る料金はディスクと WAF の基本料金くらいです。OS は nakama が管理します (初回起動時と `init` の修理のときに更新)。
+- この機能より前に作った環境は、NAT インスタンスのままです。詳しくは[チュートリアル第 3 章](docs/tutorial/03-init.html#cost)を見てください。
 
 ## ドキュメント
 

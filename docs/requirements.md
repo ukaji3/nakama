@@ -1,7 +1,7 @@
 # nakama 要件定義書 (v1)
 
-> Status: v1 実装済 (`connect` / `update` / NAT インスタンス電源連動 (ADR 0007) を含む)
-> Last updated: 2026-08-26
+> Status: v1 実装済 (`connect` / `update` / NAT インスタンス電源連動 (ADR 0007) / NAT Gateway との切り替え (ADR 0026) を含む)
+> Last updated: 2026-11-19
 
 ## 1. 目的・スコープ
 
@@ -40,7 +40,7 @@
 
 | カテゴリ | サブコマンド | 機能 |
 |---|---|---|
-| 基盤 | `nakama aws init` | nakama 環境基盤 (VPC / Subnet / NAT インスタンス / WAF / IP set / IAM) を作成または再利用。既存の NAT Gateway があれば削除し EIP を解放して NAT インスタンスへ移行。最後に NAT インスタンスの転送を確認し、壊れていれば直す。直らなければ失敗する (Issue #87) |
+| 基盤 | `nakama aws init [--nat gateway\|instance] [--yes]` | nakama 環境基盤 (VPC / Subnet / NAT / WAF / IP set / IAM) を作成または再利用。外向き通信の中継 (NAT) は `--nat` で選ぶ (ADR 0026): `gateway` は public subnet の NAT Gateway (EIP 付き、常時稼働)、`instance` は電源連動の NAT インスタンス (ADR 0007)。`--nat` が無ければ記録した方式 (`/nakama/_meta/nat-mode`) のまま。記録の無い既存環境は `instance`、新しい環境は `gateway`。新しい NAT を用意して確かめ、private の経路を張り替えてから、もう一方を片付ける (NAT Gateway の削除と EIP の解放、または NAT インスタンスの terminate と SG の削除。NAT インスタンスの IAM ロールは残す)。既存環境で方式が変わるときは、内容と稼働中のインスタンスを示して確認を取る (`--yes` で省略)。新しい環境を `gateway` で作るときは料金の注記を出す。`instance` では NAT インスタンスの転送を確認し、壊れていれば直す。直らなければ失敗する (Issue #87。gateway からの切り替えでは経路を張り替える前に確認する) |
 | アクセス制御 | `nakama aws acl add [IP\|CIDR]` | アクセス元 IP を WAFv2 IP set に追加。省略時は `https://checkip.amazonaws.com/` と `https://ifconfig.io/ip` に 3 回ずつ問い合わせ、見つかった公開の IPv4 アドレスを重複なしですべて追加する (出口を冗長化したネットワークのため。Issue #104) |
 | アクセス制御 | `nakama aws acl list` | IP set の内容を一覧。ADDED_AT (`acl add` で最後に追加・確認した時刻) と AGE (それからの経過日数) を表示する。nakama の外で足したエントリはどちらも空 |
 | アクセス制御 | `nakama aws acl delete <IP\|CIDR>...` | IP set からエントリを削除。複数を指定すると 1 回の更新でまとめて消す。1 つでも未登録なら何も消さずにエラー (Issue #99) |
@@ -51,7 +51,7 @@
 | インスタンス | `nakama aws create ... --no-kiro` | user-data での Kiro CLI / Kiro Crew の既定導入をスキップする。導入手順は `internal/kiro/install.sh` を唯一の情報源とし、user-data と `--preset kiro` が同一のスクリプトを共有する (Issue #68) |
 | インスタンス | `nakama aws create ... [--setup <path\|https URL>] [--dotfiles <git URL>] [--preset <name>]` | 作成完了後にプロビジョニングを実行する (SSM Run Command、ubuntu ユーザー)。順序は preset → dotfiles → setup で、各ステップは独立に成否を報告する。`--preset` は同梱レシピ (`kiro` = Kiro CLI + Kiro Crew + gateway の systemd 登録。**既定で user-data が実行する内容と同一**で、再実行・後入れの手段として提供する)。`--dotfiles` は `~/.dotfiles` へ clone し `install.sh`/`setup.sh`/`bootstrap.sh` があれば実行、無ければ `$HOME` へシンボリックリンク。`--setup` はローカルパス (内容を転送) または https URL (curl 取得)。http は拒否。ログはインスタンスの `/var/log/nakama-provision.log`。**プロビジョニング失敗は create を失敗させず**警告 + 再実行案内を表示する。冪等性はスクリプト作成者の責務 |
 | インスタンス | `nakama aws setup rerun <n> [--setup ...] [--dotfiles ...] [--preset ...]` | 既存インスタンスに対して同じプロビジョニングを実行する (create 時の失敗からの復旧、後からの適用)。フラグを 1 つも指定しない場合はエラー |
-| インスタンス | `nakama aws list` | 作成済み code-server インスタンスを一覧 (TYPE 列で VSCODE/NAT 種別を表示)。`--show-nat` で NAT インスタンスの稼働状況も表示 |
+| インスタンス | `nakama aws list` | 作成済み code-server インスタンスを一覧 (TYPE 列で VSCODE/BARE 種別を表示)。`--show-nat` で NAT インスタンス (TYPE NAT、稼働状況) と NAT Gateway (TYPE NATGW、状態) も、外向きの IP とともに表示 |
 | インスタンス | `nakama aws info <n> [--show-password]` | 接続先 URL、ステータス、パスワード (`--show-password` 時のみ) を表示 |
 | インスタンス | `nakama aws start <n>` | EC2 起動 |
 | インスタンス | `nakama aws stop <n>` | EC2 停止 |
@@ -77,7 +77,7 @@
 | 接続 | `nakama aws kirocrew <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` / `kirocrew enable <n>` / `kirocrew disable <n>` | Kiro Crew の Web 画面を **code-server 経由で**ブラウザに開く (ADR 0020)。enable は、Kiro Crew 専用の CloudFront distribution、インスタンス上の nginx (127.0.0.1:15476)、code-server の proxy-domain と trusted-origins、既存の distribution の `/proxy/5476*` を新しい distribution へ 302 で転送する Function を作る (冪等)。開くときは、code-server の自動ログイン (ADR 0012 の方式) と Kiro Crew のトークン受け渡しを、1 回のブラウザ起動で行う。トークンは RSA-OAEP で暗号化して受け取る。Kiro Crew は CloudFront に直接さらさない。disable と delete で片付ける。bare は対象外 |
 | 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
 | 認証 | `nakama aws login [--remote] [--name <alias>]` | AWS Management Console のセッションを使いネイティブにサインイン (OAuth 2.0 authorization code + PKCE + DPoP、aws CLI 不要。ADR 0016)。ブラウザ起動 (不可なら URL 表示で待機継続) → 127.0.0.1 のコールバックで認可コード受領 (10 分タイムアウト、state 検証) → AWS CLI 互換キャッシュ (`~/.aws/login/cache/`) へ保存 → STS で識別確認 → nakama profile へ**自動 save & load**。`--remote` は SSH/headless 向けにブラウザの検証コード貼り付けで完了。`~/.aws/config` は変更しない。要 `SignInLocalDevelopmentAccess` ポリシー |
-| 診断 | `nakama aws doctor [-o json]` | 環境を読み取り専用で一括診断し、各項目を ok / warn / fail + 対処案内で表示する: プロキシ解決 (ADR 0015 の解決器) と AWS 到達性、TLS インスペクション検出 (ADR 0018 の検出エンジン再利用)、資格情報の解決元 (アカウント / identity / active profile)、自 IP の WAF 許可リスト登録、機能別の IAM 権限充足 (付録 A のマトリクスを SimulatePrincipalPolicy で判定し、機能ごとに ok / 不足アクションを表示)、ローカル tunnel 状態、nakama の版が最新か (`version --check` と同じ確認。古い・確認できないときは warn、開発ビルドは skip)。fail があれば終了コード非 0。資格情報未解決でもローカル診断は継続。機微情報は出力しない |
+| 診断 | `nakama aws doctor [-o json]` | 環境を読み取り専用で一括診断し、各項目を ok / warn / fail + 対処案内で表示する: プロキシ解決 (ADR 0015 の解決器) と AWS 到達性、TLS インスペクション検出 (ADR 0018 の検出エンジン再利用)、資格情報の解決元 (アカウント / identity / active profile)、自 IP の WAF 許可リスト登録、外向き通信 (egress。記録した NAT の方式、private の経路の向き先、NAT インスタンス / NAT Gateway の状態。経路の先が使えなければ fail、切り替えの残りや記録とのずれは warn。ADR 0026)、機能別の IAM 権限充足 (付録 A のマトリクスを SimulatePrincipalPolicy で判定し、機能ごとに ok / 不足アクションを表示)、ローカル tunnel 状態、nakama の版が最新か (`version --check` と同じ確認。古い・確認できないときは warn、開発ビルドは skip)。fail があれば終了コード非 0。資格情報未解決でもローカル診断は継続。機微情報は出力しない |
 | 診断 | `nakama version [--check]` | 版・コミット・ビルド日時を表示する (通信しない)。`--check` は GitHub の Releases API (`https://api.github.com/repos/ukaji3/nakama/releases/latest`) に問い合わせ、今の版・最新の版・リリースページの URL と、最新 / 古い / 手元の方が新しい / 開発ビルド (比較しない) のどれかを表示する。問い合わせの失敗 (遮断、レート制限、5 秒のタイムアウト、壊れた応答) は警告だけで、古い場合も含めて終了コードは 0 |
 | CLI 支援 | `nakama aws cli shell [--shell <path>]` | **Windows 専用**。OS のプロキシ設定 (WinHTTP/PAC) を自動解決し、TLS インスペクション検出時は OS ストア検証済みの企業 CA チェーン + Amazon Trust Services ルートを `AWS_CA_BUNDLE` 用 PEM に書き出した上で、`HTTP(S)_PROXY`/`NO_PROXY`/`AWS_CA_BUNDLE` を注入したサブシェル (親シェルと同種を自動判別) を起動する。exit で復帰し、親シェル・レジストリ・`~/.aws/config` に恒久的変更を残さない。NTLM/Negotiate 認証プロキシは検出して回避策を案内。他 OS では Windows 専用である旨を表示してエラー (ADR 0018)。サブシェルの PATH の先頭に nakama.exe のフォルダーを入れる (ADR 0022) |
 | 起動支援 | nakama.exe のダブルクリック | **Windows 専用**。引数なしでエクスプローラーから起動されたとき、Windows PowerShell を同じウィンドウで開く。PATH の先頭に nakama.exe のフォルダーを入れ、`cli shell` と同じプロキシ・CA の設定を注入する。設定はそのウィンドウの中だけで、レジストリ・ユーザー環境変数は変更しない。検出に失敗しても理由を表示して PATH だけのシェルを開く。シェルの実行中は Ctrl-C で nakama が終わらない (ADR 0022) |
@@ -132,12 +132,14 @@
 - active profile 使用時の資格情報解決は fail-closed: 解決失敗時に別チェーンへフォールバックせず、意図しないアカウントへのリソース作成を防ぐ (ADR 0011)
 - `nakama aws open` の自動ログイン (ADR 0012) はパスワードを**メモリ内にのみ**保持する: 127.0.0.1 バインド・カーネル割当ポート・crypto/rand 128 bit の単回使用トークンパス・厳密 1 回配信 (再取得は 410)・`Cache-Control: no-store` / `Referrer-Policy: no-referrer`・html/template によるエスケープ・timeout 経過で自動シャットダウン。ディスク書き込み・ログ出力・`-o json|yaml` への出力は一切しない。code-server の `/login` に CSRF / Origin チェックが無いことに依存するため、将来の code-server 側変更で自動ログインが無効化される可能性がある (その場合も METHOD C fallback で URL オープン自体は動作)
 - Microsoft Marketplace は使用不可。code-server は Open VSX を使用 (上流仕様)
+- 外向き通信の中継 (ADR 0026): `gateway` (NAT Gateway) では、nakama が OS を管理するホストを public subnet に置かない。`instance` (NAT インスタンス) は、OS (カーネル、SSM エージェント、iptables) の更新が初回起動時と init の修理のときだけで、SG は VPC の CIDR からの全プロトコルを受け付け、全インスタンスの外向き通信が通る。攻撃面を減らすなら `gateway` を選ぶ (新しい環境の既定)
+- NAT インスタンスの IAM ロール (`nakama-nat-role`) は SSM の管理だけで Parameter Store を読めない。gateway に切り替えても残す (戻すときに使う)
 
 ### 5.2 可用性
 
-- v1 は単一 AZ NAT インスタンス (`t4g.nano`, コスト優先。ADR 0007)
-- NAT インスタンスの電源は code-server のライフサイクルに連動 (全停止時は自動停止)
-- 単点障害が発生しても再 `init` で復旧可能 (タグベースの冪等性)
+- 外向き通信の中継は単一 AZ (1a)。`gateway` は zonal の NAT Gateway (AWS が管理、常時稼働。ADR 0026)、`instance` は NAT インスタンス (`t4g.nano`, コスト優先。ADR 0007)
+- `instance` の NAT インスタンスの電源は code-server のライフサイクルに連動 (全停止時は自動停止)。`gateway` では NAT の電源を操作しない
+- 単点障害が発生しても再 `init` で復旧可能 (タグベースの冪等性。`failed` の NAT Gateway は init が作り直す)
 
 ### 5.3 観測性
 
@@ -147,6 +149,8 @@
 ### 5.4 性能
 
 - `init` 所要時間: 約 2〜4 分 (NAT インスタンスの起動待機が主。NAT Gateway より短い)。NAT インスタンスの転送の確認に、正常なら約 10 秒、停止中なら 1〜2 分、修理が要るなら数分を足す
+- `init` で NAT Gateway を作るとき (新しい環境の既定、または切り替え) は、NAT Gateway が `available` になるまで待つ (数分、上限 10 分)。切り替えでは、古い NAT の片付け (NAT Gateway の削除、または NAT インスタンスの terminate) の待ちも足す
+- `gateway` では `create` / `start` / `update` が NAT の起動を待たない
 - `create` 所要時間: 約 15〜20 分 (CloudFront propagation がボトルネック)
 - `delete` 所要時間: 約 15〜20 分 (CloudFront disable + delete)
 
@@ -157,6 +161,7 @@
 - per-instance: `nakama:name=<name>` を AND 条件として付加
 - 例外: `nakama aws profile` のレジストリのみローカル状態 (`$XDG_CONFIG_HOME/nakama`、未設定時 `~/.config/nakama`) を持つ。これは AWS リソースではなく「どのアカウントの `aws login` セッションを使うか」というクライアント側の選択であり、タグでは表現できないため (ADR 0011)
 - 例外: `nakama aws tunnel` のデーモン状態 (`~/.config/nakama/tunnels/<name>.json`, 0600。PID・制御ポート・制御トークン・転送一覧・開始時刻) もローカル状態を持つ。常駐プロセスはクライアント側にのみ存在し、タグでは表現できないため (ADR 0017)
+- 外向き通信の方式 (ADR 0026): init が選んだ方式を SSM の `/nakama/_meta/nat-mode` (`instance` / `gateway`) に記録する。記録を読むのは init (`--nat` が無いときの方式) と doctor (実際の経路とのずれの検出) だけ。ほかのコマンドは、NAT インスタンスがあるか (無ければ NAT Gateway) で判断する
 
 ## 7. 制限事項 (v1 で対応しない)
 
@@ -178,6 +183,8 @@
 - macOS の OS プロキシ設定 (システム設定) の自動検出 (リリースバイナリは CGO_ENABLED=0 のため。環境変数での指定は可。ADR 0015)
 - WebSocket (CONNECT トンネル上のアップグレード) を遮断する監査型プロキシ環境での `connect` 動作保証
 - nakama 自身の更新 (自己更新) と、版の自動・定期的な確認。版の確認は `version --check` と `doctor` を実行したときだけで、結果は保存せず、GitHub のトークンも使わない
+- Regional NAT Gateway、NAT Gateway の電源連動 (全停止時の削除と再作成)、インスタンスごとの NAT の選択 (ADR 0026)
+- この版より前の nakama との混在: 古い版の `init` は NAT Gateway を削除して NAT インスタンスへ戻す。`gateway` に切り替える前に、すべての端末の nakama を更新する (ADR 0026)
 
 ## 8. 受け入れ基準
 
@@ -229,6 +236,8 @@
 
 31. SG・ENI・EC2 を作った直後の記録の書き込みが失敗しても、`nakama aws delete <n>` はそれらをその名前の nakama のタグで探して消す。SSM に ID があるものはタグで探さない。別の名前のもの (`dev01` に対する `dev010`・`dev0` のような前方一致を含む)、`nakama:managed` タグの無いもの、terminated・shutting-down の EC2 は消さない。同じ名前のものが複数あればすべて消し、見つけて消した ID をログに出す。タグでの検索が権限で拒否されたら、探せなかったことと足りない権限名を警告して続け、記録されたものを消す。ほかのエラーでは何も消さずに止まる。フェイクを相手に、SG・ENI の作成直後と `RunInstances` の直後 (create と restore) で記録の書き込みを失敗させ、フィルタを無視する API も相手にして、テストで確かめる (設計 §8.27)
 
+32. 外向き通信の方式 (ADR 0026、設計 §8.28): 新しい環境で `nakama aws init` を実行すると、public subnet に NAT Gateway (EIP 付き) ができ、private の `0.0.0.0/0` がそれを向き、NAT インスタンスは作られない (料金の注記が出る)。記録の無い既存環境 (この版より前の init で作った環境) で `nakama aws init` を実行しても、NAT インスタンスのまま何も変わらない。`init --nat gateway` は確認を取り (稼働中のインスタンス名とセッションが切れることを表示。`--yes` で省略)、NAT Gateway が `available` になってから経路を張り替え、その後に NAT インスタンスを terminate して SG を削除する (IAM ロールは残る)。`init --nat instance` は NAT インスタンスを作って転送を確かめてから経路を張り替え、NAT Gateway を削除して EIP を解放する。どちらも、経路を張り替える前に失敗したら古い NAT が残り、init の再実行で完了する。同じ方式の init をもう一度実行しても何も変わらない。gateway の環境では、`create` / `start` / `update` / `restore` が NAT Gateway が `available` かを確かめ (使えなければ init を案内してエラー)、`stop` / `delete` などは NAT に触れない。`list --show-nat` は NAT Gateway の行と外向きの IP を、`doctor` の `egress` 行は方式・経路・NAT の状態を表示する。フェイクを相手に、両方向の切り替えの順序、NAT Gateway の作成の失敗、`failed` の NAT Gateway の作り直し、転送しない NAT インスタンスへの切り替えの失敗、2 回目の init を、テストで確かめる
+
 ## 付録 A. 機能別 IAM 権限マトリクス
 
 呼び出し側プリンシパルに必要な IAM アクションの機能別一覧。`internal/service/permissions.go` の表から生成される (受け入れ基準 19)。現在の資格情報でどの機能が使えるかは `nakama aws doctor` が同じ表に基づいて判定・表示する。
@@ -271,10 +280,11 @@
 | R2 | VPC Origin の deploy 待機が最大 15 分 | UI で進捗を slog 出力。タイムアウトは 20 分 |
 | R3 | code-server の Microsoft Marketplace 不可は仕様 | README / FAQ に明記 |
 | R4 | `apne1-az3` の AZ ID 解決はアカウント依存 | `ec2:DescribeAvailabilityZones` で AZ ID を取得し除外 |
-| R5 | NAT のegressコスト | NAT Gateway を廃し NAT インスタンス (`t4g.nano`) を採用 (ADR 0007)。電源を code-server のライフサイクルに連動させ、全停止時は NAT インスタンスも停止して固定費をゼロに近づける。EIP は付与せず停止中の public IPv4 課金も回避 |
+| R5 | NAT のegressコスト | NAT Gateway を廃し NAT インスタンス (`t4g.nano`) を採用 (ADR 0007)。電源を code-server のライフサイクルに連動させ、全停止時は NAT インスタンスも停止して固定費をゼロに近づける。EIP は付与せず停止中の public IPv4 課金も回避。ADR 0026 で NAT Gateway も選べるようになり (新しい環境の既定)、こちらは全停止時も時間料金と EIP の料金がかかる。料金を優先する利用者は `init --nat instance` を選ぶ |
 | R6 | 稼働中スナップショットはクラッシュコンシステント | 重要時は `stop` 後に `backup create` する旨を明記。`restore` はインプレースで破壊的なため確認を要求 (`--yes` で省略)。削除済みインスタンスの復元も確認を要求し、URL とパスワードが変わることを示す |
 | R7 | `--keep` 未指定スナップショットのコスト累積 | `--keep N` の利用を推奨。CLI は常駐しないため prune は `backup create` 実行時のみ |
 | R8 | 取り込んだ `session-manager-plugin` の upstream 追随は手動 | 取り込み元 commit/tag を `third_party/session-manager-plugin/PINNED.md` に記録し、`scripts/vendor-ssm-plugin.sh` で定期的に re-sync |
 | R9 | `connect` には呼び出し側プリンシパルに `ssm:StartSession` 等が必要 (instance role とは別) | 前提条件 §3 に明記。`init` では付与しない (利用者責務) |
 | R10 | plugin 取り込みによるバイナリサイズ増 | PoC で実測し許容範囲を確認 |
 | R11 | Session Manager の独自プロトコル変更・コマンド終了コード伝播の制約 | 取り込み版を pin。終了コードの非互換は制限事項として扱う |
+| R12 | NAT インスタンスの攻撃面 (自前管理の OS、VPC 内からの到達、全外向き通信の経路) | ADR 0026 で NAT Gateway を選べるようにし、新しい環境の既定にした。NAT インスタンスを選んだ環境の強化 (SG の受信を絞る、定期的な更新) は別の Issue で扱う |

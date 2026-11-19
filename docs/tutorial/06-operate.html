@@ -52,20 +52,20 @@ nakama aws start dev01         # 翌日また使う</code></pre>
 <div class="callout tip" role="note">
   <span class="title">停止しても消えません</span>
   <p><code>stop</code> は電源を切るだけです。インストールしたツール、書いたコード、設定はすべて残ります。翌日 <code>start</code> すれば同じ状態から再開できます。<strong>止めれば課金の大部分が止まります</strong> (<a href="03-init.html#cost">第 3 章</a>)。停止の前に、ブラウザで編集中のファイルは保存してください。</p>
-  <p>外向き通信の中継役 (NAT インスタンス) も、すべての環境が停止すると自動で止まります。手動での操作は不要です。</p>
+  <p>中継役に NAT インスタンスを使っている場合は、それもすべての環境が停止すると自動で止まります。手動での操作は不要です。NAT ゲートウェイを使っている場合、中継役は常に動いていて、止めても料金がかかります (<a href="03-init.html#nat">第 3 章</a>)。</p>
 </div>
 
 <p><code>list</code> の表示はこうなります。</p>
-<pre class="output"><code>NAME                  INSTANCE_ID          STATE      TYPE    INSTANCE_TYPE  DISTRIBUTION_DOMAIN
-box01                 i-0abcdef1234567890  stopped    BARE    t3.medium
-dev01                 i-0123456789abcdef0  running    VSCODE  t3.medium      d111111abcdef8.cloudfront.net</code></pre>
+<pre class="output"><code>NAME                  INSTANCE_ID            STATE      TYPE    INSTANCE_TYPE  DISTRIBUTION_DOMAIN
+box01                 i-0abcdef1234567890    stopped    BARE    t3.medium
+dev01                 i-0123456789abcdef0    running    VSCODE  t3.medium      d111111abcdef8.cloudfront.net</code></pre>
 <p>名前順に並びます。<code>--bare</code> で作った環境は正面玄関を持たないので <code>DISTRIBUTION_DOMAIN</code> は空欄です。</p>
 <div class="table-wrap">
 <table>
   <thead><tr><th scope="col">列</th><th scope="col">意味</th></tr></thead>
   <tbody>
     <tr><td><code>STATE</code></td><td><code>running</code> = 起動中 / <code>stopped</code> = 停止中</td></tr>
-    <tr><td><code>TYPE</code></td><td><code>VSCODE</code> = 通常の環境 / <code>BARE</code> = <code>--bare</code> で作った環境 / <code>NAT</code> = 中継役 (<code>--show-nat</code> を付けたときだけ表示)</td></tr>
+    <tr><td><code>TYPE</code></td><td><code>VSCODE</code> = 通常の環境 / <code>BARE</code> = <code>--bare</code> で作った環境 / <code>NAT</code> = 中継役の NAT インスタンス / <code>NATGW</code> = 中継役の NAT ゲートウェイ (<code>NAT</code> と <code>NATGW</code> は <code>--show-nat</code> を付けたときだけ表示。最後の列に外向きの IP アドレスが <code>egress</code> の後に出ます)</td></tr>
   </tbody>
 </table>
 </div>
