@@ -232,11 +232,11 @@ func TestParseNATHealth(t *testing.T) {
 
 func TestWithTargetNotConnectedHint(t *testing.T) {
 	notConnected := &smithy.GenericAPIError{Code: "TargetNotConnected", Message: "i-1 is not connected."}
-	err := withTargetNotConnectedHint(errors.New("StartSession: " + notConnected.Error()))
+	err := withTargetNotConnectedHint(errors.New("StartSession: "+notConnected.Error()), NATModeInstance)
 	if strings.Contains(err.Error(), "NAT") {
 		t.Error("a plain error must be returned unchanged")
 	}
-	wrapped := withTargetNotConnectedHint(errors.Join(errors.New("StartSession"), notConnected))
+	wrapped := withTargetNotConnectedHint(errors.Join(errors.New("StartSession"), notConnected), NATModeInstance)
 	for _, want := range []string{"is not connected", "NAT instance", "nakama aws list --show-nat", "nakama aws init"} {
 		if !strings.Contains(wrapped.Error(), want) {
 			t.Errorf("hint lacks %q:\n%v", want, wrapped)
@@ -246,7 +246,7 @@ func TestWithTargetNotConnectedHint(t *testing.T) {
 		t.Error("the API error must stay inspectable")
 	}
 	other := &smithy.GenericAPIError{Code: "AccessDeniedException"}
-	if got := withTargetNotConnectedHint(other); got != error(other) {
+	if got := withTargetNotConnectedHint(other, NATModeInstance); got != error(other) {
 		t.Errorf("other API errors must be unchanged, got %v", got)
 	}
 }

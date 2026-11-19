@@ -297,8 +297,8 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 	if err != nil {
 		return nil, fmt.Errorf("render user data: %w", err)
 	}
-	if err := s.ensureNATInstanceRunning(ctx); err != nil {
-		return nil, fmt.Errorf("start NAT instance: %w", err)
+	if err := s.ensureEgress(ctx); err != nil {
+		return nil, fmt.Errorf("egress: %w", err)
 	}
 	instanceID, err := s.runInstance(ctx, runInstanceArgs{
 		Name:                p.Name,

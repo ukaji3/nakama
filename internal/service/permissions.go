@@ -93,6 +93,18 @@ var (
 		"ssm:GetParameter",
 	}
 
+	// egressActions: ensureEgress (nat_instance.go), called before an
+	// instance boots or runs an update: the NAT instance lifecycle above,
+	// plus the NAT gateway lookup of the gateway mode (ADR 0026).
+	egressActions = mergeActions(natLifecycleActions, []string{"ec2:DescribeNatGateways"})
+
+	// natLookupActions: currentNATMode (nat_instance.go), which names the
+	// NAT in the TargetNotConnected hint of connect / ssh / tunnel.
+	natLookupActions = []string{
+		"ec2:DescribeInstances",
+		"ec2:DescribeNatGateways",
+	}
+
 	// createInstanceActions: what building an instance needs beyond
 	// the NAT lifecycle (instance_create*.go): the base-infra lookups,
 	// the security group and ENI, and the CloudFront entry path. Shared
@@ -159,15 +171,18 @@ func featurePermissionMatrix() []FeaturePermission {
 			Commands: "nakama aws init",
 			Actions: mergeActions(
 				[]string{
+					"ec2:AllocateAddress",
 					"ec2:AssociateRouteTable",
 					"ec2:AttachInternetGateway",
 					"ec2:CreateInternetGateway",
+					"ec2:CreateNatGateway",
 					"ec2:CreateRoute",
 					"ec2:CreateRouteTable",
 					"ec2:CreateSubnet",
 					"ec2:CreateTags",
 					"ec2:CreateVpc",
 					"ec2:DeleteNatGateway",
+					"ec2:DeleteSecurityGroup",
 					"ec2:DescribeAddresses",
 					"ec2:DescribeAvailabilityZones",
 					"ec2:DescribeInternetGateways",
@@ -179,6 +194,7 @@ func featurePermissionMatrix() []FeaturePermission {
 					"ec2:ModifyVpcAttribute",
 					"ec2:ReleaseAddress",
 					"ec2:ReplaceRoute",
+					"ec2:TerminateInstances",
 					"iam:AddRoleToInstanceProfile",
 					"iam:AttachRolePolicy",
 					"iam:CreateInstanceProfile",
@@ -198,7 +214,9 @@ func featurePermissionMatrix() []FeaturePermission {
 				// The forwarding check and repair (Issue #87).
 				remoteScriptActions,
 			),
-			Note: "冪等。既存 NAT Gateway の削除と EIP 解放を含む。最後に NAT インスタンスの転送を " +
+			Note: "冪等。--nat (ADR 0026) の方式に合わせて NAT インスタンスか NAT Gateway (と EIP) を用意し、" +
+				"private の経路をそちらへ向けてから、もう一方を片付ける (NAT Gateway の削除と EIP の解放、" +
+				"または NAT インスタンスの terminate と SG の削除)。NAT インスタンスの方式では、NAT インスタンスの転送を " +
 				"Run Command で確認し、壊れていれば直す (停止中なら確認のために起動して戻す)",
 			Simulate: true,
 		},
@@ -220,11 +238,12 @@ func featurePermissionMatrix() []FeaturePermission {
 			Commands: "nakama aws create",
 			Actions: mergeActions(
 				resolveInstanceActions,
-				natLifecycleActions,
+				egressActions,
 				remoteScriptActions, // --setup / --dotfiles / --preset
 				createInstanceActions,
 			),
-			Note:     "--bare は cloudfront:* を使わない。NAT インスタンスの初回作成を含む",
+			Note: "--bare は cloudfront:* を使わない。NAT インスタンスの初回作成を含む。" +
+				"NAT Gateway の方式 (ADR 0026) では ec2:DescribeNatGateways で NAT Gateway が使えるかを確かめる",
 			Simulate: true,
 		},
 		{
@@ -247,7 +266,9 @@ func featurePermissionMatrix() []FeaturePermission {
 		{
 			Feature:  "list / info",
 			Commands: "nakama aws list / info",
-			Actions:  mergeActions(resolveInstanceActions),
+			Actions:  mergeActions(resolveInstanceActions, []string{"ec2:DescribeNatGateways"}),
+			Note: "ec2:DescribeNatGateways は list --show-nat が NAT Gateway を表示するときだけ使い、" +
+				"拒否されたら警告して続ける",
 			Simulate: true,
 		},
 		{
@@ -305,23 +326,27 @@ func featurePermissionMatrix() []FeaturePermission {
 		{
 			Feature:  "connect",
 			Commands: "nakama aws connect",
-			Actions:  mergeActions(resolveInstanceActions, sessionActions),
+			Actions:  mergeActions(resolveInstanceActions, sessionActions, natLookupActions),
+			Note: "ec2:DescribeNatGateways は TargetNotConnected の案内で NAT の方式を調べるときだけ使い、" +
+				"失敗しても案内の内容が一般的になるだけ",
 			Simulate: true,
 		},
 		{
 			Feature:  "ssh",
 			Commands: "nakama aws ssh setup / proxy",
 			Actions: mergeActions(
-				resolveInstanceActions, sessionActions, remoteScriptActions),
-			Note:     "setup の公開鍵投入に SendCommand を使う",
+				resolveInstanceActions, sessionActions, remoteScriptActions, natLookupActions),
+			Note: "setup の公開鍵投入に SendCommand を使う。ec2:DescribeNatGateways は TargetNotConnected の " +
+				"案内で NAT の方式を調べるときだけ使う",
 			Simulate: true,
 		},
 		{
 			Feature:  "tunnel",
 			Commands: "nakama aws tunnel",
 			Actions: mergeActions(
-				resolveInstanceActions, sessionActions, remoteScriptActions),
-			Note:     "suggest の listen ポート調査に SendCommand を使う。status は資格情報不要",
+				resolveInstanceActions, sessionActions, remoteScriptActions, natLookupActions),
+			Note: "suggest の listen ポート調査に SendCommand を使う。status は資格情報不要。" +
+				"ec2:DescribeNatGateways は TargetNotConnected の案内で NAT の方式を調べるときだけ使う",
 			Simulate: true,
 		},
 		{
@@ -329,10 +354,11 @@ func featurePermissionMatrix() []FeaturePermission {
 			Commands: "nakama aws start / stop",
 			Actions: mergeActions(
 				resolveInstanceActions,
-				natLifecycleActions,
+				egressActions,
 				[]string{"ec2:StartInstances", "ec2:StopInstances"},
 			),
-			Note:     "NAT インスタンスの電源連動 (初回は作成) を含む",
+			Note: "NAT インスタンスの電源連動 (初回は作成) を含む。NAT Gateway の方式 (ADR 0026) では、" +
+				"start が ec2:DescribeNatGateways で NAT Gateway が使えるかを確かめるだけ",
 			Simulate: true,
 		},
 		{
@@ -358,7 +384,7 @@ func featurePermissionMatrix() []FeaturePermission {
 			Commands: "nakama aws update / setup rerun",
 			Actions: mergeActions(
 				resolveInstanceActions,
-				natLifecycleActions,
+				egressActions,
 				remoteScriptActions,
 				backupActions, // automatic pre-update backup
 				[]string{
@@ -381,7 +407,7 @@ func featurePermissionMatrix() []FeaturePermission {
 			Commands: "nakama aws restore",
 			Actions: mergeActions(
 				resolveInstanceActions,
-				natLifecycleActions,
+				egressActions,
 				createInstanceActions, // a deleted instance is rebuilt (Issue #96)
 				[]string{
 					"ec2:AttachVolume",
@@ -433,13 +459,17 @@ func featurePermissionMatrix() []FeaturePermission {
 			Feature:  "doctor",
 			Commands: "nakama aws doctor",
 			Actions: []string{
+				"ec2:DescribeInstances",   // egress: InspectEgress
+				"ec2:DescribeNatGateways", // egress
+				"ec2:DescribeRouteTables", // egress
 				"iam:SimulatePrincipalPolicy",
+				"ssm:GetParameter", // egress: the recorded NAT mode
 				"ssm:GetParametersByPath",
 				"wafv2:GetIPSet",
 				"wafv2:ListIPSets", // waf-allowlist: ListACL -> findIPSetSummary
 			},
 			Note: "読み取り専用。iam:SimulatePrincipalPolicy が無い場合も " +
-				"capability 判定が warn になるだけで他の診断は動く",
+				"capability 判定が warn になるだけで他の診断は動く。egress の確認に ec2:Describe* と ssm:GetParameter を使う",
 			Simulate: true,
 		},
 	}

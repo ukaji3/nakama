@@ -18,11 +18,13 @@ import (
 // 0.0.0.0/0 routes, and the subnet associations.
 //
 // The public route table routes 0.0.0.0/0 to the Internet Gateway.
-// The private route table routes 0.0.0.0/0 to the NAT instance's
-// primary network interface (ADR 0007). If a legacy 0.0.0.0/0 route
-// still points at the old NAT Gateway, it is replaced in place so
-// egress is switched to the NAT instance before the gateway is removed.
-func (s *Service) initRouteTables(ctx context.Context, res *InitResult) error {
+// The private route table routes 0.0.0.0/0 to the egress of the mode
+// init sets up: the NAT instance's primary network interface
+// (routeTargetNetworkInterface, ADR 0007) or the NAT gateway
+// (routeTargetNATGateway, ADR 0026). A default route that points
+// elsewhere (the other NAT) is replaced in place, so egress moves to the
+// new NAT in one step and the old one is removed only afterwards.
+func (s *Service) initRouteTables(ctx context.Context, res *InitResult, privateKind, privateTarget string) error {
 	pubID, err := s.upsertRouteTable(ctx, routeTableSpec{
 		Name:      naming.PublicRouteTable(),
 		VPCID:     res.VPCID,
@@ -48,10 +50,10 @@ func (s *Service) initRouteTables(ctx context.Context, res *InitResult) error {
 		return err
 	}
 	res.PrivateRouteTableID = privID
-	if res.NATInstanceENIID == "" {
-		return fmt.Errorf("cannot route private subnets: NAT instance ENI is unknown")
+	if privateTarget == "" {
+		return fmt.Errorf("cannot route private subnets: the %s to route them to is unknown", privateKind)
 	}
-	if err := s.ensureDefaultRoute(ctx, privID, routeTargetNetworkInterface, res.NATInstanceENIID); err != nil {
+	if err := s.ensureDefaultRoute(ctx, privID, privateKind, privateTarget); err != nil {
 		return err
 	}
 	for _, subID := range res.PrivateSubnetIDs {
@@ -104,10 +106,36 @@ func (s *Service) upsertRouteTable(ctx context.Context, spec routeTableSpec) (st
 	return id, nil
 }
 
+// privateDefaultRoute returns the private route table's ID and its
+// 0.0.0.0/0 route (nil when it has none), in the VPC when vpcID is set.
+// rtbID is "" when the route table does not exist (init has not run).
+func (s *Service) privateDefaultRoute(ctx context.Context, vpcID string) (rtbID string, route *ec2types.Route, err error) {
+	filters := nakamaTagFilters(map[string]string{tagging.NameTag: naming.PrivateRouteTable()})
+	if vpcID != "" {
+		filters = append(filters, ec2types.Filter{Name: aws.String("vpc-id"), Values: []string{vpcID}})
+	}
+	out, err := s.clients.EC2.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{Filters: filters})
+	if err != nil {
+		return "", nil, fmt.Errorf("DescribeRouteTables(%s): %w", naming.PrivateRouteTable(), err)
+	}
+	if len(out.RouteTables) == 0 || out.RouteTables[0].RouteTableId == nil {
+		return "", nil, nil
+	}
+	rt := out.RouteTables[0]
+	for i := range rt.Routes {
+		if aws.ToString(rt.Routes[i].DestinationCidrBlock) == "0.0.0.0/0" {
+			r := rt.Routes[i]
+			return *rt.RouteTableId, &r, nil
+		}
+	}
+	return *rt.RouteTableId, nil, nil
+}
+
 // Route target kinds for ensureDefaultRoute.
 const (
 	routeTargetGateway          = "gateway"
 	routeTargetNetworkInterface = "network-interface"
+	routeTargetNATGateway       = "nat-gateway"
 )
 
 // ensureDefaultRoute installs (or repoints) a 0.0.0.0/0 route on the
@@ -115,9 +143,10 @@ const (
 //
 //   - routeTargetGateway sets GatewayId (Internet Gateway).
 //   - routeTargetNetworkInterface sets NetworkInterfaceId (NAT instance ENI).
+//   - routeTargetNATGateway sets NatGatewayId (NAT gateway).
 //
 // If no default route exists, it is created. If one exists but points at
-// a different target (e.g. a legacy NAT Gateway), it is replaced via
+// a different target (e.g. the other NAT), it is replaced via
 // ReplaceRoute. If it already points at the desired target, this is a no-op.
 func (s *Service) ensureDefaultRoute(ctx context.Context, rtbID, kind, targetID string) error {
 	if targetID == "" {
@@ -150,7 +179,7 @@ func (s *Service) ensureDefaultRoute(ctx context.Context, rtbID, kind, targetID 
 			RouteTableId:         aws.String(rtbID),
 			DestinationCidrBlock: aws.String("0.0.0.0/0"),
 		}
-		if err := setRouteTarget(kind, targetID, &in.GatewayId, &in.NetworkInterfaceId); err != nil {
+		if err := setRouteTarget(kind, targetID, &in.GatewayId, &in.NetworkInterfaceId, &in.NatGatewayId); err != nil {
 			return err
 		}
 		if _, err := s.clients.EC2.ReplaceRoute(ctx, in); err != nil {
@@ -164,7 +193,7 @@ func (s *Service) ensureDefaultRoute(ctx context.Context, rtbID, kind, targetID 
 		RouteTableId:         aws.String(rtbID),
 		DestinationCidrBlock: aws.String("0.0.0.0/0"),
 	}
-	if err := setRouteTarget(kind, targetID, &in.GatewayId, &in.NetworkInterfaceId); err != nil {
+	if err := setRouteTarget(kind, targetID, &in.GatewayId, &in.NetworkInterfaceId, &in.NatGatewayId); err != nil {
 		return err
 	}
 	if _, err := s.clients.EC2.CreateRoute(ctx, in); err != nil {
@@ -176,12 +205,14 @@ func (s *Service) ensureDefaultRoute(ctx context.Context, rtbID, kind, targetID 
 
 // setRouteTarget writes targetID into the appropriate route field
 // pointer according to kind.
-func setRouteTarget(kind, targetID string, gatewayID, networkInterfaceID **string) error {
+func setRouteTarget(kind, targetID string, gatewayID, networkInterfaceID, natGatewayID **string) error {
 	switch kind {
 	case routeTargetGateway:
 		*gatewayID = aws.String(targetID)
 	case routeTargetNetworkInterface:
 		*networkInterfaceID = aws.String(targetID)
+	case routeTargetNATGateway:
+		*natGatewayID = aws.String(targetID)
 	default:
 		return fmt.Errorf("unknown default-route kind %q", kind)
 	}
@@ -196,6 +227,8 @@ func routeMatchesTarget(r ec2types.Route, kind, targetID string) bool {
 		return r.GatewayId != nil && *r.GatewayId == targetID
 	case routeTargetNetworkInterface:
 		return r.NetworkInterfaceId != nil && *r.NetworkInterfaceId == targetID
+	case routeTargetNATGateway:
+		return r.NatGatewayId != nil && *r.NatGatewayId == targetID
 	default:
 		return false
 	}

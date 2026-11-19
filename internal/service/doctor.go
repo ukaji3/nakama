@@ -93,16 +93,20 @@ type DoctorOptions struct {
 	tunnelStatus func(ctx context.Context, name string) (*TunnelStatus, error)
 	// latestRelease overrides the latest-release check in tests.
 	latestRelease func(ctx context.Context) version.CheckResult
+	// egress overrides the egress inspection in tests.
+	egress func(ctx context.Context) (*EgressStatus, error)
 }
 
 // Diagnose runs the read-only environment diagnosis behind
 // `nakama aws doctor`: proxy resolution and TLS interception (reusing
 // the cliproxy detector from ADR 0018), credential resolution, WAF
-// allowlist membership for this machine's public IP, one capability
-// line per feature derived from featurePermissionMatrix (permissions.go),
-// the local tunnel state, and whether a newer nakama release is out
-// (the GitHub Releases API). It performs no mutation of any kind and
-// never returns credentials, tokens or passwords in the report.
+// allowlist membership for this machine's public IP, the egress of the
+// private subnets (NAT instance or NAT gateway, ADR 0026), one
+// capability line per feature derived from featurePermissionMatrix
+// (permissions.go), the local tunnel state, and whether a newer nakama
+// release is out (the GitHub Releases API). It performs no mutation of
+// any kind and never returns credentials, tokens or passwords in the
+// report.
 func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 	rep := &DoctorReport{}
 	det := diagnoseProxyAndTLS(ctx, opts, rep)
@@ -115,7 +119,7 @@ func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 			Detail: fmt.Sprintf("could not resolve AWS credentials: %v", opts.ClientErr),
 			Advice: "run `nakama aws login` (or `aws login`), or select a saved profile with `nakama aws profile load <name>`",
 		})
-		for _, name := range []string{"waf-allowlist", "capabilities"} {
+		for _, name := range []string{"waf-allowlist", "egress", "capabilities"} {
 			rep.add(DoctorCheck{Name: name, Status: CheckSkip, Detail: "skipped: no AWS credentials"})
 		}
 		diagnoseTunnels(ctx, opts, rep)
@@ -125,6 +129,7 @@ func Diagnose(ctx context.Context, opts DoctorOptions) *DoctorReport {
 
 	diagnoseCredentials(opts, rep)
 	diagnoseWAF(ctx, opts, rep)
+	diagnoseEgress(ctx, opts, rep)
 	diagnoseCapabilities(ctx, opts, rep)
 	diagnoseTunnels(ctx, opts, rep)
 	diagnoseVersion(ctx, opts, rep)
@@ -285,6 +290,173 @@ func aclEntryCoversIP(cidr, ip string) bool {
 // simulateChunkSize bounds the ActionNames per SimulatePrincipalPolicy
 // request; results within a request are still paginated via Marker.
 const simulateChunkSize = 50
+
+// diagnoseEgress reports how the private subnets reach the internet
+// (ADR 0026): the mode init recorded, where the private default route
+// points, and NATs left over from a switch.
+func diagnoseEgress(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
+	inspect := opts.egress
+	if inspect == nil {
+		inspect = NewService(opts.Clients).InspectEgress
+	}
+	st, err := inspect(ctx)
+	if err != nil {
+		rep.add(DoctorCheck{
+			Name:   "egress",
+			Status: CheckWarn,
+			Detail: fmt.Sprintf("could not check the egress: %v", err),
+			Advice: "the check needs ssm:GetParameter, ec2:DescribeRouteTables, ec2:DescribeInstances and ec2:DescribeNatGateways",
+		})
+		return
+	}
+	rep.add(evaluateEgress(st))
+}
+
+// egressFinding is one observation behind the egress check.
+type egressFinding struct {
+	status CheckStatus
+	detail string
+	advice string
+}
+
+// evaluateEgress turns an EgressStatus into the doctor line. A route that
+// leads nowhere is a fail (no instance reaches the internet); a NAT left
+// over from a switch, or a mode that differs from the recorded one, is a
+// warn (things work, but cost or attack surface remain).
+func evaluateEgress(st *EgressStatus) DoctorCheck {
+	if !st.Initialized {
+		return DoctorCheck{
+			Name:   "egress",
+			Status: CheckWarn,
+			Detail: "the private route table does not exist yet",
+			Advice: "run `nakama aws init` to create the shared infrastructure",
+		}
+	}
+	expected, recordNote := st.RecordedMode, "recorded"
+	if expected == "" {
+		expected, recordNote = NATModeInstance, "none recorded; treated as instance"
+	}
+
+	var (
+		actual   string
+		summary  string
+		findings []egressFinding
+	)
+	switch st.RouteTarget {
+	case EgressRouteNATGateway:
+		actual = NATModeGateway
+		gw, ok := findEgressNATGateway(st.NATGateways, st.RouteTargetID)
+		switch {
+		case !ok:
+			findings = append(findings, egressFinding{CheckFail,
+				fmt.Sprintf("the private route points at NAT gateway %s, which is gone or not nakama's", st.RouteTargetID),
+				"run `nakama aws init` to create a NAT gateway and repoint the route"})
+		case gw.State != "available":
+			findings = append(findings, egressFinding{CheckFail,
+				fmt.Sprintf("NAT gateway %s is %s%s, so the instances cannot reach the internet",
+					gw.ID, gw.State, parenthesized(gw.FailureMessage)),
+				"run `nakama aws init` to replace it"})
+		default:
+			summary = fmt.Sprintf("NAT gateway %s (available, egress IP %s)", gw.ID, gw.PublicIP)
+		}
+		for _, n := range st.NATInstances {
+			findings = append(findings, egressFinding{CheckWarn,
+				fmt.Sprintf("NAT instance %s (%s) still exists although the egress goes through the NAT gateway", n.ID, n.State),
+				"run `nakama aws init` to terminate it"})
+		}
+	case EgressRouteNATInstance:
+		actual = NATModeInstance
+		n, ok := findEgressNATInstance(st.NATInstances, st.RouteTargetID)
+		if !ok {
+			findings = append(findings, egressFinding{CheckFail,
+				fmt.Sprintf("the private route points at network interface %s, which no nakama NAT instance has", st.RouteTargetID),
+				"run `nakama aws init` to create the NAT instance and repoint the route"})
+		} else {
+			summary = fmt.Sprintf("NAT instance %s (%s; it runs while a code-server instance runs)", n.ID, n.State)
+		}
+		for _, gw := range st.NATGateways {
+			findings = append(findings, egressFinding{CheckWarn,
+				fmt.Sprintf("NAT gateway %s (%s) still exists although the egress goes through the NAT instance; it is charged while it exists",
+					gw.ID, gw.State),
+				"run `nakama aws init` to delete it"})
+		}
+	case EgressRouteNone:
+		findings = append(findings, egressFinding{CheckFail,
+			"the private route table has no default route, so the instances cannot reach the internet",
+			"run `nakama aws init` to add it"})
+	default:
+		findings = append(findings, egressFinding{CheckFail,
+			fmt.Sprintf("the private default route points at %s, not at a nakama NAT", st.RouteTargetID),
+			"run `nakama aws init` to repoint it"})
+	}
+	if actual != "" && actual != expected {
+		findings = append(findings, egressFinding{CheckWarn,
+			fmt.Sprintf("init is set to the %s mode, but the egress goes through the %s", expected, natModeNoun(actual)),
+			fmt.Sprintf("run `nakama aws init` to finish the switch, or `nakama aws init --nat %s` to keep the %s",
+				actual, natModeNoun(actual))})
+	}
+
+	c := DoctorCheck{Name: "egress", Status: CheckOK}
+	parts := []string{fmt.Sprintf("%s mode (%s)", expected, recordNote)}
+	if summary != "" {
+		parts = append(parts, summary)
+	}
+	for _, f := range findings {
+		parts = append(parts, f.detail)
+		if checkSeverity(f.status) > checkSeverity(c.Status) {
+			c.Status = f.status
+			c.Advice = f.advice
+		}
+	}
+	c.Detail = strings.Join(parts, "; ")
+	return c
+}
+
+// natModeNoun names the NAT of a mode in a sentence.
+func natModeNoun(mode string) string {
+	if mode == NATModeGateway {
+		return "NAT gateway"
+	}
+	return "NAT instance"
+}
+
+// checkSeverity orders statuses for picking the worst one.
+func checkSeverity(s CheckStatus) int {
+	switch s {
+	case CheckFail:
+		return 2
+	case CheckWarn:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// parenthesized returns " (s)", or "" for an empty s.
+func parenthesized(s string) string {
+	if s == "" {
+		return ""
+	}
+	return " (" + s + ")"
+}
+
+func findEgressNATGateway(gws []EgressNATGateway, id string) (EgressNATGateway, bool) {
+	for _, g := range gws {
+		if g.ID == id {
+			return g, true
+		}
+	}
+	return EgressNATGateway{}, false
+}
+
+func findEgressNATInstance(nats []EgressNATInstance, eniID string) (EgressNATInstance, bool) {
+	for _, n := range nats {
+		if n.ENIID == eniID {
+			return n, true
+		}
+	}
+	return EgressNATInstance{}, false
+}
 
 // diagnoseCapabilities reports one line per nakama feature stating
 // whether the caller's IAM policies allow every action the feature

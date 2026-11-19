@@ -28,6 +28,17 @@ type fakeListEC2 struct {
 	natID    string
 	natState ec2types.InstanceStateName
 	natType  ec2types.InstanceType
+
+	// natGateways answers DescribeNatGateways, natGatewayErr fails it.
+	natGateways   []ec2types.NatGateway
+	natGatewayErr error
+}
+
+func (f *fakeListEC2) DescribeNatGateways(context.Context, *ec2.DescribeNatGatewaysInput, ...func(*ec2.Options)) (*ec2.DescribeNatGatewaysOutput, error) {
+	if f.natGatewayErr != nil {
+		return nil, f.natGatewayErr
+	}
+	return &ec2.DescribeNatGatewaysOutput{NatGateways: f.natGateways}, nil
 }
 
 func (f *fakeListEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {

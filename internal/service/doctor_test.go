@@ -108,7 +108,7 @@ func TestDiagnoseCredentialFailureStillRunsLocalChecks(t *testing.T) {
 	if !strings.Contains(cred.Advice, "nakama aws login") {
 		t.Errorf("credentials advice = %q, want it to point at login", cred.Advice)
 	}
-	for _, name := range []string{"waf-allowlist", "capabilities"} {
+	for _, name := range []string{"waf-allowlist", "egress", "capabilities"} {
 		if got := checkByName(t, rep, name).Status; got != CheckSkip {
 			t.Errorf("%s status = %q, want skip", name, got)
 		}
@@ -221,6 +221,13 @@ func doctorAWSOpts(t *testing.T, acl []ACLEntry, ip string, ipErr error, iamFake
 		},
 		tunnelNames:   func() ([]string, error) { return nil, nil },
 		latestRelease: upToDate,
+		egress: func(context.Context) (*EgressStatus, error) {
+			return &EgressStatus{
+				RecordedMode: NATModeGateway, Initialized: true,
+				RouteTarget: EgressRouteNATGateway, RouteTargetID: "nat-1",
+				NATGateways: []EgressNATGateway{{ID: "nat-1", State: "available", PublicIP: "203.0.113.10"}},
+			}, nil
+		},
 	}
 }
 

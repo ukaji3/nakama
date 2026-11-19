@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -25,6 +26,9 @@ type natInstanceInfo struct {
 	ENIID        string
 	State        ec2types.InstanceStateName
 	InstanceType ec2types.InstanceType
+	// PublicIP is the auto-assigned public IPv4 address, present while
+	// the instance runs (ADR 0007 gives it no Elastic IP).
+	PublicIP string
 }
 
 // initNATInstance creates or reuses the shared NAT instance. The instance
@@ -68,19 +72,12 @@ func (s *Service) initNATInstance(ctx context.Context, res *InitResult) error {
 
 func (s *Service) upsertNATInstanceSecurityGroup(ctx context.Context, vpcID string) (string, error) {
 	name := naming.NATInstanceSG()
-	out, err := s.clients.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
-		Filters: append(nakamaTagFilters(map[string]string{
-			tagging.NameTag:      name,
-			tagging.KeyComponent: tagging.ComponentNATInstance,
-		}), ec2types.Filter{Name: aws.String("vpc-id"), Values: []string{vpcID}}),
-	})
+	sgID, err := s.findNATInstanceSecurityGroup(ctx, vpcID)
 	if err != nil {
-		return "", fmt.Errorf("DescribeSecurityGroups(nat): %w", err)
+		return "", err
 	}
 
-	var sgID string
-	if len(out.SecurityGroups) > 0 && out.SecurityGroups[0].GroupId != nil {
-		sgID = *out.SecurityGroups[0].GroupId
+	if sgID != "" {
 		slog.Info("nat sg: reusing existing", "sg_id", sgID)
 	} else {
 		tags := tagging.ForShared(tagging.ComponentNATInstance, name)
@@ -229,6 +226,16 @@ func natInstanceUserData() string {
 }
 
 func (s *Service) findNATInstance(ctx context.Context, vpcID string) (natInstanceInfo, error) {
+	infos, err := s.listNATInstances(ctx, vpcID)
+	if err != nil || len(infos) == 0 {
+		return natInstanceInfo{}, err
+	}
+	return infos[0], nil
+}
+
+// listNATInstances returns every nakama NAT instance that is not
+// terminated or shutting down, in the VPC when vpcID is set.
+func (s *Service) listNATInstances(ctx context.Context, vpcID string) ([]natInstanceInfo, error) {
 	filters := []ec2types.Filter{
 		{Name: aws.String("tag:" + tagging.KeyManaged), Values: []string{tagging.ValueManagedTrue}},
 		{Name: aws.String("tag:" + tagging.KeyComponent), Values: []string{tagging.ComponentNATInstance}},
@@ -240,13 +247,15 @@ func (s *Service) findNATInstance(ctx context.Context, vpcID string) (natInstanc
 	}
 	out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
 	if err != nil {
-		return natInstanceInfo{}, fmt.Errorf("DescribeInstances(nat): %w", err)
+		return nil, fmt.Errorf("DescribeInstances(nat): %w", err)
 	}
+	var infos []natInstanceInfo
 	for _, r := range out.Reservations {
 		for _, i := range r.Instances {
 			info := natInstanceInfo{
 				ENIID:        primaryNetworkInterfaceIDFromInstance(i),
 				InstanceType: i.InstanceType,
+				PublicIP:     aws.ToString(i.PublicIpAddress),
 			}
 			if i.InstanceId != nil {
 				info.InstanceID = *i.InstanceId
@@ -255,11 +264,68 @@ func (s *Service) findNATInstance(ctx context.Context, vpcID string) (natInstanc
 				info.State = i.State.Name
 			}
 			if info.InstanceID != "" {
-				return info, nil
+				infos = append(infos, info)
 			}
 		}
 	}
-	return natInstanceInfo{}, nil
+	return infos, nil
+}
+
+// removeNATInstance is the gateway mode's clean-up (ADR 0026): it
+// terminates every nakama NAT instance in the VPC and deletes the NAT
+// instance security group, so no operating system of nakama's stays in
+// the public subnet. It runs after the private route points at the NAT
+// gateway. The NAT instance's IAM role and instance profile are kept:
+// switching back reuses them. Without a NAT instance it only makes sure
+// the security group is gone.
+func (s *Service) removeNATInstance(ctx context.Context, res *InitResult) error {
+	infos, err := s.listNATInstances(ctx, res.VPCID)
+	if err != nil {
+		return err
+	}
+	var terminated []string
+	for _, info := range infos {
+		slog.Warn("nat instance: terminating it; egress goes through the NAT gateway now",
+			"instance_id", info.InstanceID, "state", info.State)
+		if err := s.terminateInstanceAndWait(ctx, info.InstanceID); err != nil {
+			return fmt.Errorf("terminate the nat instance %s: %w", info.InstanceID, err)
+		}
+		terminated = append(terminated, info.InstanceID)
+	}
+	res.TerminatedNATInstanceID = strings.Join(terminated, ", ")
+
+	sgID, err := s.findNATInstanceSecurityGroup(ctx, res.VPCID)
+	if err != nil {
+		return err
+	}
+	if sgID == "" {
+		return nil
+	}
+	// The terminated instance's network interface can hold the group
+	// for a short while; deleteSG retries DependencyViolation.
+	if err := s.deleteSG(ctx, sgID); err != nil {
+		return fmt.Errorf("delete the nat instance security group %s: %w", sgID, err)
+	}
+	res.DeletedNATInstanceSGID = sgID
+	return nil
+}
+
+// findNATInstanceSecurityGroup returns the NAT instance security group
+// in the VPC, or "" when there is none.
+func (s *Service) findNATInstanceSecurityGroup(ctx context.Context, vpcID string) (string, error) {
+	out, err := s.clients.EC2.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: append(nakamaTagFilters(map[string]string{
+			tagging.NameTag:      naming.NATInstanceSG(),
+			tagging.KeyComponent: tagging.ComponentNATInstance,
+		}), ec2types.Filter{Name: aws.String("vpc-id"), Values: []string{vpcID}}),
+	})
+	if err != nil {
+		return "", fmt.Errorf("DescribeSecurityGroups(nat): %w", err)
+	}
+	if len(out.SecurityGroups) == 0 {
+		return "", nil
+	}
+	return aws.ToString(out.SecurityGroups[0].GroupId), nil
 }
 
 func primaryNetworkInterfaceIDFromInstance(i ec2types.Instance) string {
@@ -391,7 +457,19 @@ func (s *Service) reconcileNATInstancePowerState(ctx context.Context) error {
 
 // reconcileNATInstancePowerStateExcluding is reconcile with the given
 // code-server instance excluded from the "is anything still active" check.
+//
+// Without a NAT instance there is nothing to power: the egress goes
+// through a NAT gateway, which is always on (ADR 0026), or init has not
+// run. The commands that need egress check it with ensureEgress before
+// they start an instance.
 func (s *Service) reconcileNATInstancePowerStateExcluding(ctx context.Context, excludeInstanceID string) error {
+	nat, err := s.findNATInstance(ctx, "")
+	if err != nil {
+		return err
+	}
+	if nat.InstanceID == "" {
+		return nil
+	}
 	active, err := s.hasActiveCodeServerInstancesExcluding(ctx, excludeInstanceID)
 	if err != nil {
 		return err
@@ -400,4 +478,47 @@ func (s *Service) reconcileNATInstancePowerStateExcluding(ctx context.Context, e
 		return s.ensureNATInstanceRunning(ctx)
 	}
 	return s.ensureNATInstanceStopped(ctx)
+}
+
+// ensureEgress makes sure the private subnets reach the internet before
+// an instance boots or runs an update. It follows the resources rather
+// than the mode init recorded, so it asks only for the mode's own
+// permissions:
+//
+//   - With a NAT instance (instance mode, ADR 0007), the NAT instance is
+//     started.
+//   - Without one (gateway mode, ADR 0026), the NAT gateway must be
+//     available; nakama does not start or stop it.
+//
+// During a switch both can exist for a moment; the NAT instance is then
+// started, which keeps either route working.
+func (s *Service) ensureEgress(ctx context.Context) error {
+	nat, err := s.findNATInstance(ctx, "")
+	if err != nil {
+		return err
+	}
+	if nat.InstanceID != "" {
+		if err := s.ensureNATInstanceRunning(ctx); err != nil {
+			return fmt.Errorf("start the NAT instance: %w", err)
+		}
+		return nil
+	}
+	return s.ensureNATGatewayAvailable(ctx)
+}
+
+// currentNATMode reports which NAT the egress uses, read from the
+// resources: NATModeInstance when a NAT instance exists, NATModeGateway
+// when a NAT gateway does, "" when neither (or the lookup failed). It is
+// for messages only.
+func (s *Service) currentNATMode(ctx context.Context) string {
+	if s.clients == nil || s.clients.EC2 == nil {
+		return ""
+	}
+	if nat, err := s.findNATInstance(ctx, ""); err == nil && nat.InstanceID != "" {
+		return NATModeInstance
+	}
+	if gws, err := s.listNATGateways(ctx, ""); err == nil && len(gws) > 0 {
+		return NATModeGateway
+	}
+	return ""
 }

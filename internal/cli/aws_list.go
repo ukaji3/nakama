@@ -30,7 +30,8 @@ func newAWSListCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&showNAT, "show-nat", false,
-		"include the shared NAT instance (running/stopped) as a TYPE=NAT row")
+		"include the shared NAT instance (TYPE=NAT, running/stopped) and the NAT gateway (TYPE=NATGW) "+
+			"with the egress IP address")
 	return cmd
 }
 
@@ -39,11 +40,17 @@ func formatInstanceTable(rows []service.InstanceSummary) string {
 		return "(no nakama instances)"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-20s  %-19s  %-9s  %-6s  %-12s  %s\n",
+	fmt.Fprintf(&b, "%-20s  %-21s  %-9s  %-6s  %-13s  %s\n",
 		"NAME", "INSTANCE_ID", "STATE", "TYPE", "INSTANCE_TYPE", "DISTRIBUTION_DOMAIN")
 	for _, r := range rows {
-		fmt.Fprintf(&b, "%-20s  %-19s  %-9s  %-6s  %-12s  %s\n",
-			r.Name, r.InstanceID, r.State, strings.ToUpper(r.Type), r.InstanceType, r.DistributionDomain)
+		last := r.DistributionDomain
+		if last == "" && r.PublicIP != "" {
+			// The NAT rows have no distribution; show where the
+			// instances reach the internet from instead.
+			last = "egress " + r.PublicIP
+		}
+		fmt.Fprintf(&b, "%-20s  %-21s  %-9s  %-6s  %-13s  %s\n",
+			r.Name, r.InstanceID, r.State, strings.ToUpper(r.Type), r.InstanceType, last)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

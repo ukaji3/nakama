@@ -11,8 +11,9 @@ import (
 // instance. The instance metadata is resolved from
 // /nakama/<name>/meta/instance-id.
 //
-// The shared NAT instance is started first so the code-server has
-// working egress the moment it boots.
+// The egress is made ready first (the shared NAT instance started, or
+// the NAT gateway checked) so the code-server has working egress the
+// moment it boots.
 func (s *Service) StartInstance(ctx context.Context, name string) (string, error) {
 	if err := ValidateInstanceName(name); err != nil {
 		return "", err
@@ -24,8 +25,8 @@ func (s *Service) StartInstance(ctx context.Context, name string) (string, error
 	if id == "" {
 		return "", fmt.Errorf("nakama instance %q not found", name)
 	}
-	if err := s.ensureNATInstanceRunning(ctx); err != nil {
-		return "", fmt.Errorf("start NAT instance: %w", err)
+	if err := s.ensureEgress(ctx); err != nil {
+		return "", fmt.Errorf("egress: %w", err)
 	}
 	if _, err := s.clients.EC2.StartInstances(ctx, &ec2.StartInstancesInput{
 		InstanceIds: []string{id},
