@@ -74,7 +74,7 @@ func (s *Service) SSHProxy(ctx context.Context, in SSHProxyInput) error {
 			return fmt.Errorf("StartSession failed with an authentication error: %w\n"+
 				"Your AWS credentials have likely expired; run `nakama aws login` (or `aws login`) and retry", err)
 		}
-		return withTargetNotConnectedHint(fmt.Errorf("StartSession: %w", err))
+		return s.targetNotConnectedHint(ctx, fmt.Errorf("StartSession: %w", err))
 	}
 
 	payload, err := json.Marshal(sessionRunnerPayload{

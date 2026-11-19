@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,6 +22,9 @@ import (
 const (
 	instanceKindVSCode = "vscode"
 	instanceKindNAT    = "nat"
+	// instanceKindNATGateway marks the NAT gateway row of
+	// `list --show-nat` (ADR 0026).
+	instanceKindNATGateway = "natgw"
 	// instanceKindBare marks instances created with --bare: no
 	// code-server, no CloudFront distribution (Issue #52).
 	instanceKindBare = "bare"
@@ -34,13 +38,17 @@ type InstanceSummary struct {
 	State              string `json:"state"`
 	InstanceType       string `json:"instance_type"`
 	DistributionDomain string `json:"distribution_domain,omitempty"`
+	// PublicIP is set on the NAT rows of `list --show-nat`: the address
+	// the instances reach the internet from (the NAT gateway's Elastic
+	// IP, or the NAT instance's address while it runs).
+	PublicIP string `json:"public_ip,omitempty"`
 }
 
 // ListInstances returns every nakama-managed code-server EC2 instance
 // (any state other than terminated/shutting-down). When showNAT is true,
-// the shared NAT instance is appended as an additional row (Type "nat")
-// so its power state (running/stopped) can be inspected alongside the
-// code-server instances.
+// the shared NAT instance (Type "nat") and the NAT gateway (Type
+// "natgw", ADR 0026) are appended as additional rows when they exist,
+// so the egress can be inspected alongside the code-server instances.
 func (s *Service) ListInstances(ctx context.Context, showNAT bool) ([]InstanceSummary, error) {
 	out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
@@ -93,17 +101,36 @@ func (s *Service) ListInstances(ctx context.Context, showNAT bool) ([]InstanceSu
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Name < summaries[j].Name })
 
 	if showNAT {
-		nat, err := s.findNATInstance(ctx, "")
+		nats, err := s.listNATInstances(ctx, "")
 		if err != nil {
 			return nil, err
 		}
-		if nat.InstanceID != "" {
+		for _, nat := range nats {
 			summaries = append(summaries, InstanceSummary{
 				Name:         naming.NATInstance(),
 				Type:         instanceKindNAT,
 				InstanceID:   nat.InstanceID,
 				State:        string(nat.State),
 				InstanceType: string(nat.InstanceType),
+				PublicIP:     nat.PublicIP,
+			})
+		}
+		gws, err := s.listNATGateways(ctx, "")
+		switch {
+		case err != nil && awshelper.IsAPIError(err, tagLookupDenied...):
+			// A policy scoped to the NAT instance era may lack
+			// ec2:DescribeNatGateways; the rest of the list still helps.
+			slog.Warn("list: could not look up the NAT gateway", "missing_permission", "ec2:DescribeNatGateways", "error", err)
+		case err != nil:
+			return nil, err
+		}
+		for _, gw := range gws {
+			summaries = append(summaries, InstanceSummary{
+				Name:       naming.NATGW(),
+				Type:       instanceKindNATGateway,
+				InstanceID: gw.ID,
+				State:      string(gw.State),
+				PublicIP:   gw.PublicIP,
 			})
 		}
 	}

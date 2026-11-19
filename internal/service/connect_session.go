@@ -504,19 +504,43 @@ func classifyStartSessionError(err error) startSessionErrorKind {
 // with TargetNotConnected: the instance's SSM agent is not connected to
 // AWS. Right after start that is a matter of a minute; when it lasts,
 // the instance usually has no outbound connectivity, as with a NAT
-// instance that does not forward (Issue #87). Other errors are returned
-// unchanged.
-func withTargetNotConnectedHint(err error) error {
+// instance that does not forward (Issue #87). natMode names the egress
+// the hint points at (currentNATMode); "" names both. Other errors are
+// returned unchanged.
+func withTargetNotConnectedHint(err error, natMode string) error {
 	var apiErr smithy.APIError
 	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "TargetNotConnected" {
 		return err
 	}
+	var egress string
+	switch natMode {
+	case NATModeInstance:
+		egress = "it reaches the internet through the NAT instance. " +
+			"Check that the NAT instance is running (`nakama aws list --show-nat`), and run `nakama aws init`, " +
+			"which checks the NAT instance's forwarding and repairs it"
+	case NATModeGateway:
+		egress = "it reaches the internet through the NAT gateway. " +
+			"Check that the NAT gateway is available (`nakama aws list --show-nat`, `nakama aws doctor`), " +
+			"and run `nakama aws init`, which replaces a failed NAT gateway and repoints the route"
+	default:
+		egress = "it reaches the internet through the NAT instance or the NAT gateway. " +
+			"Check them with `nakama aws list --show-nat` and `nakama aws doctor`, and run `nakama aws init`, " +
+			"which repairs the NAT instance's forwarding or replaces a failed NAT gateway"
+	}
 	return fmt.Errorf("%w\n"+
 		"The instance's SSM agent is not connected to AWS. Right after `start` or `create` this takes a minute "+
 		"or two; retry then.\n"+
-		"If it persists, the instance probably cannot reach AWS: it reaches the internet through the NAT instance. "+
-		"Check that the NAT instance is running (`nakama aws list --show-nat`), and run `nakama aws init`, "+
-		"which checks the NAT instance's forwarding and repairs it", err)
+		"If it persists, the instance probably cannot reach AWS: %s", err, egress)
+}
+
+// targetNotConnectedHint is withTargetNotConnectedHint with the egress
+// looked up, only when the hint applies.
+func (s *Service) targetNotConnectedHint(ctx context.Context, err error) error {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "TargetNotConnected" {
+		return err
+	}
+	return withTargetNotConnectedHint(err, s.currentNATMode(ctx))
 }
 
 // installPluginResumeConfig points the vendored plugin's in-place

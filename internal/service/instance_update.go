@@ -105,10 +105,11 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 	res.BackupLabel = b.Label
 
 	// The update installs packages and the latest code-server from the
-	// internet, so the shared NAT instance must provide egress. Ensure it
-	// is running before the code-server instance comes up.
-	if err := s.ensureNATInstanceRunning(ctx); err != nil {
-		return res, fmt.Errorf("start NAT instance: %w", err)
+	// internet, so the egress must work. Make it ready (start the NAT
+	// instance, or check the NAT gateway) before the code-server
+	// instance comes up.
+	if err := s.ensureEgress(ctx); err != nil {
+		return res, fmt.Errorf("egress: %w", err)
 	}
 
 	// 2. Start the instance if it was stopped.

@@ -86,6 +86,12 @@ func (s *Service) initIAM(ctx context.Context, res *InitResult) error {
 	}
 	res.InstanceProfileARN = profileARN
 
+	// The gateway mode has no NAT instance (ADR 0026): it creates no NAT
+	// role, and keeps one left by the instance mode for a switch back.
+	if res.NATMode == NATModeGateway {
+		return nil
+	}
+
 	// The NAT instance gets its own role: SSM-managed for
 	// troubleshooting, but with no Parameter Store access, so a
 	// compromised NAT node cannot read code-server passwords or

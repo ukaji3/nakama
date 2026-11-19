@@ -97,6 +97,12 @@ func SSMMetaInitialized() string { return "/" + Prefix + "/_meta/initialized" }
 // that performed the last init().
 func SSMMetaVersion() string { return "/" + Prefix + "/_meta/version" }
 
+// SSMMetaNATMode returns the path that records the egress mode
+// `nakama aws init` sets up: "instance" (the NAT instance, ADR 0007) or
+// "gateway" (a NAT gateway, ADR 0026). Environments set up before
+// ADR 0026 carry no record and are treated as "instance".
+func SSMMetaNATMode() string { return "/" + Prefix + "/_meta/nat-mode" }
+
 // NATInstance returns the canonical NAT instance name (ADR 0007).
 func NATInstance() string { return Prefix + "-nat" }
 
