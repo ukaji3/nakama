@@ -6,11 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
 	"github.com/ukaji3/nakama/internal/naming"
-	"github.com/ukaji3/nakama/internal/tagging"
 )
 
 func TestValidateNATMode(t *testing.T) {
@@ -29,19 +27,13 @@ func TestValidateNATMode(t *testing.T) {
 
 func TestPlanInit(t *testing.T) {
 	t.Parallel()
-	running := func(name string) ec2types.Instance {
-		return ec2types.Instance{
-			InstanceId: aws.String("i-" + name),
-			State:      &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning},
-			Tags:       []ec2types.Tag{{Key: aws.String(tagging.KeyName), Value: aws.String(name)}},
-		}
-	}
 	cases := []struct {
 		name      string
 		vpc       bool
 		recorded  string
 		requested string
-		active    []ec2types.Instance
+		// running and stopped are code-server instances by name.
+		running, stopped []string
 
 		wantMode   string
 		wantNew    bool
@@ -54,16 +46,17 @@ func TestPlanInit(t *testing.T) {
 		{name: "new environment with --nat instance",
 			requested: NATModeInstance, wantMode: NATModeInstance, wantNew: true},
 		{name: "existing environment without a record keeps the NAT instance", vpc: true,
-			active:   []ec2types.Instance{running("dev01")},
+			running:  []string{"dev01"},
 			wantMode: NATModeInstance},
 		{name: "existing environment keeps the recorded gateway", vpc: true, recorded: NATModeGateway,
 			wantMode: NATModeGateway},
 		{name: "--nat equal to the record is no switch", vpc: true, recorded: NATModeGateway, requested: NATModeGateway,
 			wantMode: NATModeGateway},
 		{name: "switch an unrecorded environment to the gateway", vpc: true, requested: NATModeGateway,
-			active:   []ec2types.Instance{running("dev02"), running("dev01")},
+			running: []string{"dev02", "dev01"}, stopped: []string{"dev03"},
 			wantMode: NATModeGateway, wantSwitch: true, wantFrom: NATModeInstance, wantActive: []string{"dev01", "dev02"}},
 		{name: "switch back to the NAT instance", vpc: true, recorded: NATModeGateway, requested: NATModeInstance,
+			stopped:  []string{"dev01"},
 			wantMode: NATModeInstance, wantSwitch: true, wantFrom: NATModeGateway},
 		{name: "a record without the VPC is kept for the new environment", recorded: NATModeInstance,
 			wantMode: NATModeInstance, wantNew: true},
@@ -73,7 +66,14 @@ func TestPlanInit(t *testing.T) {
 			t.Parallel()
 			env := newInfraEnv("", nil)
 			env.ec2.vpcExists = c.vpc
-			env.ec2.activeCodeServers = c.active
+			for _, n := range c.running {
+				env.withCodeServer(n, ec2types.InstanceStateNameRunning)
+			}
+			for _, n := range c.stopped {
+				env.withCodeServer(n, ec2types.InstanceStateNameStopped)
+			}
+			// The NAT instance is no code-server instance.
+			env.withNATInstance("i-nat", ec2types.InstanceStateNameRunning)
 			if c.recorded != "" {
 				env.ssm.params[naming.SSMMetaNATMode()] = c.recorded
 			}

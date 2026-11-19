@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
+	"github.com/ukaji3/nakama/internal/naming"
 	"github.com/ukaji3/nakama/internal/tagging"
 )
 
@@ -46,12 +47,36 @@ func natGateway(id string, state ec2types.NatGatewayState, publicIP string) ec2t
 		State:        state,
 		VpcId:        aws.String("vpc-1"),
 		SubnetId:     aws.String("subnet-public"),
+		Tags:         ec2Tags(tagging.ForShared(tagging.ComponentNATGW, naming.NATGW())),
 		NatGatewayAddresses: []ec2types.NatGatewayAddress{{
 			AllocationId: aws.String("eipalloc-" + id),
 			PublicIp:     aws.String(publicIP),
 			IsPrimary:    aws.Bool(true),
 		}},
 	}
+}
+
+// foreignNATGateway is an available NAT gateway that is not nakama's.
+func foreignNATGateway(id string) ec2types.NatGateway {
+	gw := natGateway(id, ec2types.NatGatewayStateAvailable, "198.51.100.99")
+	gw.Tags = ec2Tags(map[string]string{tagging.NameTag: "someone-elses-nat"})
+	return gw
+}
+
+// filterNATGateways applies the DescribeNatGateways filters to the fake's
+// NAT gateways (matchEC2Filters).
+func filterNATGateways(gws []ec2types.NatGateway, filters []ec2types.Filter) ([]ec2types.NatGateway, error) {
+	var out []ec2types.NatGateway
+	for _, gw := range gws {
+		ok, err := matchEC2Filters(filters, gw.Tags, map[string]string{"vpc-id": aws.ToString(gw.VpcId)})
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, gw)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeNATEC2) DescribeNatGateways(_ context.Context, in *ec2.DescribeNatGatewaysInput, _ ...func(*ec2.Options)) (*ec2.DescribeNatGatewaysOutput, error) {
@@ -73,7 +98,11 @@ func (f *fakeNATEC2) DescribeNatGateways(_ context.Context, in *ec2.DescribeNatG
 		}
 		return &ec2.DescribeNatGatewaysOutput{}, nil
 	}
-	return &ec2.DescribeNatGatewaysOutput{NatGateways: f.natGateways}, nil
+	gws, err := filterNATGateways(f.natGateways, in.Filter)
+	if err != nil {
+		return nil, err
+	}
+	return &ec2.DescribeNatGatewaysOutput{NatGateways: gws}, nil
 }
 
 func newFakeNAT(natID string, natState ec2types.InstanceStateName, activeIDs ...string) *fakeNATEC2 {
@@ -279,6 +308,9 @@ func TestEnsureEgress_GatewayMode(t *testing.T) {
 		{name: "failed", gws: []ec2types.NatGateway{natGateway("nat-1", ec2types.NatGatewayStateFailed, "")},
 			wantErr: []string{"nat-1", "failed", "nakama aws init"}},
 		{name: "neither NAT", wantErr: []string{"no nakama NAT instance or NAT gateway", "nakama aws init"}},
+		// A NAT gateway that is not nakama's does not count.
+		{name: "only a foreign NAT gateway", gws: []ec2types.NatGateway{foreignNATGateway("nat-other")},
+			wantErr: []string{"no nakama NAT instance or NAT gateway", "nakama aws init"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

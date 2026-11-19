@@ -34,11 +34,15 @@ type fakeListEC2 struct {
 	natGatewayErr error
 }
 
-func (f *fakeListEC2) DescribeNatGateways(context.Context, *ec2.DescribeNatGatewaysInput, ...func(*ec2.Options)) (*ec2.DescribeNatGatewaysOutput, error) {
+func (f *fakeListEC2) DescribeNatGateways(_ context.Context, in *ec2.DescribeNatGatewaysInput, _ ...func(*ec2.Options)) (*ec2.DescribeNatGatewaysOutput, error) {
 	if f.natGatewayErr != nil {
 		return nil, f.natGatewayErr
 	}
-	return &ec2.DescribeNatGatewaysOutput{NatGateways: f.natGateways}, nil
+	gws, err := filterNATGateways(f.natGateways, in.Filter)
+	if err != nil {
+		return nil, err
+	}
+	return &ec2.DescribeNatGatewaysOutput{NatGateways: gws}, nil
 }
 
 func (f *fakeListEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
@@ -198,8 +202,9 @@ func TestListInstances_ShowNATListsTheNATGateway(t *testing.T) {
 		},
 		natGateways: []ec2types.NatGateway{
 			natGateway("nat-1", ec2types.NatGatewayStateAvailable, "203.0.113.10"),
-			// Deleted ones are not listed.
+			// Deleted ones are not listed, nor are ones that are not nakama's.
 			natGateway("nat-old", ec2types.NatGatewayStateDeleted, "198.51.100.1"),
+			foreignNATGateway("nat-other"),
 		},
 	}
 	rows, err := newServiceForList(f).ListInstances(context.Background(), true)
