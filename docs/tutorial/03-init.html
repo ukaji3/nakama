@@ -55,7 +55,7 @@
   <tbody>
     <tr><td>VPC とサブネット</td><td>AWS の中に用意する専用のネットワーク区画。開発環境は外から直接触れない「プライベート」側に置かれます</td></tr>
     <tr><td>インターネットゲートウェイとルートテーブル</td><td>外向きの通信経路の設定 (触る必要はありません)</td></tr>
-    <tr><td>NAT インスタンス</td><td>開発環境が外部と通信する (ソフトのダウンロードなど) ための小さな中継サーバー</td></tr>
+    <tr><td>外向き通信の中継 (NAT ゲートウェイ、または NAT インスタンス)</td><td>開発環境が外部と通信する (ソフトのダウンロードなど) ための中継。どちらを使うかは <a href="#nat">次の節</a>で選びます</td></tr>
     <tr><td>IAM ロールとインスタンスプロファイル</td><td>開発環境が AWS の機能 (SSM 経由の接続など) を使うための権限 (触る必要はありません)</td></tr>
     <tr><td>WAF (Web ACL と IP セット)</td><td>正面玄関の門番。許可した IP からのアクセスだけ通します</td></tr>
     <tr><td>SSM パラメータ</td><td>作ったリソースの ID などの控え (nakama が次回以降参照します)</td></tr>
@@ -68,15 +68,45 @@
   <p><code>init</code> は<strong>冪等</strong>です。すでに nakama が作ったリソースがあれば、それを再利用します。「途中で失敗した」「設定が合っているか不安」というときは、もう一度実行して構いません。</p>
 </div>
 
+<h3 id="nat">外向き通信の中継を選ぶ</h3>
+<p>開発環境は外から直接届かない場所にあるので、外向きの通信 (ソフトのダウンロードなど) は中継を通ります。中継は次の 2 つから選べます。</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th scope="col">中継</th><th scope="col">指定</th><th scope="col">特徴</th></tr></thead>
+  <tbody>
+    <tr><td>NAT ゲートウェイ</td><td><code>--nat gateway</code> (新しく始める場合の既定)</td><td>AWS が管理する中継です。nakama が更新する OS が無いので、攻撃を受ける面が小さくなります。<strong>常に動いていて、開発環境を全部止めても料金がかかります</strong>。外向きの IP アドレスは固定です</td></tr>
+    <tr><td>NAT インスタンス</td><td><code>--nat instance</code></td><td>小さな EC2 インスタンスの中継です。開発環境が 1 台でも動いている間だけ自動で起動し、全部止めれば料金はほぼかかりません。OS は nakama が管理し、初回起動時と <code>init</code> の修理のときに更新します</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="cmd-caption">PowerShell で実行 (中継を指定する場合)</p>
+<pre><code>nakama aws init --nat gateway     # NAT ゲートウェイを使う
+nakama aws init --nat instance    # NAT インスタンスを使う</code></pre>
+<p><code>--nat</code> を付けなければ、前回選んだ中継のままです。新しく始める場合は NAT ゲートウェイになり、その料金について注記が表示されます。この機能より前の nakama で作った土台は、NAT インスタンスのまま変わりません。</p>
+<p>あとから切り替えることもできます。すでにある土台で中継を変えると、<code>init</code> は何を作って何を消すかを表示して確認を求めます (<code>y</code> で実行、<code>--yes</code> で確認を省略)。新しい中継を用意して確かめてから経路を切り替え、古い中継を消します (NAT インスタンスの権限 (IAM ロール) は、戻すときのために残します)。</p>
+
+<div class="callout warn" role="note">
+  <span class="title">切り替えの瞬間に接続が切れます</span>
+  <p>経路を切り替える瞬間に、動いている開発環境の外向きの接続と、<code>connect</code> / <code>ssh</code> / <code>tunnel</code> の接続が切れます (<code>connect</code> と <code>tunnel</code> は自動でつなぎ直します)。確認の画面に、動いている開発環境の名前が出ます。NAT ゲートウェイから NAT インスタンスに戻すと、外向きの IP アドレスが変わります。</p>
+</div>
+
+<div class="callout warn" role="note">
+  <span class="title">すべてのパソコンの nakama を新しくしてから切り替えてください</span>
+  <p>この機能より前の nakama で <code>init</code> を実行すると、NAT ゲートウェイを消して NAT インスタンスに戻します。複数のパソコンで nakama を使っている場合は、先にすべてを新しい版にしてください。戻ってしまった場合は、<code>nakama aws doctor</code> の <code>egress</code> の行に表示され、新しい版の <code>init</code> で元に戻せます。</p>
+</div>
+
 <div class="callout note" role="note">
-  <span class="title">最後に NAT インスタンスを点検します</span>
-  <p><code>init</code> は最後に、NAT インスタンスが通信を中継できているかを確かめます。結果は表示の <code>nat forwarding</code> の行に出ます (<code>ok</code> なら正常、<code>repaired</code> なら壊れていたものを直したという意味です)。直すときは、セキュリティ更新もあわせて入れるので、数分かかります。NAT インスタンスが停止中なら点検のために起動し、終わったら停止に戻します。</p>
+  <span class="title">NAT インスタンスなら、最後に点検します</span>
+  <p>NAT インスタンスを使う場合、<code>init</code> は最後に、NAT インスタンスが通信を中継できているかを確かめます。結果は表示の <code>nat forwarding</code> の行に出ます (<code>ok</code> なら正常、<code>repaired</code> なら壊れていたものを直したという意味です)。直すときは、セキュリティ更新もあわせて入れるので、数分かかります。NAT インスタンスが停止中なら点検のために起動し、終わったら停止に戻します。</p>
   <p>直せなかった場合、<code>init</code> はエラーで終わります。もう一度 <code>init</code> を実行してください。</p>
+  <p>NAT ゲートウェイを使う場合は、使える状態 (<code>available</code>) になるまで待ちます。結果は <code>nat gateway</code> と <code>egress ip</code> (外向きの IP アドレス) の行に出ます。</p>
 </div>
 
 <div class="callout warn" role="note">
   <span class="title">以前の nakama から移行する場合の注意</span>
-  <p>過去のバージョンの nakama が作った <strong>NAT ゲートウェイ</strong>が残っている場合、<code>init</code> はそれを削除し、割り当てられていた固定 IP (Elastic IP) を解放します。これは、より安価な NAT インスタンスへ移行するためです。通信が途切れないように、先に新しい経路へ切り替えてから削除する順序で行われます。</p>
+  <p>NAT インスタンスを使う土台に、ずっと前のバージョンの nakama が作った <strong>NAT ゲートウェイ</strong>が残っている場合、<code>init</code> はそれを削除し、割り当てられていた固定 IP (Elastic IP) を解放します。通信が途切れないように、先に新しい経路へ切り替えてから削除する順序で行われます。</p>
   <p>初めて nakama を使う場合は、この動作は起こりません。</p>
 </div>
 
@@ -147,7 +177,8 @@ nakama aws acl delete all                # すべて消す</code></pre>
   <tbody>
     <tr><td>開発環境の EC2 インスタンス</td><td><strong>起動している時間だけ</strong>。停止すればかかりません</td></tr>
     <tr><td>ディスク (EBS)</td><td><strong>作ってある間ずっと</strong>。停止中も保管料がかかります (中身を保つため)</td></tr>
-    <tr><td>NAT インスタンス</td><td>開発環境が 1 台でも起動している時間だけ (自動で連動します)。ただし <code>init</code> の直後は起動した状態で作られ、次に <code>stop</code> / <code>delete</code> などで電源が見直されるまで動き続けます</td></tr>
+    <tr><td>NAT ゲートウェイ (<code>--nat gateway</code>)</td><td><strong>作ってある間ずっと</strong>。開発環境を全部止めてもかかります。時間割りの料金 + 中継した通信量 (<code>connect</code> / <code>tunnel</code> の通信も含む) + 固定 IP (Elastic IP) の料金 (<a href="https://aws.amazon.com/vpc/pricing/">Amazon VPC の料金</a>)</td></tr>
+    <tr><td>NAT インスタンス (<code>--nat instance</code>)</td><td>開発環境が 1 台でも起動している時間だけ (自動で連動します)。ただし <code>init</code> の直後は起動した状態で作られ、次に <code>stop</code> / <code>delete</code> などで電源が見直されるまで動き続けます</td></tr>
     <tr><td>CloudFront</td><td>通信量とリクエスト数に応じて</td></tr>
     <tr><td>WAF</td><td>Web ACL が存在する間、時間割りの基本料金 + リクエスト数 (<a href="https://aws.amazon.com/waf/pricing/">AWS WAF の料金</a>)</td></tr>
     <tr><td>バックアップ (スナップショット)</td><td>保管している容量に応じて。世代を増やすほど増えます</td></tr>
@@ -156,8 +187,8 @@ nakama aws acl delete all                # すべて消す</code></pre>
 </div>
 
 <figure>
-  <img width="900" height="390" src="img/cost.svg" alt="code-server が 1 台でも起動していると NAT インスタンスも自動で起動し、インスタンスと NAT とディスクの料金がかかる。すべて停止すると NAT も自動停止し、ディスクの保管料だけになる。">
-  <figcaption><strong>図 3-1: 電源の連動。</strong> 外向き通信の中継役 (NAT インスタンス) は、開発環境の稼働に合わせて自動で起動・停止します。常時稼働するタイプの中継 (NAT ゲートウェイ) を使わないのは、使っていない時間の料金を避けるためです。図の「固定費はほぼゼロ」は<strong>ディスクと WAF の基本料金だけが残る</strong>という意味です (下の注記を参照)。</figcaption>
+  <img width="900" height="390" src="img/cost.svg" alt="NAT インスタンスを使う場合、code-server が 1 台でも起動していると NAT インスタンスも自動で起動し、インスタンスと NAT とディスクの料金がかかる。すべて停止すると NAT も自動停止し、ディスクの保管料だけになる。">
+  <figcaption><strong>図 3-1: NAT インスタンスの電源の連動。</strong> NAT インスタンスを選んだ場合、外向き通信の中継役は開発環境の稼働に合わせて自動で起動・停止します。図の「固定費はほぼゼロ」は<strong>ディスクと WAF の基本料金だけが残る</strong>という意味です (下の注記を参照)。NAT ゲートウェイを選んだ場合は、中継は常に動いていて、すべて停止しても NAT ゲートウェイの料金が残ります。</figcaption>
 </figure>
 
 <div class="callout tip" role="note">
@@ -172,13 +203,14 @@ nakama aws acl delete all                # すべて消す</code></pre>
 
 <div class="callout note" role="note">
   <span class="title">完全にゼロにはなりません</span>
-  <p>すべて停止しても、次の 3 つは残ります (いずれも小さな額ですが、ゼロではありません)。</p>
+  <p>すべて停止しても、次のものは残ります。</p>
   <ol>
     <li>各環境の<strong>ディスク保管料</strong></li>
     <li><strong>WAF の Web ACL の基本料金</strong> (時間割り)</li>
-    <li>NAT インスタンスの<strong>小さなディスクの保管料</strong></li>
+    <li>NAT インスタンスを使う場合: NAT インスタンスの<strong>小さなディスクの保管料</strong></li>
+    <li>NAT ゲートウェイを使う場合: <strong>NAT ゲートウェイの時間割りの料金と、固定 IP (Elastic IP) の料金</strong> (ほかの 3 つより大きな額です。止めている時間が長いなら、<code>nakama aws init --nat instance</code> で NAT インスタンスに切り替えられます)</li>
   </ol>
-  <p>土台まで含めて消すコマンドは<strong>ありません</strong>。完全に止めるには、各環境を <code>nakama aws delete</code> で削除したうえで、AWS コンソールから名前が <code>nakama-</code> で始まるリソース (WAF の Web ACL と IP セット、NAT インスタンス、VPC、IAM ロール、SSM パラメータ) を削除します。判断に迷う場合は AWS の管理者に依頼してください。</p>
+  <p>土台まで含めて消すコマンドは<strong>ありません</strong>。完全に止めるには、各環境を <code>nakama aws delete</code> で削除したうえで、AWS コンソールから名前が <code>nakama-</code> で始まるリソース (WAF の Web ACL と IP セット、NAT ゲートウェイと Elastic IP、または NAT インスタンス、VPC、IAM ロール、SSM パラメータ) を削除します。判断に迷う場合は AWS の管理者に依頼してください。</p>
 </div>
 
 <nav class="pager" aria-label="章の移動">

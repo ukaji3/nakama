@@ -78,7 +78,7 @@
 <table>
   <thead><tr><th scope="col">コマンド</th><th scope="col">説明</th><th scope="col">主なオプション</th></tr></thead>
   <tbody>
-    <tr><td><code>nakama aws init</code></td><td>共通の土台を作成 (冪等)</td><td>—</td></tr>
+    <tr><td><code>nakama aws init</code></td><td>共通の土台を作成 (冪等)。外向き通信の中継の選択と切り替え (<a href="03-init.html#nat">第 3 章</a>)</td><td><code>--nat gateway|instance</code> (中継。省略時は前回のまま、新しく始める場合は <code>gateway</code>)、<code>--yes</code> (切り替えの確認を省略)</td></tr>
     <tr><td><code>nakama aws acl add [IP|CIDR]</code></td><td>許可 IP を追加 (省略時は自動検出。見つかった IP をすべて追加)</td><td>—</td></tr>
     <tr><td><code>nakama aws acl list</code></td><td>許可 IP を一覧 (最後に <code>acl add</code> した時刻と、それからの日数)</td><td>—</td></tr>
     <tr><td><code>nakama aws acl delete &lt;IP|CIDR&gt;...</code></td><td>許可 IP を削除 (複数可)</td><td>—</td></tr>
@@ -104,7 +104,7 @@
         <code>--no-kiro</code> (Kiro CLI / Kiro Crew の既定導入をスキップ)
       </td>
     </tr>
-    <tr><td><code>nakama aws list</code></td><td>一覧表示</td><td><code>--show-nat</code> (中継役も表示)</td></tr>
+    <tr><td><code>nakama aws list</code></td><td>一覧表示</td><td><code>--show-nat</code> (中継役の NAT インスタンス / NAT ゲートウェイも、外向きの IP とともに表示)</td></tr>
     <tr><td><code>nakama aws info &lt;名前&gt;</code></td><td>詳細表示</td><td><code>--show-password</code></td></tr>
     <tr><td><code>nakama aws setup rerun &lt;名前&gt;</code></td><td>セットアップを再実行</td><td><code>--setup</code>、<code>--dotfiles</code>、<code>--preset</code></td></tr>
   </tbody>

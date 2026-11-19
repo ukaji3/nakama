@@ -1,7 +1,7 @@
 # nakama 設計書 (v1)
 
-> Status: v0.24.0 時点の実装に合わせて改訂
-> Last updated: 2026-10-24
+> Status: v0.25.0 時点の実装と、NAT Gateway との切り替え (ADR 0026、§8.28) に合わせて改訂
+> Last updated: 2026-11-19
 
 要件定義書: [requirements.md](requirements.md)
 
@@ -24,8 +24,10 @@
                                       outbound 0.0.0.0/0
                                        │
                                        ▼
-                       [Private Subnet] ──> [NAT インスタンス (Public Subnet, t4g.nano)] ──> [IGW] ──> Internet
-                                                     └── 電源は code-server のライフサイクルに連動 (全停止で自動停止)
+                       [Private Subnet] ──> [NAT (Public Subnet, --nat で選ぶ。§8.28)] ──> [IGW] ──> Internet
+                                              ├── gateway : NAT Gateway + EIP (AWS が管理、常時稼働。新しい環境の既定)
+                                              └── instance: NAT インスタンス (t4g.nano)。電源は code-server の
+                                                            ライフサイクルに連動 (全停止で自動停止。ADR 0007)
 
 [SSM Parameter Store]
   /nakama/<name>/code-server/password   (SecureString, KMS aws/ssm)
@@ -43,6 +45,7 @@
   /nakama/<name>/meta/kirocrew-distribution-domain (String, kirocrew enable 時のみ。§8.19)
   /nakama/_meta/initialized             (String, "true")
   /nakama/_meta/version                 (String, semver)
+  /nakama/_meta/nat-mode                (String, "instance" | "gateway"。init が選んだ外向き通信の方式。未記録は instance。§8.28)
   /nakama/_meta/acl/<cidr>              (String, RFC3339 timestamp。acl add のたびに書き直す (最後に追加・確認した時刻)。CIDR の "/" は "_" に置換。例: 203.0.113.5_32)
 ```
 
@@ -95,6 +98,8 @@ github.com/ukaji3/nakama
 | IGW | `nakama-igw` |
 | NAT インスタンス | `nakama-nat` |
 | NAT インスタンス SG | `nakama-nat-sg` |
+| NAT Gateway (gateway の方式。§8.28) | `nakama-natgw` (ADR 0007 より前の NAT Gateway と同じ名前。ADR 0026 の Decision 8) |
+| NAT Gateway の EIP | `nakama-natgw-eip` |
 | Public Subnet | `nakama-public-<az-suffix>` (例: `nakama-public-1a`) |
 | Private Subnet | `nakama-private-<az-suffix>` |
 | Public Route Table | `nakama-rtb-public` |
@@ -136,7 +141,7 @@ github.com/ukaji3/nakama
 
 | interface | カバー範囲 |
 |---|---|
-| `EC2API` | VPC, AvailabilityZones (Describe), Subnet (Modify: MapPublicIpOnLaunch), IGW, NAT GW (Describe/Delete, 旧 NAT GW 移行専用。ADR 0007 で新規作成はしない), EIP (Allocate/Describe/Release), RTB (Describe/Create/AssociateRoute), Route (Create/Replace), ENI, SG, Instance (Run/Describe/Start/Stop/Reboot/Terminate/ModifyAttribute incl. SourceDestCheck), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
+| `EC2API` | VPC, AvailabilityZones (Describe), Subnet (Modify: MapPublicIpOnLaunch), IGW, NAT GW (Create/Describe/Delete。gateway の方式の NAT Gateway と、instance の方式での削除。§8.28), EIP (Allocate/Describe/Release), RTB (Describe/Create/AssociateRoute), Route (Create/Replace), ENI, SG, Instance (Run/Describe/Start/Stop/Reboot/Terminate/ModifyAttribute incl. SourceDestCheck), InstanceTypes (Describe), Volume (Create/Attach/Detach/Delete/Modify), Snapshot (Create/Describe/Delete), ManagedPrefixList, Tags (Create/Delete) |
 | `CloudFrontAPI` | VpcOrigin (Create/Get/Update/Delete/List), Distribution (CRUD + GetDistributionConfig + Tagging), Function (Create/Describe/Update/Publish/Delete。Kiro Crew 画面へのリダイレクト用。§8.19) |
 | `WAFAPI` | IPSet (CRUD), WebACL (Create/Get/List/Update; Delete は共有・恒久リソースのため非対応)。コンストラクタで強制的に **us-east-1** に切り替え (`CLOUDFRONT` scope の制約) |
 | `SSMAPI` | Parameter Store + Run Command (`SendCommand` / `GetCommandInvocation`) + Session Manager (`StartSession` / `TerminateSession`) |
@@ -229,20 +234,21 @@ func (s *Service) Restore(ctx, *RestorePlan) (*RestoreResult, error)
 
 ### 8.1 `nakama aws init`
 
+0. 外向き通信の方式を決めて記録する (`planNATMode`、§8.28): `--nat` > 記録 (`/nakama/_meta/nat-mode`) > 既存環境 (nakama の VPC がある) は `instance` > 新しい環境は `gateway`。CLI は先に `PlanInit` (読み取りだけ) を呼び、既存環境で方式が変わるなら確認を取る。init は何かを変える前に方式を SSM に書く
 1. AZ サニティチェック: `ec2:DescribeAvailabilityZones` で AZ ID を解決し、`apne1-az3` (CloudFront VPC Origins 非対応) を除外
 2. タグ検索で `nakama-vpc` の有無を判定。なければ作成
 3. IGW / Subnet を冪等に作成 (public subnet は MapPublicIpOnLaunch=true)
-4. IAM instance role / profile を冪等に作成 (NAT インスタンスがこのプロファイルを使うため先に作成)
-5. NAT インスタンス (`t4g.nano`, AL2023 arm64) を public subnet に作成または再利用し、SourceDestCheck を無効化 (新規作成時は `running` まで待機)
-6. RTB / Routes を冪等に作成。private default route は NAT インスタンスの ENI 宛て。既存の `0.0.0.0/0` が旧 NAT Gateway 宛てなら `ReplaceRoute` で張り替え
-7. 旧 NAT Gateway が存在すれば削除し、その EIP を解放 (ADR 0007 への移行。ルート張り替え後に実施するため egress は途切れない)
-8. WAF IP set / web ACL を冪等に作成
-9. NAT インスタンスの転送を確認する (`initNATForwarding`、ADR 0007 の追記 / Issue #87)
+4. IAM instance role / profile を冪等に作成。`instance` では NAT インスタンス用のロール / プロファイルも作る (NAT インスタンスがこのプロファイルを使うため先に作成)。`gateway` では NAT 用を作らず、あれば残す
+5. 外向き通信 (`initEgress`。経路を張り替える前に新しい NAT を用意して確かめ、張り替えた後に古い NAT を片付ける):
+   - `instance`: NAT インスタンス (`t4g.nano`, AL2023 arm64) を public subnet に作成または再利用し、SourceDestCheck を無効化 (新規作成時は `running` まで待機)。private の `0.0.0.0/0` が NAT Gateway を向いていれば (gateway からの切り替え、または ADR 0007 より前の環境)、手順 8 の転送の確認をここで行う。RTB / Routes を冪等に作成し、private default route を NAT インスタンスの ENI に向ける (NAT Gateway 宛てなら `ReplaceRoute`)。その後、NAT Gateway をすべて削除して EIP を解放する (EIP が解放直後の NAT Gateway に握られていれば次回 init で解放)
+   - `gateway`: NAT Gateway を public subnet に作成または再利用して `available` を待つ (§8.28)。RTB / Routes を冪等に作成し、private default route を NAT Gateway に向ける (NAT インスタンスの ENI 宛てなら `ReplaceRoute`)。その後、NAT インスタンスを terminate して SG を削除する
+6. WAF IP set / web ACL を冪等に作成
+7. (手順 5 で確認していない `instance` のみ) NAT インスタンスの転送を確認する (`initNATForwarding`、ADR 0007 の追記 / Issue #87)
    - 停止中なら起動し、終わったら電源を元に戻す (`reconcileNATInstancePowerState`)
    - Run Command で `natCheckScript` を実行する。初回起動の設定 (`cloud-final.service` が `activating` の間) を待ってから、`ip_forward`、`iptables`、MASQUERADE のルール、`nakama-nat.service` を調べる。SSM エージェントの登録待ち (`InvalidInstanceId`) は最大 5 分
    - 壊れていれば `natRepairScript` を実行する。user-data と同じ `nat_setup.sh` を、`systemd-run --unit=nakama-nat-repair` で動かす。その後、15 秒ごとに確認し (最大 25 分)、ユニットが `failed` になればログの末尾を付けて失敗にする
    - 結果は `InitResult.NATForwarding` (`ok` / `repaired`)
-10. SSM `/nakama/_meta/*` に状態を記録
+8. SSM `/nakama/_meta/*` に状態を記録
 
 NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順は次のとおり。
 1. `ip_forward` を有効にする
@@ -264,7 +270,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 5. `internal/awsx.EC2API.DescribeManagedPrefixLists` で CloudFront prefix list ID 取得
 6. SG 作成 → `meta/security-group-id` を記録 → 8080 inbound (prefix list)
 7. ENI 作成 (Private subnet 1a) → `meta/eni-id` を記録
-8. NAT インスタンスを起動 (`ensureNATInstanceRunning`。停止中なら start して `running` まで待機。ADR 0007 の電源連動)
+8. 外向き通信を用意する (`ensureEgress`、§8.28): NAT インスタンスがあれば起動する (停止中なら start して `running` まで待機。ADR 0007 の電源連動)。無ければ NAT Gateway が `available` かを確かめる (`pending` なら待つ。使えなければ init を案内してエラー)
 9. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を AWS 公式のインストールスクリプトで ubuntu ユーザーに導入する (§8.22、ADR 0024)。Ubuntu の apt `awscli` は v1 と古いため purge する)。IAM instance profile は手順 2 で選択したもの (フラグ省略時は共有ベースプロファイル `nakama-instance-profile`)
 10. SSM に meta 情報 (`meta/instance-id` と ENI / SG。bare なら `meta/kind`、`--with-admin` / `--with-role` 時は `meta/iam-role` / `meta/instance-profile` も) を書き込み、EC2 が `running` まで待機
 11. CloudFront `CreateVpcOrigin` (HTTP:8080) → `meta/vpc-origin-id` を記録
@@ -286,7 +292,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 7. ENI → delete (terminate 完了後。タグで見つけたものはすべて)
 8. SG → delete (タグで見つけたものはすべて)
 9. SSM `/nakama/<name>/*` を全削除
-10. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerStateExcluding`。削除対象を除外し、他に稼働中の code-server が無ければ NAT インスタンスも停止。ADR 0007)
+10. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerStateExcluding`。削除対象を除外し、他に稼働中の code-server が無ければ NAT インスタンスも停止。ADR 0007。NAT インスタンスが無ければ (gateway の方式) 何もしない。§8.28)
 
 ### 8.4 `nakama aws backup create`
 
@@ -308,7 +314,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 6. 旧ルートを `DetachVolume` → 新ボリュームを同デバイス名で `AttachVolume`
 7. `ModifyInstanceAttribute` で新ルートに `DeleteOnTermination=true` を再設定 (起動後アタッチのボリュームは既定 false のため。これを怠ると `delete` 後にルート EBS が available のまま残存する)
 8. 旧ルートボリュームを `DeleteVolume`
-9. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。インスタンスは停止のまま残るため、他に稼働中が無ければ NAT インスタンスも停止。ADR 0007)
+9. NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。インスタンスは停止のまま残るため、他に稼働中が無ければ NAT インスタンスも停止。ADR 0007。gateway の方式では何もしない)
 10. インスタンスは停止のまま終了 (利用者が `start`)
 
 #### 8.5.1 削除済みインスタンスの作り直し (Issue #96)
@@ -327,7 +333,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 2. アーキに合う最新の Ubuntu 26.04 AMI を解決する。code-server なら新しいパスワードを生成して SSM に置く
 3. `prepareInstanceNetwork` (create と共通): 土台の発見、SG と ENI の作成 (それぞれ作った直後に記録)
 4. user-data は `userdata.RenderRestore` の cloud-config。`ssh_deletekeys: false` で、バックアップの SSH ホスト鍵を残す (cloud-init は新しいインスタンス ID を見ると鍵を消して作り直すため)。code-server なら初回起動スクリプトを置き、`runcmd` で実行する。スクリプトは `~/.config/code-server/config.yaml` が無ければ何もせず (起動直後の新しいボリュームの場合)、あれば SSM の新しいパスワードで `password:` の行だけを置き換えて code-server を再起動し、版を SSM に書き戻す。ソフトウェアは入れ直さない
-5. NAT インスタンスを起動し、`runInstances` で EC2 を起動する (ルートは既定の 20 GiB。直後に差し替える)。instance-id / ENI / SG を記録してから `running` を待つ
+5. 外向き通信を用意し (`ensureEgress`。NAT インスタンスの起動、または NAT Gateway の確認)、`runInstances` で EC2 を起動する (ルートは既定の 20 GiB。直後に差し替える)。instance-id / ENI / SG を記録してから `running` を待つ
 6. code-server なら private DNS → VPC origin → distribution を作り、それぞれ作った直後 (VPC origin は `Deployed` を待つ前) に記録する (失敗しても `delete` で片付けられるように)
 7. インプレース復元の 3〜8 と同じ手順 (`replaceRootVolume`) でルートを差し替える。起動直後のボリュームは削除される
 8. NAT インスタンスの電源を再調整し、code-server なら distribution の `Deployed` を待つ。停止のまま終了する。URL・パスワード・プライベート IP は新しく、Kiro Crew の画面は `kirocrew enable` のやり直しが要る
@@ -380,7 +386,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 1. instance-id を解決。現 state を取得し **running / stopped 以外は即エラー** (`wasStopped := state==stopped`)
 2. 確認プロンプト (`--yes` で抑制)
 3. **自動バックアップ**: `CreateBackup`(label `preupdate-<UTC yyyy-mm-dd-HHMM>`, note `"auto backup before nakama aws update"`, `--keep` 連動)。スナップショット完了は待たない (point-in-time は API 呼出時点で確保)。電源状態は変えずに取得
-4. **NAT インスタンス起動** (`ensureNATInstanceRunning`): 更新はインターネットから apt / code-server を取得するため egress が必要。start の前に無条件で NAT を起動 (ADR 0007)。続いて `wasStopped` なら `StartInstances` → `running` 待ち → **SSM エージェント online 待ち** (`SendCommand` を `InvalidInstanceId` の間リトライ)
+4. **外向き通信の用意** (`ensureEgress`、§8.28): 更新はインターネットから apt / code-server を取得するため egress が必要。start の前に無条件で、NAT インスタンスがあれば起動し (ADR 0007)、無ければ NAT Gateway が `available` かを確かめる。続いて `wasStopped` なら `StartInstances` → `running` 待ち → **SSM エージェント online 待ち** (`SendCommand` を `InvalidInstanceId` の間リトライ)
 5. SSM Run Command (`AWS-RunShellScript`, `executionTimeout` 延長) で 1 スクリプト実行:
    - `apt-get update` → `apt-get dist-upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold` (`DEBIAN_FRONTEND=noninteractive`)
    - code-server `install.sh`(latest) → `systemctl restart code-server@ubuntu`
@@ -390,7 +396,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
    - 末尾に `/var/run/reboot-required` の有無を `NAKAMA_REBOOT_REQUIRED=0|1` として返す
    - **出力の扱い** (Issue #101): GetCommandInvocation が返す stdout は先頭 24,000 字だけなので、詳しい出力 (xtrace と apt) はインスタンスの `/var/log/nakama-update.log` に書き、stdout には上の `NAKAMA_*` の印だけを出す。失敗したときはログの末尾 (3,500 バイト) を stderr に出し、nakama のエラーに含める
 6. **reboot 判定**: 元 running かつ `NAKAMA_REBOOT_REQUIRED=1` のときのみ `RebootInstances`。元 stopped は reboot せず (手順 7 の stop と次回 start で新カーネルが反映される)
-7. `wasStopped` なら `StopInstances` → `stopped` 待ち。**手順 5 が失敗しても電源状態は元へ戻す** (バックアップ済のため復旧可能)。その後 NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。復元後の電源状態に対し、他に稼働中が無ければ NAT も停止。best-effort。ADR 0007)
+7. `wasStopped` なら `StopInstances` → `stopped` 待ち。**手順 5 が失敗しても電源状態は元へ戻す** (バックアップ済のため復旧可能)。その後 NAT インスタンスの電源を再調整 (`reconcileNATInstancePowerState`。復元後の電源状態に対し、他に稼働中が無ければ NAT も停止。best-effort。ADR 0007。gateway の方式では何もしない)
 8. 結果出力: 更新後 code-server version / AWS CLI version / Kiro Crew の結果 / backup label / reboot 実施有無 / (元 stopped 時) 次回起動で反映の注記。Kiro Crew が failed なら stderr に警告
 
 > 設計判断の根拠は ADR 0006 を参照。
@@ -550,7 +556,7 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 
 - **構成**: `service.Diagnose(ctx, DoctorOptions)` が `DoctorReport{Checks[], OKs/Warns/Fails/Skips}` を返し、CLI が表形式または `-o json` で描画して fail>0 なら `ExitCodeError{1}`
 - **資格情報未解決でも動く**: CLI は `awsx.NewClients` の失敗を診断結果 (credentials=fail) として扱い、ローカル診断 (proxy / tls) を継続する。AWS 依存項目は skip (終了コードに影響しない)
-- **各項目の実装**: proxy/tls = ADR 0018 の `cliproxy.Detector` を再利用 (`ProxyAuthError` は方式別の案内に変換) / credentials = `Clients.AccountID`・`CallerARN` + profilestore の active profile / waf-allowlist = `ListACL` + `IPDiscoverer.PublicIPv4` を CIDR 包含判定 / capability = 後述の権限マトリクス / tunnels = 状態ファイル走査 + `GetTunnelStatus` / version = `version.Checker` (§8.24)
+- **各項目の実装**: proxy/tls = ADR 0018 の `cliproxy.Detector` を再利用 (`ProxyAuthError` は方式別の案内に変換) / credentials = `Clients.AccountID`・`CallerARN` + profilestore の active profile / waf-allowlist = `ListACL` + `IPDiscoverer.PublicIPv4` を CIDR 包含判定 / capability = 後述の権限マトリクス / tunnels = 状態ファイル走査 + `GetTunnelStatus` / version = `version.Checker` (§8.24) / egress = `InspectEgress` (記録した方式、private の経路の向き先、NAT インスタンスと NAT Gateway の一覧) を `evaluateEgress` で判定 (§8.28)
 - **version 行**: AWS の外 (api.github.com) に問い合わせる唯一の項目で、資格情報が無くても最後に実行する。最新と、手元の方が新しい場合は ok、古ければ warn (Advice に新しい版のリリースページ)、確認できなければ warn (遮断されている場合の手での確かめ方を案内)、開発ビルドは skip。fail にはしない (GitHub に届くかと版の新しさは、nakama が動くかに関係しないため)
 - **機能別 capability 判定 (Issue #63)**: `internal/service/permissions.go` の `featurePermissionMatrix` が「機能 → 必要 IAM アクション」の唯一の情報源。doctor は Simulate 対象行のアクション和集合を `SimulatePrincipalPolicy` にチャンク (50) + Marker ページネーションで問い合わせ、機能ごとに ok / warn (不足アクション列挙) を 1 行ずつ表示する。不足は warn であり fail ではない (意図して権限を絞ったプリンシパルは「壊れた環境」ではない。fail は環境異常に予約)。判定は Resource `*` 評価のためリソース限定ポリシーで偽陰性があり得る旨を Advice に含める
 - **マトリクスの鮮度保証**: 双方向の乖離検出テスト (permissions_test.go)。順方向 = パッケージソースから `.clients.<SVC>.<Method>(` を抽出し、対応アクションが表に無ければ失敗。逆方向 = 表のアクションが抽出されず `implicitActions` (ResumeSession = vendored plugin 内部 / PassRole = EC2 が要求 / GetCallerIdentity = awsx 直呼び) にも無ければ失敗。暗黙宣言自体も「抽出されるようになったら失敗」で陳腐化を検出。requirements.md 付録 A は生成ブロックで、表とドキュメントの不一致も CI が検出する (`NAKAMA_UPDATE_PERMISSIONS_DOCS=1` で再生成)
@@ -683,6 +689,27 @@ create / restore が SG・ENI・EC2 を作ってから SSM に記録するまで
 - **探せないとき**: 権限で拒否された (`UnauthorizedOperation` / `AccessDenied`) ときは、記録の無いものを探せなかったことと足りない権限名 (`missing_permission=ec2:DescribeInstances` / `ec2:DescribeNetworkInterfaces` / `ec2:DescribeSecurityGroups`) を警告して続け、記録されたものを消す。前の権限表に合わせて絞ったポリシーでも delete が動く。ほかのエラーでは、何も消さずにエラーで止まる (`--force` でも。SSM の読み取りの失敗と同じ理由で、黙って成功にしない)。
 - **権限**: `ec2:DescribeNetworkInterfaces` を `delete` の行に足した (SSM に ENI の記録が無いときだけ使う)。`ec2:DescribeInstances` と `ec2:DescribeSecurityGroups` は前からある。
 - **範囲外**: VPC Origin と distribution はタグで探さない。
+
+### 8.28 外向き通信の方式 — NAT Gateway と NAT インスタンス (ADR 0026 / Issue #115)
+
+private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (NAT インスタンス、ADR 0007) のどちらかを通る。VPC に 1 つで、private の経路表の `0.0.0.0/0` が向く先で決まる。
+
+- **方式の決め方** (`planNATMode`、`PlanInit` は読み取りだけ): `--nat` > `/nakama/_meta/nat-mode` の記録 > nakama の VPC があれば `instance` (ADR 0026 より前の環境は変えない) > `gateway` (新しい環境)。記録に知らない値があればエラー (新しい版が書いた値を推測しない)。`PlanInit` は、既存環境で方式が変わるとき `Switch` と `From`、稼働中 (pending / running) の code-server インスタンスの名前を返す
+- **CLI** (`nakama aws init --nat gateway|instance [--yes]`): `--nat` の値を AWS を呼ぶ前に検査する。`Switch` なら、作るもの・消すもの・料金・稼働中のインスタンス (外向きの接続と connect / ssh / tunnel のセッションが張り替えの瞬間に切れる) を表示して y/N を聞く (`--yes` で省略)。新しい環境の `gateway` では聞かず、料金の注記を stderr に出す。その後 `Init(InitInput{NATMode: plan.NATMode})`
+- **記録**: init は AZ の確認の後、何かを作る前に方式を記録する (`writeNATMode`)。途中で止まった init は、次の init が同じ方式で続ける。新しい環境で VPC を作った後に止まっても、既存環境として `instance` にはならない
+- **`initEgress` の順序** (新しい NAT → 経路 → 古い NAT。経路を張り替える前に失敗したら古い NAT が残る):
+  - `gateway`: `initNATGateway` → `initRouteTables(routeTargetNATGateway)` → `removeNATInstance`
+  - `instance`: `initNATInstance` → (private の経路が NAT Gateway を向いていれば `initNATForwarding`) → `initRouteTables(routeTargetNetworkInterface)` → `removeNATGateway`。切り替えでないときの転送の確認は、今までどおり init の最後 (WAF の後)
+- **`initNATGateway`**: VPC 内の nakama の NAT Gateway (削除済み・削除中を除く) から `available` > `pending` > `failed` の順に 1 つ選ぶ (`preferredNATGateway`。残りは警告だけ)。`failed` なら削除して待ち、作り直す。無ければ EIP を用意し (`nakama-natgw-eip` のタグで、関連付けの無いものを再利用。無ければ `AllocateAddress`)、`CreateNatGateway` (public subnet、`ConnectivityType: public`、作成時にタグ `nakama:managed` / `nakama:component=natgw` / `Name=nakama-natgw`)。`available` を待つ (10 秒ごと、最大 10 分。`failed` などはエラー)。最後に、使っている EIP 以外のタグ付きの EIP を解放する (`releaseNATGatewayEIPs`。関連付けのあるものは残して次の init に回す)。作成時のタグにより、作った直後に中断しても次の init が見つける
+- **`removeNATInstance`**: VPC 内の nakama の NAT インスタンス (terminated・shutting-down を除く) をすべて terminate して待ち、`nakama-nat-sg` を削除する (`deleteSG` が `DependencyViolation` を再試行)。NAT インスタンスの IAM ロールとプロファイルは残す。gateway の init は NAT 用のロールを作らない (`initIAM`)
+- **`removeNATGateway`**: VPC 内の nakama の NAT Gateway をすべて削除して待ち、タグ付きの EIP を解放する。ADR 0007 より前の環境の移行も兼ねる (同じ名前のため)
+- **実行時** (create / start / update / 削除済みインスタンスの restore): `ensureEgress` は、NAT インスタンスがあれば起動し、無ければ NAT Gateway が `available` かを確かめる (`pending` なら待つ。無い・`failed` なら init を案内してエラー)。stop / delete / edit / update の後 / restore の電源の再調整 (`reconcileNATInstancePowerStateExcluding`) は、NAT インスタンスが無ければ何もしない。判断に記録を使わないのは、instance の利用者に新しい権限 (`ec2:DescribeNatGateways`) を求めないため。gateway では NAT インスタンスを terminate するので、リソースと記録は一致する。切り替えの途中で両方があるときは NAT インスタンスを起動し、どちらの経路でも外へ出られるようにする
+- **表示**: `InitResult` に `NATMode`、`NATGatewayID` / `NATGatewayEIPAllocationID` / `NATGatewayPublicIP`、片付けたもの (`DeletedNATGatewayID`、`ReleasedNATGatewayEIPID`、`TerminatedNATInstanceID`、`DeletedNATInstanceSGID`。カンマ区切り) を載せる。init の表は方式に合わせて NAT の行を出し分ける。`list --show-nat` は NAT インスタンス (TYPE `NAT`) と NAT Gateway (TYPE `NATGW`) の行を出し、外向きの IP を `PublicIP` (表では最後の列に `egress <IP>`) で示す。`ec2:DescribeNatGateways` が拒否されたら警告して NAT Gateway の行を省く
+- **doctor の `egress` 行** (`InspectEgress` → `evaluateEgress`): 経路表が無ければ warn (init を案内)。経路の先が使えない (消えた NAT Gateway、`available` でない NAT Gateway、どの NAT インスタンスのものでもない ENI、既定の経路が無い、ほかの何かを向く) なら fail。切り替えの残り (gateway なのに NAT インスタンスがある、instance なのに NAT Gateway がある) と、記録 (未記録は instance) と実際の経路の不一致は warn。詳細は「<方式> mode (recorded / none recorded)」、NAT の説明、見つかった問題の順に `; ` でつなぐ
+- **`TargetNotConnected` の案内**: connect / ssh / tunnel が StartSession の `TargetNotConnected` で諦めるとき、`currentNATMode` (NAT インスタンス → NAT Gateway の順に探す) で見つかった NAT に合わせた確認方法を案内する。見つからない・調べられないときは両方を挙げる
+- **古い版との混在** (ADR 0026 の Decision 8): NAT Gateway の名前は `nakama-natgw` のまま。ADR 0026 より前の版の init は、この NAT Gateway を削除して NAT インスタンスへ戻す。新しい版の doctor が記録とのずれを warn で知らせ、`init` で gateway に戻せる
+- **権限**: 付録 A。init に `ec2:AllocateAddress` / `ec2:CreateNatGateway` / `ec2:DeleteSecurityGroup` / `ec2:TerminateInstances`。`egressActions` (create / start / update / restore) と `natLookupActions` (connect / ssh / tunnel) と list / doctor に `ec2:DescribeNatGateways`。doctor に `ec2:DescribeRouteTables` / `ec2:DescribeInstances` / `ssm:GetParameter`
+- **テスト**: `init_egress_test.go` の状態を持つフェイク (NAT インスタンス、SG、経路表、NAT Gateway、EIP。変更の呼び出しを順に記録) で、両方向の切り替えの順序、失敗時に古い NAT が残ること、`failed` の NAT Gateway の作り直し、2 回目の init、`initIAM` の NAT 用ロールを確かめる。`nat_mode_test.go` は方式の決め方、`egress_test.go` は `InspectEgress` と doctor の判定、`nat_instance_test.go` は `ensureEgress` と電源の再調整を確かめる。実際の AWS での確認は手動 (§9)
 
 ## 9. テスト戦略
 

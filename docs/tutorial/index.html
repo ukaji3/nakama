@@ -41,13 +41,13 @@
 <ul>
   <li><strong>ブラウザで VS Code が開きます。</strong> クラウド上で動く VS Code (<a href="https://github.com/coder/code-server">code-server</a>) に、ブラウザからアクセスします。手元に開発ツールを入れる必要はありません</li>
   <li><strong>手元の VS Code からも使えます。</strong> デスクトップ版の VS Code や JetBrains、素の <code>ssh</code> からも接続できます</li>
-  <li><strong>止めればお金がほとんどかかりません。</strong> 使っていないときは停止でき、停止中に残るのはディスクの保管料と WAF の基本料金だけです (<a href="03-init.html#cost">第 3 章</a>)</li>
+  <li><strong>止めればお金がほとんどかからない構成も選べます。</strong> 外向き通信の中継に NAT インスタンスを選ぶと、停止中に残るのはディスクの保管料と WAF の基本料金だけです。新しく始める場合の既定の NAT ゲートウェイは、攻撃を受ける面が小さい代わりに、止めていても料金がかかります (<a href="03-init.html#nat">第 3 章</a>)</li>
   <li><strong>aws コマンドのインストールは不要です。</strong> サインインもリソース操作も nakama だけで完結します</li>
   <li><strong>会社のネットワーク (プロキシ) にそのまま対応します。</strong> 面倒な証明書の設定は nakama が肩代わりします</li>
 </ul>
 
 <figure>
-  <img width="900" height="440" src="img/overview.svg" alt="手元の PC のブラウザは CloudFront と WAF を通って AWS 上の EC2 インスタンスの code-server につながり、nakama CLI は AWS API と SSM Session Manager を通ってインスタンスを操作する。インスタンスからインターネットへの外向き通信は NAT インスタンスを経由する。">
+  <img width="900" height="440" src="img/overview.svg" alt="手元の PC のブラウザは CloudFront と WAF を通って AWS 上の EC2 インスタンスの code-server につながり、nakama CLI は AWS API と SSM Session Manager を通ってインスタンスを操作する。インスタンスからインターネットへの外向き通信は NAT (NAT ゲートウェイか NAT インスタンス) を経由する。">
   <figcaption><strong>図 0-1: nakama の全体像。</strong> 開発環境は AWS の内部 (プライベートサブネット) にあり、外部から直接つなげる口を持ちません。ブラウザからは CloudFront という入口を通り、しかも許可した IP アドレスからしか通れません。コマンド操作は SSM という AWS の仕組みを通るので、SSH のポートを開ける必要がありません。</figcaption>
 </figure>
 

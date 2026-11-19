@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 390" role="img" aria-labelledby="cost-title" aria-describedby="cost-desc" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif">
-  <title id="cost-title">止めればコストがほぼゼロになる仕組み</title>
-  <desc id="cost-desc">外向き通信に使う NAT インスタンスの電源は code-server インスタンスの稼働に連動する。すべて停止すればディスク代だけが残る。</desc>
+  <title id="cost-title">NAT インスタンスなら、止めればコストがほぼゼロ</title>
+  <desc id="cost-desc">外向き通信に NAT インスタンスを選ぶと、その電源は code-server インスタンスの稼働に連動する。すべて停止すればディスク代だけが残る。</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#374151" /></marker><marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#374151" /></marker><marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c" /></marker></defs>
   <rect width="900" height="390" fill="#ffffff" />
   <text x="20" y="36" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">1 台でも起動しているとき</text>

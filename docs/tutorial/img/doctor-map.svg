@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 430" role="img" aria-labelledby="doctor-map-title" aria-describedby="doctor-map-desc" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif">
   <title id="doctor-map-title">doctor が点検する範囲</title>
-  <desc id="doctor-map-desc">doctor は手元の環境 (プロキシ、証明書)、AWS への資格情報、IP 許可、機能ごとの権限、ポート転送の状態を読み取り専用で点検する。</desc>
+  <desc id="doctor-map-desc">doctor は手元の環境 (プロキシ、証明書)、AWS への資格情報、IP 許可、外向き通信、機能ごとの権限、ポート転送の状態を読み取り専用で点検する。</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#374151" /></marker><marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#374151" /></marker><marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c" /></marker></defs>
   <rect width="900" height="430" fill="#ffffff" />
   <text x="20" y="36" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">手元の環境</text>
@@ -20,6 +20,9 @@
   <rect x="330" y="126" width="270" height="66" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
   <text x="465" y="153" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">waf-allowlist</text>
   <text x="465" y="173" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">自分の IP が許可されているか</text>
+  <rect x="330" y="202" width="270" height="66" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
+  <text x="465" y="229" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">egress</text>
+  <text x="465" y="249" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">外向き通信の中継が使えるか</text>
   <text x="650" y="36" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">機能ごとの権限</text>
   <rect x="650" y="50" width="230" height="218" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2" />
   <text x="765" y="93" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: create</text>

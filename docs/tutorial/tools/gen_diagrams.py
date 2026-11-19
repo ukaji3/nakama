@@ -289,7 +289,8 @@ def d_overview() -> Svg:
         "nakama の全体像",
         "手元の PC のブラウザは CloudFront と WAF を通って AWS 上の code-server に "
         "つながり、nakama CLI は AWS API と SSM Session Manager を通ってインスタンスを "
-        "操作する。インスタンスからインターネットへの通信は NAT インスタンスを経由する。",
+        "操作する。インスタンスからインターネットへの通信は NAT (NAT ゲートウェイか "
+        "NAT インスタンス) を経由する。",
     )
     s.group_frame(20, 55, 200, 290, "あなたの PC")
     s.box(35, 90, 170, 70, ["ブラウザ", "Edge / Chrome"], "local")
@@ -299,7 +300,7 @@ def d_overview() -> Svg:
     s.box(300, 90, 190, 70, ["CloudFront + WAF", "許可した IP だけ通す"], "aws")
     s.box(620, 160, 220, 90, ["EC2 インスタンス", "code-server (VS Code)", "プライベートサブネット"], "aws")
     s.box(300, 250, 190, 70, ["SSM Session Manager", "SSH なしで中に入る"], "aws")
-    s.box(620, 296, 220, 56, ["NAT インスタンス", "外向き通信のみ"], "aws")
+    s.box(620, 296, 220, 56, ["NAT (外向き通信のみ)", "ゲートウェイかインスタンス"], "aws")
 
     s.arrow(205, 120, 296, 120, "HTTPS")
     s.arrow(492, 132, 616, 172, "")
@@ -504,12 +505,12 @@ def d_access_paths() -> Svg:
 
 
 def d_cost() -> Svg:
-    """電源連動によるコストの考え方。"""
+    """電源連動によるコストの考え方 (NAT インスタンスを選んだ場合)。"""
     s = Svg(
         900,
         390,
-        "止めればコストがほぼゼロになる仕組み",
-        "外向き通信に使う NAT インスタンスの電源は code-server インスタンスの稼働に"
+        "NAT インスタンスなら、止めればコストがほぼゼロ",
+        "外向き通信に NAT インスタンスを選ぶと、その電源は code-server インスタンスの稼働に"
         "連動する。すべて停止すればディスク代だけが残る。",
     )
     s.label(20, 36, "1 台でも起動しているとき", size=15, color=INK, weight="600")
@@ -573,7 +574,7 @@ def d_doctor_map() -> Svg:
         900,
         430,
         "doctor が点検する範囲",
-        "doctor は手元の環境 (プロキシ、証明書)、AWS への資格情報、IP 許可、"
+        "doctor は手元の環境 (プロキシ、証明書)、AWS への資格情報、IP 許可、外向き通信、"
         "機能ごとの権限、ポート転送の状態を読み取り専用で点検する。",
     )
     s.label(20, 36, "手元の環境", size=15, color=INK, weight="600")
@@ -584,6 +585,7 @@ def d_doctor_map() -> Svg:
     s.label(330, 36, "AWS 側", size=15, color=INK, weight="600")
     s.box(330, 50, 270, 66, ["credentials", "どのアカウントとして動くか"], "aws", font_size=14)
     s.box(330, 126, 270, 66, ["waf-allowlist", "自分の IP が許可されているか"], "aws", font_size=14)
+    s.box(330, 202, 270, 66, ["egress", "外向き通信の中継が使えるか"], "aws", font_size=14)
 
     s.label(650, 36, "機能ごとの権限", size=15, color=INK, weight="600")
     s.box(650, 50, 230, 218, [

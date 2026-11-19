@@ -48,7 +48,7 @@
 <pre><code>nakama aws doctor</code></pre>
 
 <figure>
-  <img width="900" height="430" src="img/doctor-map.svg" alt="doctor は手元の環境 (proxy、tls、tunnels)、AWS 側 (credentials、waf-allowlist)、機能ごとの権限 (capability: create、connect、backup、delete など) を点検する。結果は ok / warn / fail の 3 種類。完全に読み取り専用で、パスワードや資格情報は表示しない。">
+  <img width="900" height="430" src="img/doctor-map.svg" alt="doctor は手元の環境 (proxy、tls、tunnels)、AWS 側 (credentials、waf-allowlist、egress)、機能ごとの権限 (capability: create、connect、backup、delete など) を点検する。結果は ok / warn / fail の 3 種類。完全に読み取り専用で、パスワードや資格情報は表示しない。">
   <figcaption><strong>図 7-1: doctor が点検する範囲。</strong> AWS のリソースも手元の設定も<strong>一切変更しません</strong>。何度実行しても安全です。</figcaption>
 </figure>
 
@@ -60,11 +60,12 @@
                        Recovery: run `nakama aws login` for this account again
                        -&gt; run `nakama aws login` (or `aws login`), or select a saved profile with `nakama aws profile load &lt;name&gt;`
 [skip] waf-allowlist   skipped: no AWS credentials
+[skip] egress          skipped: no AWS credentials
 [skip] capabilities    skipped: no AWS credentials
 [ ok ] tunnels         no tunnels recorded
 [ ok ] version         0.24.0 is the latest release
 
-4 ok, 0 warn, 1 fail, 2 skipped</code></pre>
+4 ok, 0 warn, 1 fail, 3 skipped</code></pre>
 
 <h2 id="read">2. 出力の読み方</h2>
 <div class="table-wrap">
@@ -88,6 +89,7 @@
     <tr><td><code>tls</code></td><td>監査プロキシがあるか、OS の証明書リストで検証できたか</td></tr>
     <tr><td><code>credentials</code></td><td>どの AWS アカウント / ユーザーとして動くか、有効期限は切れていないか</td></tr>
     <tr><td><code>waf-allowlist</code></td><td>自分の接続元 IP が許可リストに入っているか (<a href="03-init.html#acl">第 3 章</a>)</td></tr>
+    <tr><td><code>egress</code></td><td>開発環境の外向き通信の中継 (NAT ゲートウェイか NAT インスタンス) が使えるか。<code>init</code> で選んだ中継と、実際の経路が合っているか。切り替えの残り (使われていない中継) があれば <code>warn</code> (<a href="03-init.html#nat">第 3 章</a>)</td></tr>
     <tr><td><code>capability: ...</code></td><td>機能ごとに、必要な IAM 権限が揃っているか</td></tr>
     <tr><td><code>tunnels</code></td><td>このパソコンに記録されたポート転送が生きているか (<a href="05-use.html#tunnel">第 5 章「ポート転送」</a>)</td></tr>
     <tr><td><code>version</code></td><td>新しい版の nakama が出ているか (GitHub に問い合わせます)。古ければ <code>warn</code> で、入手先が出ます。会社のネットワークで GitHub に届かないときも <code>warn</code> ですが、nakama の動作には関係ありません (<a href="01-install.html#new-version">第 1 章</a>)</td></tr>
@@ -181,7 +183,7 @@
   <tbody>
     <tr>
       <td><code>connect</code> / <code>ssh</code> が <code>TargetNotConnected</code> (<code>is not connected</code>) で失敗する</td>
-      <td>開発環境の SSM エージェントが AWS につながっていません。<code>start</code> や <code>create</code> の直後なら 1〜2 分待ってから、もう一度試します。続く場合は、開発環境がインターネットに出られていない可能性があります (通信は NAT インスタンスを通ります)。<code>nakama aws list --show-nat</code> で NAT インスタンスが <code>running</code> かを確かめ、<code>nakama aws init</code> を実行してください。<code>init</code> は NAT インスタンスを点検し、壊れていれば直します。直した後は、開発環境を <code>stop</code> と <code>start</code> で再起動します (作成直後に失敗した環境は、初期設定が途中で止まっているので、<code>delete</code> して作り直してください)</td>
+      <td>開発環境の SSM エージェントが AWS につながっていません。<code>start</code> や <code>create</code> の直後なら 1〜2 分待ってから、もう一度試します。続く場合は、開発環境がインターネットに出られていない可能性があります (通信は中継役の NAT インスタンスか NAT ゲートウェイを通ります)。<code>nakama aws list --show-nat</code> で中継役の状態 (NAT インスタンスなら <code>running</code>、NAT ゲートウェイなら <code>available</code>) を確かめ、<code>nakama aws doctor</code> の <code>egress</code> の行も見たうえで、<code>nakama aws init</code> を実行してください。<code>init</code> は NAT インスタンスを点検して壊れていれば直し、使えなくなった NAT ゲートウェイは作り直します。直した後は、開発環境を <code>stop</code> と <code>start</code> で再起動します (作成直後に失敗した環境は、初期設定が途中で止まっているので、<code>delete</code> して作り直してください)</td>
     </tr>
     <tr>
       <td><code>connect</code> だけがつながらない (他のコマンドは動く)</td>

@@ -105,6 +105,7 @@ KNOWN_FLAGS = {
     "nakama version": {"--check"},
     "nakama aws login": {"--remote", "--name"},
     "nakama aws profile save": {"--name"},
+    "nakama aws init": {"--nat", "--yes", "-y"},
     "nakama aws create": {
         "--name", "--instance-type", "--bare", "--preset", "--setup", "--dotfiles",
         "--code-server-version", "--with-admin", "--with-role", "--show-password",
@@ -137,7 +138,7 @@ VALUE_FLAGS = {
     "--name", "--instance-type", "--preset", "--setup", "--dotfiles",
     "--code-server-version", "--with-role", "--label", "--note", "--keep",
     "--ebs", "--retry", "--identity", "--port", "--timeout", "--browser",
-    "--shell", "--output", "-o", "-L", "--forward", "--older-than",
+    "--shell", "--output", "-o", "-L", "--forward", "--older-than", "--nat",
 }
 
 # 名前の後ろに任意の外部コマンドを取るコマンド (それ以降は nakama の
