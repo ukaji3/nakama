@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -24,8 +27,53 @@ type fakeNATEC2 struct {
 	// activeCodeServerIDs are code-server instances reported as running.
 	activeCodeServerIDs []string
 
+	// natGateways answers DescribeNatGateways (ADR 0026). By ID, the
+	// first natGatewayPolls lookups report pending and the later ones
+	// natGatewayReady (or the listed state when that is empty).
+	natGateways     []ec2types.NatGateway
+	natGatewayPolls int
+	natGatewayReady ec2types.NatGatewayState
+	natGatewayErr   error
+
 	started []string
 	stopped []string
+}
+
+// natGateway builds a nakama NAT gateway for the fakes.
+func natGateway(id string, state ec2types.NatGatewayState, publicIP string) ec2types.NatGateway {
+	return ec2types.NatGateway{
+		NatGatewayId: aws.String(id),
+		State:        state,
+		VpcId:        aws.String("vpc-1"),
+		SubnetId:     aws.String("subnet-public"),
+		NatGatewayAddresses: []ec2types.NatGatewayAddress{{
+			AllocationId: aws.String("eipalloc-" + id),
+			PublicIp:     aws.String(publicIP),
+			IsPrimary:    aws.Bool(true),
+		}},
+	}
+}
+
+func (f *fakeNATEC2) DescribeNatGateways(_ context.Context, in *ec2.DescribeNatGatewaysInput, _ ...func(*ec2.Options)) (*ec2.DescribeNatGatewaysOutput, error) {
+	if f.natGatewayErr != nil {
+		return nil, f.natGatewayErr
+	}
+	if len(in.NatGatewayIds) > 0 {
+		for _, gw := range f.natGateways {
+			if aws.ToString(gw.NatGatewayId) != in.NatGatewayIds[0] {
+				continue
+			}
+			if f.natGatewayPolls > 0 {
+				f.natGatewayPolls--
+				gw.State = ec2types.NatGatewayStatePending
+			} else if f.natGatewayReady != "" {
+				gw.State = f.natGatewayReady
+			}
+			return &ec2.DescribeNatGatewaysOutput{NatGateways: []ec2types.NatGateway{gw}}, nil
+		}
+		return &ec2.DescribeNatGatewaysOutput{}, nil
+	}
+	return &ec2.DescribeNatGatewaysOutput{NatGateways: f.natGateways}, nil
 }
 
 func newFakeNAT(natID string, natState ec2types.InstanceStateName, activeIDs ...string) *fakeNATEC2 {
@@ -179,4 +227,117 @@ func TestReconcileNAT_ExcludedInstanceTreatedInactive(t *testing.T) {
 	if len(f.stopped) != 1 || f.stopped[0] != "i-nat" {
 		t.Errorf("expected NAT stop when only active instance is excluded, got stopped=%v", f.stopped)
 	}
+}
+
+// TestReconcileNAT_NoopWithoutNATInstance covers the gateway mode
+// (ADR 0026): without a NAT instance there is nothing to power, even
+// when a code-server instance runs, and no NAT gateway is touched.
+func TestReconcileNAT_NoopWithoutNATInstance(t *testing.T) {
+	t.Parallel()
+	f := newFakeNAT("", "", "i-dev01")
+	f.natGateways = []ec2types.NatGateway{natGateway("nat-1", ec2types.NatGatewayStateAvailable, "203.0.113.10")}
+	s := newServiceWithEC2(f)
+
+	for _, exclude := range []string{"", "i-dev01"} {
+		if err := s.reconcileNATInstancePowerStateExcluding(context.Background(), exclude); err != nil {
+			t.Fatalf("reconcile (exclude %q): %v", exclude, err)
+		}
+	}
+	if len(f.started) != 0 || len(f.stopped) != 0 {
+		t.Errorf("expected no power change, got started=%v stopped=%v", f.started, f.stopped)
+	}
+}
+
+func TestEnsureEgress_StartsTheNATInstance(t *testing.T) {
+	t.Parallel()
+	f := newFakeNAT("i-nat", ec2types.InstanceStateNameStopped)
+	// A NAT gateway left by a switch in progress does not change the
+	// answer: the NAT instance is started, which keeps either route working.
+	f.natGateways = []ec2types.NatGateway{natGateway("nat-1", ec2types.NatGatewayStateAvailable, "203.0.113.10")}
+	if err := newServiceWithEC2(f).ensureEgress(context.Background()); err != nil {
+		t.Fatalf("ensureEgress: %v", err)
+	}
+	if len(f.started) != 1 || f.started[0] != "i-nat" {
+		t.Errorf("expected the NAT instance to start, got started=%v", f.started)
+	}
+}
+
+func TestEnsureEgress_GatewayMode(t *testing.T) {
+	shortNATGatewayWaits(t)
+	cases := []struct {
+		name    string
+		gws     []ec2types.NatGateway
+		polls   int
+		wantErr []string
+	}{
+		{name: "available", gws: []ec2types.NatGateway{natGateway("nat-1", ec2types.NatGatewayStateAvailable, "203.0.113.10")}},
+		{name: "pending is waited for", gws: []ec2types.NatGateway{natGateway("nat-1", ec2types.NatGatewayStatePending, "203.0.113.10")}, polls: 2},
+		{name: "available one is preferred over a failed one", gws: []ec2types.NatGateway{
+			natGateway("nat-old", ec2types.NatGatewayStateFailed, ""),
+			natGateway("nat-1", ec2types.NatGatewayStateAvailable, "203.0.113.10"),
+		}},
+		{name: "failed", gws: []ec2types.NatGateway{natGateway("nat-1", ec2types.NatGatewayStateFailed, "")},
+			wantErr: []string{"nat-1", "failed", "nakama aws init"}},
+		{name: "neither NAT", wantErr: []string{"no nakama NAT instance or NAT gateway", "nakama aws init"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeNAT("", "")
+			f.natGateways = c.gws
+			if c.polls > 0 {
+				// Listed as pending; by ID pending for c.polls more
+				// lookups, then available.
+				f.natGatewayPolls = c.polls
+				f.natGatewayReady = ec2types.NatGatewayStateAvailable
+				defer func() {
+					if f.natGatewayPolls != 0 {
+						t.Errorf("the pending NAT gateway was not waited for (%d polls left)", f.natGatewayPolls)
+					}
+				}()
+			}
+			err := newServiceWithEC2(f).ensureEgress(context.Background())
+			if len(c.wantErr) == 0 {
+				if err != nil {
+					t.Fatalf("ensureEgress: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("ensureEgress succeeded, want an error")
+				}
+				for _, want := range c.wantErr {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error lacks %q: %v", want, err)
+					}
+				}
+			}
+			if len(f.started) != 0 || len(f.stopped) != 0 {
+				t.Errorf("no instance may be started or stopped in gateway mode: started=%v stopped=%v", f.started, f.stopped)
+			}
+		})
+	}
+}
+
+func TestCurrentNATMode(t *testing.T) {
+	t.Parallel()
+	if got := newServiceWithEC2(newFakeNAT("i-nat", ec2types.InstanceStateNameRunning)).currentNATMode(context.Background()); got != NATModeInstance {
+		t.Errorf("with a NAT instance: %q", got)
+	}
+	gw := newFakeNAT("", "")
+	gw.natGateways = []ec2types.NatGateway{natGateway("nat-1", ec2types.NatGatewayStateAvailable, "203.0.113.10")}
+	if got := newServiceWithEC2(gw).currentNATMode(context.Background()); got != NATModeGateway {
+		t.Errorf("with a NAT gateway: %q", got)
+	}
+	none := newFakeNAT("", "")
+	none.natGatewayErr = errors.New("denied")
+	if got := newServiceWithEC2(none).currentNATMode(context.Background()); got != "" {
+		t.Errorf("with neither (lookup failed): %q", got)
+	}
+}
+
+// shortNATGatewayWaits shortens the NAT gateway waits for the test.
+func shortNATGatewayWaits(t *testing.T) {
+	t.Helper()
+	pi, at, dt := natGatewayPollInterval, natGatewayAvailableTimeout, natGatewayDeletedTimeout
+	natGatewayPollInterval, natGatewayAvailableTimeout, natGatewayDeletedTimeout = time.Millisecond, 2*time.Second, 2*time.Second
+	t.Cleanup(func() { natGatewayPollInterval, natGatewayAvailableTimeout, natGatewayDeletedTimeout = pi, at, dt })
 }

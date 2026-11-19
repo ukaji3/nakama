@@ -188,6 +188,64 @@ func TestListInstances_ShowNATNoNATInstance(t *testing.T) {
 	}
 }
 
+// TestListInstances_ShowNATListsTheNATGateway covers the gateway mode
+// (ADR 0026): the NAT gateway row carries its ID, state and egress IP.
+func TestListInstances_ShowNATListsTheNATGateway(t *testing.T) {
+	t.Parallel()
+	f := &fakeListEC2{
+		codeServers: []ec2types.Instance{
+			codeServerInstance("dev01", "i-1", "t3.medium", ec2types.InstanceStateNameRunning),
+		},
+		natGateways: []ec2types.NatGateway{
+			natGateway("nat-1", ec2types.NatGatewayStateAvailable, "203.0.113.10"),
+			// Deleted ones are not listed.
+			natGateway("nat-old", ec2types.NatGatewayStateDeleted, "198.51.100.1"),
+		},
+	}
+	rows, err := newServiceForList(f).ListInstances(context.Background(), true)
+	if err != nil {
+		t.Fatalf("ListInstances: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("want 1 vscode + 1 natgw row, got %d: %+v", len(rows), rows)
+	}
+	gw := rows[1]
+	if gw.Type != instanceKindNATGateway || gw.Name != naming.NATGW() || gw.InstanceID != "nat-1" ||
+		gw.State != "available" || gw.PublicIP != "203.0.113.10" {
+		t.Fatalf("NAT gateway row = %+v", gw)
+	}
+
+	// Without a NAT gateway, no row is added; --show-nat is unaffected
+	// for the code-server instances.
+	rows, err = newServiceForList(&fakeListEC2{}).ListInstances(context.Background(), true)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty environment: rows=%+v err=%v", rows, err)
+	}
+}
+
+// TestListInstances_ShowNATWithoutNATGatewayPermission keeps a policy
+// scoped to the NAT instance era working: the NAT gateway lookup is
+// skipped with a warning when it is denied, and other errors still fail.
+func TestListInstances_ShowNATWithoutNATGatewayPermission(t *testing.T) {
+	t.Parallel()
+	f := &fakeListEC2{
+		natID: "i-nat", natState: ec2types.InstanceStateNameRunning, natType: "t4g.nano",
+		natGatewayErr: &smithy.GenericAPIError{Code: "UnauthorizedOperation"},
+	}
+	rows, err := newServiceForList(f).ListInstances(context.Background(), true)
+	if err != nil {
+		t.Fatalf("ListInstances: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Type != instanceKindNAT {
+		t.Fatalf("want the NAT instance row only, got %+v", rows)
+	}
+
+	f.natGatewayErr = errors.New("network down")
+	if _, err := newServiceForList(f).ListInstances(context.Background(), true); err == nil {
+		t.Fatal("a non-permission error must fail the listing")
+	}
+}
+
 // fakeSSMScripted lets each test dictate the GetParameter outcome.
 type fakeSSMScripted struct {
 	awsx.SSMAPI

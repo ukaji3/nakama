@@ -73,4 +73,21 @@ func TestSSMMetaPaths(t *testing.T) {
 	if got := SSMMetaVersion(); got != "/nakama/_meta/version" {
 		t.Errorf("SSMMetaVersion()=%q", got)
 	}
+	if got := SSMMetaNATMode(); got != "/nakama/_meta/nat-mode" {
+		t.Errorf("SSMMetaNATMode()=%q", got)
+	}
+}
+
+// TestNATGatewayNamesStay pins the NAT gateway and EIP names: nakama
+// versions before ADR 0026 delete a NAT gateway of exactly this name on
+// init, which keeps an environment consistent when an old binary runs
+// init on an environment switched to the NAT gateway (ADR 0026).
+func TestNATGatewayNamesStay(t *testing.T) {
+	t.Parallel()
+	if got := NATGW(); got != "nakama-natgw" {
+		t.Errorf("NATGW()=%q, want nakama-natgw", got)
+	}
+	if got := NATGWEIP(); got != "nakama-natgw-eip" {
+		t.Errorf("NATGWEIP()=%q, want nakama-natgw-eip", got)
+	}
 }
