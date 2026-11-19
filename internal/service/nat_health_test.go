@@ -236,17 +236,66 @@ func TestWithTargetNotConnectedHint(t *testing.T) {
 	if strings.Contains(err.Error(), "NAT") {
 		t.Error("a plain error must be returned unchanged")
 	}
-	wrapped := withTargetNotConnectedHint(errors.Join(errors.New("StartSession"), notConnected), NATModeInstance)
-	for _, want := range []string{"is not connected", "NAT instance", "nakama aws list --show-nat", "nakama aws init"} {
-		if !strings.Contains(wrapped.Error(), want) {
-			t.Errorf("hint lacks %q:\n%v", want, wrapped)
+	cases := []struct {
+		mode    string
+		want    []string
+		notWant []string
+	}{
+		{NATModeInstance,
+			[]string{"is not connected", "NAT instance", "nakama aws list --show-nat", "nakama aws init", "forwarding"},
+			[]string{"NAT gateway"}},
+		{NATModeGateway,
+			[]string{"is not connected", "NAT gateway", "available", "nakama aws doctor", "nakama aws init"},
+			[]string{"NAT instance"}},
+		{"",
+			[]string{"is not connected", "NAT instance or the NAT gateway", "nakama aws list --show-nat", "nakama aws init"},
+			nil},
+	}
+	for _, c := range cases {
+		wrapped := withTargetNotConnectedHint(errors.Join(errors.New("StartSession"), notConnected), c.mode)
+		for _, want := range c.want {
+			if !strings.Contains(wrapped.Error(), want) {
+				t.Errorf("mode %q: hint lacks %q:\n%v", c.mode, want, wrapped)
+			}
+		}
+		for _, notWant := range c.notWant {
+			if strings.Contains(wrapped.Error(), notWant) {
+				t.Errorf("mode %q: hint names %q:\n%v", c.mode, notWant, wrapped)
+			}
+		}
+		if !errors.Is(wrapped, notConnected) {
+			t.Errorf("mode %q: the API error must stay inspectable", c.mode)
 		}
 	}
-	if !errors.Is(wrapped, notConnected) {
-		t.Error("the API error must stay inspectable")
-	}
 	other := &smithy.GenericAPIError{Code: "AccessDeniedException"}
-	if got := withTargetNotConnectedHint(other, NATModeInstance); got != error(other) {
+	if got := withTargetNotConnectedHint(other, NATModeGateway); got != error(other) {
 		t.Errorf("other API errors must be unchanged, got %v", got)
+	}
+}
+
+// TestTargetNotConnectedHintLooksUpTheNAT checks that the service
+// wrapper names the NAT it finds, and stays generic without EC2 access.
+func TestTargetNotConnectedHintLooksUpTheNAT(t *testing.T) {
+	notConnected := &smithy.GenericAPIError{Code: "TargetNotConnected"}
+
+	withNAT := newServiceWithEC2(newFakeNAT("i-nat", ec2types.InstanceStateNameStopped))
+	if got := withNAT.targetNotConnectedHint(context.Background(), notConnected); !strings.Contains(got.Error(), "through the NAT instance.") {
+		t.Errorf("with a NAT instance: %v", got)
+	}
+
+	gw := newFakeNAT("", "")
+	gw.natGateways = []ec2types.NatGateway{natGateway("nat-1", ec2types.NatGatewayStateAvailable, "203.0.113.10")}
+	if got := newServiceWithEC2(gw).targetNotConnectedHint(context.Background(), notConnected); !strings.Contains(got.Error(), "through the NAT gateway.") {
+		t.Errorf("with a NAT gateway: %v", got)
+	}
+
+	noEC2 := NewService(&awsx.Clients{})
+	if got := noEC2.targetNotConnectedHint(context.Background(), notConnected); !strings.Contains(got.Error(), "NAT instance or the NAT gateway") {
+		t.Errorf("without EC2 access: %v", got)
+	}
+
+	plain := errors.New("boom")
+	if got := noEC2.targetNotConnectedHint(context.Background(), plain); got != plain {
+		t.Errorf("other errors must be unchanged, got %v", got)
 	}
 }
