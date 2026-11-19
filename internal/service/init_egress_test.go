@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -25,10 +24,13 @@ import (
 )
 
 // fakeInfraEC2 is a small stateful model of the shared infrastructure
-// the egress code touches (ADR 0026): the NAT instance and its security
-// group, the route tables, the NAT gateways and their Elastic IPs. It
-// records the mutating calls in order, so the tests can check that
-// egress moves before the old NAT goes away.
+// the egress code touches (ADR 0026): instances (the NAT instance, the
+// code-server instances and anything else in the VPC), security groups,
+// route tables, NAT gateways and Elastic IPs. Every Describe call
+// applies the filters it is given (matchEC2Filters), so a resource that
+// is not nakama's is only found if the code's filters let it through.
+// The changing calls are recorded in order, so the tests can check
+// that egress moves before the old NAT goes away.
 type fakeInfraEC2 struct {
 	awsx.EC2API
 
@@ -36,14 +38,13 @@ type fakeInfraEC2 struct {
 	calls []string
 	seq   int
 
-	vpcExists         bool
-	activeCodeServers []ec2types.Instance
+	vpcExists bool
 
-	natInstances []*ec2types.Instance
-	natSGID      string
-	routeTables  []*ec2types.RouteTable
-	natGateways  []*ec2types.NatGateway
-	eips         []*ec2types.Address
+	instances      []*ec2types.Instance
+	securityGroups []*ec2types.SecurityGroup
+	routeTables    []*ec2types.RouteTable
+	natGateways    []*ec2types.NatGateway
+	eips           []*ec2types.Address
 
 	createNatGatewayErr error
 	// newNatGatewayState is the state a created NAT gateway reaches
@@ -75,15 +76,6 @@ func (f *fakeInfraEC2) callIndex(prefix string) int {
 
 func (f *fakeInfraEC2) has(prefix string) bool { return f.callIndex(prefix) >= 0 }
 
-func filterValues(filters []ec2types.Filter, name string) []string {
-	for _, fl := range filters {
-		if aws.ToString(fl.Name) == name {
-			return fl.Values
-		}
-	}
-	return nil
-}
-
 func tagValue(tags []ec2types.Tag, key string) string {
 	for _, t := range tags {
 		if aws.ToString(t.Key) == key {
@@ -93,36 +85,63 @@ func tagValue(tags []ec2types.Tag, key string) string {
 	return ""
 }
 
-func tagsOf(specs []ec2types.TagSpecification) []ec2types.Tag {
+// tagsFor returns the tags the specifications give a resource of the
+// given type (RunInstances also tags the volume, with another Name).
+func tagsFor(specs []ec2types.TagSpecification, rt ec2types.ResourceType) []ec2types.Tag {
 	var tags []ec2types.Tag
 	for _, s := range specs {
-		tags = append(tags, s.Tags...)
+		if s.ResourceType == rt {
+			tags = append(tags, s.Tags...)
+		}
 	}
 	return tags
 }
 
-func (f *fakeInfraEC2) DescribeVpcs(context.Context, *ec2.DescribeVpcsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
+func instanceSecurityGroups(i *ec2types.Instance) []string {
+	var ids []string
+	for _, g := range i.SecurityGroups {
+		ids = append(ids, aws.ToString(g.GroupId))
+	}
+	return ids
+}
+
+func (f *fakeInfraEC2) DescribeVpcs(_ context.Context, in *ec2.DescribeVpcsInput, _ ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
 	if !f.vpcExists {
 		return &ec2.DescribeVpcsOutput{}, nil
 	}
-	return &ec2.DescribeVpcsOutput{Vpcs: []ec2types.Vpc{{VpcId: aws.String("vpc-1")}}}, nil
-}
-
-func (f *fakeInfraEC2) DescribeSecurityGroups(context.Context, *ec2.DescribeSecurityGroupsInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.natSGID == "" {
-		return &ec2.DescribeSecurityGroupsOutput{}, nil
+	tags := ec2Tags(tagging.ForShared(tagging.ComponentVPC, naming.VPC()))
+	ok, err := matchEC2Filters(in.Filters, tags, map[string]string{})
+	if err != nil || !ok {
+		return &ec2.DescribeVpcsOutput{}, err
 	}
-	return &ec2.DescribeSecurityGroupsOutput{SecurityGroups: []ec2types.SecurityGroup{{GroupId: aws.String(f.natSGID)}}}, nil
+	return &ec2.DescribeVpcsOutput{Vpcs: []ec2types.Vpc{{VpcId: aws.String("vpc-1"), Tags: tags}}}, nil
 }
 
-func (f *fakeInfraEC2) CreateSecurityGroup(context.Context, *ec2.CreateSecurityGroupInput, ...func(*ec2.Options)) (*ec2.CreateSecurityGroupOutput, error) {
+func (f *fakeInfraEC2) DescribeSecurityGroups(_ context.Context, in *ec2.DescribeSecurityGroupsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.natSGID = f.nextID("sg-nat")
-	f.record("CreateSecurityGroup:%s", f.natSGID)
-	return &ec2.CreateSecurityGroupOutput{GroupId: aws.String(f.natSGID)}, nil
+	out := &ec2.DescribeSecurityGroupsOutput{}
+	for _, sg := range f.securityGroups {
+		ok, err := matchEC2Filters(in.Filters, sg.Tags, map[string]string{"vpc-id": aws.ToString(sg.VpcId)})
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out.SecurityGroups = append(out.SecurityGroups, *sg)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeInfraEC2) CreateSecurityGroup(_ context.Context, in *ec2.CreateSecurityGroupInput, _ ...func(*ec2.Options)) (*ec2.CreateSecurityGroupOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := f.nextID("sg-nat")
+	f.securityGroups = append(f.securityGroups, &ec2types.SecurityGroup{
+		GroupId: aws.String(id), GroupName: in.GroupName, VpcId: in.VpcId, Tags: tagsFor(in.TagSpecifications, ec2types.ResourceTypeSecurityGroup),
+	})
+	f.record("CreateSecurityGroup:%s", id)
+	return &ec2.CreateSecurityGroupOutput{GroupId: aws.String(id)}, nil
 }
 
 func (f *fakeInfraEC2) AuthorizeSecurityGroupIngress(context.Context, *ec2.AuthorizeSecurityGroupIngressInput, ...func(*ec2.Options)) (*ec2.AuthorizeSecurityGroupIngressOutput, error) {
@@ -132,41 +151,45 @@ func (f *fakeInfraEC2) AuthorizeSecurityGroupIngress(context.Context, *ec2.Autho
 func (f *fakeInfraEC2) DeleteSecurityGroup(_ context.Context, in *ec2.DeleteSecurityGroupInput, _ ...func(*ec2.Options)) (*ec2.DeleteSecurityGroupOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, i := range f.natInstances {
-		if i.State.Name != ec2types.InstanceStateNameTerminated {
+	id := aws.ToString(in.GroupId)
+	for _, i := range f.instances {
+		if i.State.Name != ec2types.InstanceStateNameTerminated && slices.Contains(instanceSecurityGroups(i), id) {
 			return nil, &smithy.GenericAPIError{Code: "DependencyViolation"}
 		}
 	}
-	if aws.ToString(in.GroupId) != f.natSGID {
-		return nil, &smithy.GenericAPIError{Code: "InvalidGroup.NotFound"}
+	for n, sg := range f.securityGroups {
+		if aws.ToString(sg.GroupId) == id {
+			f.securityGroups = append(f.securityGroups[:n], f.securityGroups[n+1:]...)
+			f.record("DeleteSecurityGroup:%s", id)
+			return &ec2.DeleteSecurityGroupOutput{}, nil
+		}
 	}
-	f.record("DeleteSecurityGroup:%s", f.natSGID)
-	f.natSGID = ""
-	return &ec2.DeleteSecurityGroupOutput{}, nil
+	return nil, &smithy.GenericAPIError{Code: "InvalidGroup.NotFound"}
 }
 
 func (f *fakeInfraEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(in.InstanceIds) > 0 {
-		for _, i := range f.natInstances {
+		for _, i := range f.instances {
 			if aws.ToString(i.InstanceId) == in.InstanceIds[0] {
 				return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{*i}}}}, nil
 			}
 		}
 		return nil, &smithy.GenericAPIError{Code: "InvalidInstanceID.NotFound"}
 	}
-	states := filterValues(in.Filters, "instance-state-name")
 	var out []ec2types.Instance
-	switch comp := filterValues(in.Filters, "tag:"+tagging.KeyComponent); {
-	case slices.Contains(comp, tagging.ComponentNATInstance):
-		for _, i := range f.natInstances {
-			if len(states) == 0 || slices.Contains(states, string(i.State.Name)) {
-				out = append(out, *i)
-			}
+	for _, i := range f.instances {
+		ok, err := matchEC2Filters(in.Filters, i.Tags, map[string]string{
+			"instance-state-name": string(i.State.Name),
+			"vpc-id":              "vpc-1",
+		})
+		if err != nil {
+			return nil, err
 		}
-	case slices.Contains(comp, tagging.ComponentEC2):
-		out = f.activeCodeServers
+		if ok {
+			out = append(out, *i)
+		}
 	}
 	if len(out) == 0 {
 		return &ec2.DescribeInstancesOutput{}, nil
@@ -182,13 +205,18 @@ func (f *fakeInfraEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput
 		InstanceId:   aws.String(id),
 		InstanceType: in.InstanceType,
 		State:        &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning},
-		Tags:         tagsOf(in.TagSpecifications),
+		Tags:         tagsFor(in.TagSpecifications, ec2types.ResourceTypeInstance),
 		NetworkInterfaces: []ec2types.InstanceNetworkInterface{{
 			NetworkInterfaceId: aws.String("eni-" + id),
 			Attachment:         &ec2types.InstanceNetworkInterfaceAttachment{DeviceIndex: aws.Int32(0)},
 		}},
 	}
-	f.natInstances = append(f.natInstances, inst)
+	for _, ni := range in.NetworkInterfaces {
+		for _, g := range ni.Groups {
+			inst.SecurityGroups = append(inst.SecurityGroups, ec2types.GroupIdentifier{GroupId: aws.String(g)})
+		}
+	}
+	f.instances = append(f.instances, inst)
 	f.record("RunInstances:%s", id)
 	return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{*inst}}, nil
 }
@@ -198,7 +226,7 @@ func (f *fakeInfraEC2) ModifyInstanceAttribute(context.Context, *ec2.ModifyInsta
 }
 
 func (f *fakeInfraEC2) setInstanceState(id string, st ec2types.InstanceStateName) {
-	for _, i := range f.natInstances {
+	for _, i := range f.instances {
 		if aws.ToString(i.InstanceId) == id {
 			i.State = &ec2types.InstanceState{Name: st}
 		}
@@ -253,19 +281,23 @@ func (f *fakeInfraEC2) DescribeRouteTables(_ context.Context, in *ec2.DescribeRo
 		}
 		return &ec2.DescribeRouteTablesOutput{}, nil
 	}
-	names := filterValues(in.Filters, "tag:"+tagging.NameTag)
+	out := &ec2.DescribeRouteTablesOutput{}
 	for _, rt := range f.routeTables {
-		if slices.Contains(names, tagValue(rt.Tags, tagging.NameTag)) {
-			return &ec2.DescribeRouteTablesOutput{RouteTables: []ec2types.RouteTable{*rt}}, nil
+		ok, err := matchEC2Filters(in.Filters, rt.Tags, map[string]string{"vpc-id": "vpc-1"})
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out.RouteTables = append(out.RouteTables, *rt)
 		}
 	}
-	return &ec2.DescribeRouteTablesOutput{}, nil
+	return out, nil
 }
 
 func (f *fakeInfraEC2) CreateRouteTable(_ context.Context, in *ec2.CreateRouteTableInput, _ ...func(*ec2.Options)) (*ec2.CreateRouteTableOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	rt := &ec2types.RouteTable{RouteTableId: aws.String(f.nextID("rtb")), Tags: tagsOf(in.TagSpecifications)}
+	rt := &ec2types.RouteTable{RouteTableId: aws.String(f.nextID("rtb")), Tags: tagsFor(in.TagSpecifications, ec2types.ResourceTypeRouteTable)}
 	f.routeTables = append(f.routeTables, rt)
 	return &ec2.CreateRouteTableOutput{RouteTable: rt}, nil
 }
@@ -313,10 +345,19 @@ func (f *fakeInfraEC2) DescribeNatGateways(_ context.Context, in *ec2.DescribeNa
 	defer f.mu.Unlock()
 	var out []ec2types.NatGateway
 	for _, gw := range f.natGateways {
-		if len(in.NatGatewayIds) > 0 && !slices.Contains(in.NatGatewayIds, aws.ToString(gw.NatGatewayId)) {
+		if len(in.NatGatewayIds) > 0 {
+			if slices.Contains(in.NatGatewayIds, aws.ToString(gw.NatGatewayId)) {
+				out = append(out, *gw)
+			}
 			continue
 		}
-		out = append(out, *gw)
+		ok, err := matchEC2Filters(in.Filter, gw.Tags, map[string]string{"vpc-id": aws.ToString(gw.VpcId)})
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, *gw)
+		}
 	}
 	return &ec2.DescribeNatGatewaysOutput{NatGateways: out}, nil
 }
@@ -354,7 +395,7 @@ func (f *fakeInfraEC2) CreateNatGateway(_ context.Context, in *ec2.CreateNatGate
 		State:        state,
 		VpcId:        aws.String("vpc-1"),
 		SubnetId:     in.SubnetId,
-		Tags:         tagsOf(in.TagSpecifications),
+		Tags:         tagsFor(in.TagSpecifications, ec2types.ResourceTypeNatgateway),
 		NatGatewayAddresses: []ec2types.NatGatewayAddress{{
 			AllocationId: eip.AllocationId, PublicIp: eip.PublicIp, IsPrimary: aws.Bool(true),
 		}},
@@ -386,12 +427,18 @@ func (f *fakeInfraEC2) DeleteNatGateway(_ context.Context, in *ec2.DeleteNatGate
 	return nil, &smithy.GenericAPIError{Code: "NatGatewayNotFound"}
 }
 
-func (f *fakeInfraEC2) DescribeAddresses(context.Context, *ec2.DescribeAddressesInput, ...func(*ec2.Options)) (*ec2.DescribeAddressesOutput, error) {
+func (f *fakeInfraEC2) DescribeAddresses(_ context.Context, in *ec2.DescribeAddressesInput, _ ...func(*ec2.Options)) (*ec2.DescribeAddressesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []ec2types.Address
 	for _, a := range f.eips {
-		out = append(out, *a)
+		ok, err := matchEC2Filters(in.Filters, a.Tags, map[string]string{})
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, *a)
+		}
 	}
 	return &ec2.DescribeAddressesOutput{Addresses: out}, nil
 }
@@ -399,11 +446,11 @@ func (f *fakeInfraEC2) DescribeAddresses(context.Context, *ec2.DescribeAddresses
 func (f *fakeInfraEC2) AllocateAddress(_ context.Context, in *ec2.AllocateAddressInput, _ ...func(*ec2.Options)) (*ec2.AllocateAddressOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if tagValue(tagsOf(in.TagSpecifications), tagging.NameTag) != naming.NATGWEIP() {
-		return nil, errors.New("the Elastic IP must carry the NAT gateway EIP name")
-	}
 	id := f.nextID("eipalloc")
-	a := &ec2types.Address{AllocationId: aws.String(id), PublicIp: aws.String(fmt.Sprintf("203.0.113.%d", f.seq))}
+	a := &ec2types.Address{
+		AllocationId: aws.String(id), PublicIp: aws.String(fmt.Sprintf("203.0.113.%d", f.seq)),
+		Tags: tagsFor(in.TagSpecifications, ec2types.ResourceTypeElasticIp),
+	}
 	f.eips = append(f.eips, a)
 	f.record("AllocateAddress:%s", id)
 	return &ec2.AllocateAddressOutput{AllocationId: a.AllocationId, PublicIp: a.PublicIp}, nil
@@ -489,17 +536,16 @@ func newInfraEnv(mode string, nat *fakeNATSSM) *infraEnv {
 // private one routing 0.0.0.0/0 to the given route.
 func (e *infraEnv) withRouteTables(private ec2types.Route) *infraEnv {
 	private.DestinationCidrBlock = aws.String("0.0.0.0/0")
-	nameTag := func(n string) []ec2types.Tag {
-		return []ec2types.Tag{{Key: aws.String(tagging.NameTag), Value: aws.String(n)}, {Key: aws.String(tagging.KeyManaged), Value: aws.String("true")}}
-	}
 	e.ec2.routeTables = []*ec2types.RouteTable{
 		{
-			RouteTableId: aws.String("rtb-public"), Tags: nameTag(naming.PublicRouteTable()),
+			RouteTableId: aws.String("rtb-public"),
+			Tags:         ec2Tags(tagging.ForShared(tagging.ComponentRouteTable, naming.PublicRouteTable())),
 			Routes:       []ec2types.Route{{DestinationCidrBlock: aws.String("0.0.0.0/0"), GatewayId: aws.String("igw-1")}},
 			Associations: []ec2types.RouteTableAssociation{{SubnetId: aws.String("subnet-public")}},
 		},
 		{
-			RouteTableId: aws.String("rtb-private"), Tags: nameTag(naming.PrivateRouteTable()),
+			RouteTableId: aws.String("rtb-private"),
+			Tags:         ec2Tags(tagging.ForShared(tagging.ComponentRouteTable, naming.PrivateRouteTable())),
 			Routes:       []ec2types.Route{private},
 			Associations: []ec2types.RouteTableAssociation{{SubnetId: aws.String("subnet-private-1a")}},
 		},
@@ -507,38 +553,87 @@ func (e *infraEnv) withRouteTables(private ec2types.Route) *infraEnv {
 	return e
 }
 
-// withNATInstance adds a running NAT instance and its security group.
-func (e *infraEnv) withNATInstance(id string, state ec2types.InstanceStateName) *infraEnv {
-	e.ec2.natInstances = append(e.ec2.natInstances, &ec2types.Instance{
-		InstanceId:   aws.String(id),
-		InstanceType: ec2types.InstanceType(config.NATInstanceType),
-		State:        &ec2types.InstanceState{Name: state},
+// withInstance adds an instance with the given tags and security group.
+func (e *infraEnv) withInstance(id string, state ec2types.InstanceStateName, tags map[string]string, sgID string) *infraEnv {
+	inst := &ec2types.Instance{
+		InstanceId: aws.String(id),
+		State:      &ec2types.InstanceState{Name: state},
+		Tags:       ec2Tags(tags),
 		NetworkInterfaces: []ec2types.InstanceNetworkInterface{{
 			NetworkInterfaceId: aws.String("eni-" + id),
 			Attachment:         &ec2types.InstanceNetworkInterfaceAttachment{DeviceIndex: aws.Int32(0)},
 		}},
-	})
-	e.ec2.natSGID = "sg-nat"
+	}
+	if sgID != "" {
+		inst.SecurityGroups = []ec2types.GroupIdentifier{{GroupId: aws.String(sgID)}}
+	}
+	e.ec2.instances = append(e.ec2.instances, inst)
 	return e
 }
 
-// withNATGateway adds a NAT gateway with an associated Elastic IP.
-func (e *infraEnv) withNATGateway(id string, state ec2types.NatGatewayState) *infraEnv {
-	alloc := "eipalloc-" + id
-	e.ec2.eips = append(e.ec2.eips, &ec2types.Address{
-		AllocationId: aws.String(alloc), PublicIp: aws.String("198.51.100.7"),
-		AssociationId: aws.String("eipassoc-" + id),
+// withSecurityGroup adds a security group with the given tags.
+func (e *infraEnv) withSecurityGroup(id string, tags map[string]string) *infraEnv {
+	e.ec2.securityGroups = append(e.ec2.securityGroups, &ec2types.SecurityGroup{
+		GroupId: aws.String(id), VpcId: aws.String("vpc-1"), Tags: ec2Tags(tags),
 	})
+	return e
+}
+
+// withNATInstance adds a nakama NAT instance and its security group.
+func (e *infraEnv) withNATInstance(id string, state ec2types.InstanceStateName) *infraEnv {
+	e.withSecurityGroup("sg-nat", tagging.ForShared(tagging.ComponentNATInstance, naming.NATInstanceSG()))
+	e.withInstance(id, state, tagging.ForShared(tagging.ComponentNATInstance, naming.NATInstance()), "sg-nat")
+	e.ec2.instances[len(e.ec2.instances)-1].InstanceType = ec2types.InstanceType(config.NATInstanceType)
+	return e
+}
+
+// withCodeServer adds a nakama code-server instance.
+func (e *infraEnv) withCodeServer(name string, state ec2types.InstanceStateName) *infraEnv {
+	return e.withInstance("i-"+name, state, tagging.ForInstance(name, tagging.ComponentEC2, naming.EC2(name)), "")
+}
+
+// addNATGateway adds a NAT gateway with an associated Elastic IP;
+// tagged as nakama's unless foreign is set.
+func (e *infraEnv) addNATGateway(id string, state ec2types.NatGatewayState, foreign bool) *infraEnv {
+	alloc := "eipalloc-" + id
+	gwTags := tagging.ForShared(tagging.ComponentNATGW, naming.NATGW())
+	eipTags := tagging.ForShared(tagging.ComponentEIP, naming.NATGWEIP())
+	if foreign {
+		gwTags = map[string]string{tagging.NameTag: "someone-elses-nat"}
+		eipTags = map[string]string{tagging.NameTag: "someone-elses-eip"}
+	}
+	eip := &ec2types.Address{
+		AllocationId: aws.String(alloc), PublicIp: aws.String("198.51.100.7"),
+		AssociationId: aws.String("eipassoc-" + id), Tags: ec2Tags(eipTags),
+	}
 	gw := &ec2types.NatGateway{
 		NatGatewayId: aws.String(id), State: state, VpcId: aws.String("vpc-1"), SubnetId: aws.String("subnet-public"),
+		Tags:                ec2Tags(gwTags),
 		NatGatewayAddresses: []ec2types.NatGatewayAddress{{AllocationId: aws.String(alloc), PublicIp: aws.String("198.51.100.7"), IsPrimary: aws.Bool(true)}},
 	}
 	if state == ec2types.NatGatewayStateFailed {
 		gw.FailureMessage = aws.String("Elastic IP address could not be associated")
 		// A failed NAT gateway holds no address.
-		e.ec2.eips[len(e.ec2.eips)-1].AssociationId = nil
+		eip.AssociationId = nil
 	}
+	e.ec2.eips = append(e.ec2.eips, eip)
 	e.ec2.natGateways = append(e.ec2.natGateways, gw)
+	return e
+}
+
+// withNATGateway adds a nakama NAT gateway with an associated Elastic IP.
+func (e *infraEnv) withNATGateway(id string, state ec2types.NatGatewayState) *infraEnv {
+	return e.addNATGateway(id, state, false)
+}
+
+// withForeignResources adds things in the account that are not
+// nakama's: an instance with its own security group, an available NAT
+// gateway with its Elastic IP in the same VPC, and a free Elastic IP.
+func (e *infraEnv) withForeignResources() *infraEnv {
+	e.withSecurityGroup("sg-web", map[string]string{tagging.NameTag: "web"})
+	e.withInstance("i-web", ec2types.InstanceStateNameRunning, map[string]string{tagging.NameTag: "web"}, "sg-web")
+	e.addNATGateway("nat-other", ec2types.NatGatewayStateAvailable, true)
+	e.ec2.eips = append(e.ec2.eips, &ec2types.Address{AllocationId: aws.String("eipalloc-mine"), PublicIp: aws.String("198.51.100.9")})
 	return e
 }
 
@@ -558,12 +653,33 @@ func (e *infraEnv) privateRoute(t *testing.T) string {
 	return ""
 }
 
-func (e *infraEnv) liveNATInstances() []string {
+// liveInstances returns the IDs of the instances that are not terminated.
+func (e *infraEnv) liveInstances() []string {
 	var ids []string
-	for _, i := range e.ec2.natInstances {
+	for _, i := range e.ec2.instances {
 		if i.State.Name != ec2types.InstanceStateNameTerminated {
 			ids = append(ids, aws.ToString(i.InstanceId))
 		}
+	}
+	return ids
+}
+
+// liveNATInstances returns the nakama NAT instances that are not terminated.
+func (e *infraEnv) liveNATInstances() []string {
+	var ids []string
+	for _, i := range e.ec2.instances {
+		if i.State.Name != ec2types.InstanceStateNameTerminated &&
+			tagValue(i.Tags, tagging.KeyComponent) == tagging.ComponentNATInstance {
+			ids = append(ids, aws.ToString(i.InstanceId))
+		}
+	}
+	return ids
+}
+
+func (e *infraEnv) securityGroupIDs() []string {
+	var ids []string
+	for _, sg := range e.ec2.securityGroups {
+		ids = append(ids, aws.ToString(sg.GroupId))
 	}
 	return ids
 }
@@ -578,18 +694,57 @@ func (e *infraEnv) liveNATGateways() []string {
 	return ids
 }
 
+func (e *infraEnv) eipIDs() []string {
+	var ids []string
+	for _, a := range e.ec2.eips {
+		ids = append(ids, aws.ToString(a.AllocationId))
+	}
+	return ids
+}
+
+// assertOrder checks that each call happened, each strictly after the
+// one before it.
 func assertOrder(t *testing.T, e *fakeInfraEC2, prefixes ...string) {
 	t.Helper()
+	if err := orderError(e, prefixes...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// orderError is assertOrder's check: nil when every prefix matches a
+// recorded call strictly after the one the previous prefix matched. Two
+// prefixes that match the same call are not in order.
+func orderError(e *fakeInfraEC2, prefixes ...string) error {
 	last := -1
 	for _, p := range prefixes {
 		i := e.callIndex(p)
 		if i < 0 {
-			t.Fatalf("call %q was not made; calls:\n  %s", p, strings.Join(e.calls, "\n  "))
+			return fmt.Errorf("call %q was not made; calls:\n  %s", p, strings.Join(e.calls, "\n  "))
 		}
-		if i < last {
-			t.Fatalf("call %q came too early; calls:\n  %s", p, strings.Join(e.calls, "\n  "))
+		if i <= last {
+			return fmt.Errorf("call %q came too early; calls:\n  %s", p, strings.Join(e.calls, "\n  "))
 		}
 		last = i
+	}
+	return nil
+}
+
+func TestOrderErrorIsStrict(t *testing.T) {
+	t.Parallel()
+	f := &fakeInfraEC2{calls: []string{"CreateNatGateway:nat-1", "ReplaceRoute:x:nat-1", "TerminateInstances:i-nat"}}
+	if err := orderError(f, "CreateNatGateway:", "ReplaceRoute:", "TerminateInstances:"); err != nil {
+		t.Errorf("calls in order: %v", err)
+	}
+	if err := orderError(f, "ReplaceRoute:", "CreateNatGateway:"); err == nil {
+		t.Error("calls out of order passed")
+	}
+	// Two expectations that match the same recorded call are not two
+	// calls in order.
+	if err := orderError(f, "CreateNatGateway:", "CreateNatGateway:nat"); err == nil {
+		t.Error("two prefixes of the same call passed")
+	}
+	if err := orderError(f, "DeleteNatGateway:"); err == nil {
+		t.Error("a missing call passed")
 	}
 }
 
@@ -617,6 +772,14 @@ func TestInitEgress_GatewayNewEnvironment(t *testing.T) {
 	if env.res.TerminatedNATInstanceID != "" || env.res.DeletedNATInstanceSGID != "" {
 		t.Errorf("nothing to remove in a new environment: %+v", env.res)
 	}
+	// What init created carries the tags the next init looks for.
+	gw := env.ec2.natGateways[0]
+	if tagValue(gw.Tags, tagging.NameTag) != naming.NATGW() || tagValue(gw.Tags, tagging.KeyManaged) != tagging.ValueManagedTrue {
+		t.Errorf("NAT gateway tags = %v", gw.Tags)
+	}
+	if eip := env.ec2.eips[0]; tagValue(eip.Tags, tagging.NameTag) != naming.NATGWEIP() {
+		t.Errorf("Elastic IP tags = %v", eip.Tags)
+	}
 }
 
 func TestInitEgress_SwitchInstanceToGateway(t *testing.T) {
@@ -638,8 +801,8 @@ func TestInitEgress_SwitchInstanceToGateway(t *testing.T) {
 	if got := env.liveNATInstances(); len(got) != 0 {
 		t.Errorf("NAT instances left: %v", got)
 	}
-	if env.ec2.natSGID != "" {
-		t.Errorf("the NAT instance security group is left: %s", env.ec2.natSGID)
+	if got := env.securityGroupIDs(); len(got) != 0 {
+		t.Errorf("security groups left: %v", got)
 	}
 	if env.res.TerminatedNATInstanceID != "i-nat" || env.res.DeletedNATInstanceSGID != "sg-nat" {
 		t.Errorf("result = %+v", env.res)
@@ -647,6 +810,65 @@ func TestInitEgress_SwitchInstanceToGateway(t *testing.T) {
 	if env.ec2.has("ReplaceRoute:" + naming.PublicRouteTable()) {
 		t.Error("the public route must not change")
 	}
+}
+
+// TestInitEgress_LeavesForeignResourcesAlone checks the filters the code
+// sends: an instance, a security group, a NAT gateway and Elastic IPs
+// that are not nakama's survive both switches, and the gateway mode
+// does not adopt a NAT gateway that is not nakama's.
+func TestInitEgress_LeavesForeignResourcesAlone(t *testing.T) {
+	fastNATTimers(t)
+	shortNATGatewayWaits(t)
+
+	t.Run("to gateway", func(t *testing.T) {
+		env := newInfraEnv(NATModeGateway, nil).
+			withNATInstance("i-nat", ec2types.InstanceStateNameRunning).
+			withRouteTables(ec2types.Route{NetworkInterfaceId: aws.String("eni-i-nat")}).
+			withForeignResources()
+
+		if _, err := env.svc.initEgress(context.Background(), env.res); err != nil {
+			t.Fatalf("initEgress: %v", err)
+		}
+		if env.res.NATGatewayID == "nat-other" || !env.ec2.has("CreateNatGateway:") {
+			t.Errorf("the NAT gateway that is not nakama's was adopted: %+v", env.res)
+		}
+		if got := env.privateRoute(t); got != env.res.NATGatewayID {
+			t.Errorf("private route -> %q, want nakama's NAT gateway %q", got, env.res.NATGatewayID)
+		}
+		if !slices.Equal(env.liveInstances(), []string{"i-web"}) {
+			t.Errorf("live instances %v, want only the foreign one", env.liveInstances())
+		}
+		if !slices.Equal(env.securityGroupIDs(), []string{"sg-web"}) {
+			t.Errorf("security groups %v, want only the foreign one", env.securityGroupIDs())
+		}
+		if !slices.Contains(env.liveNATGateways(), "nat-other") ||
+			!slices.Contains(env.eipIDs(), "eipalloc-nat-other") || !slices.Contains(env.eipIDs(), "eipalloc-mine") {
+			t.Errorf("foreign NAT gateway / Elastic IPs touched: natgw=%v eip=%v", env.liveNATGateways(), env.eipIDs())
+		}
+	})
+
+	t.Run("to instance", func(t *testing.T) {
+		env := newInfraEnv(NATModeInstance, nil).
+			withNATGateway("nat-1", ec2types.NatGatewayStateAvailable).
+			withRouteTables(ec2types.Route{NatGatewayId: aws.String("nat-1")}).
+			withForeignResources()
+
+		if _, err := env.svc.initEgress(context.Background(), env.res); err != nil {
+			t.Fatalf("initEgress: %v", err)
+		}
+		if !slices.Equal(env.liveNATGateways(), []string{"nat-other"}) {
+			t.Errorf("live NAT gateways %v, want only the foreign one", env.liveNATGateways())
+		}
+		if got := env.eipIDs(); !slices.Equal(got, []string{"eipalloc-nat-other", "eipalloc-mine"}) {
+			t.Errorf("Elastic IPs left %v, want the foreign ones only", got)
+		}
+		if env.res.DeletedNATGatewayID != "nat-1" || env.res.ReleasedNATGatewayEIPID != "eipalloc-nat-1" {
+			t.Errorf("result = %+v", env.res)
+		}
+		if !slices.Contains(env.liveInstances(), "i-web") || !slices.Contains(env.securityGroupIDs(), "sg-web") {
+			t.Errorf("foreign instance / security group touched: %v / %v", env.liveInstances(), env.securityGroupIDs())
+		}
+	})
 }
 
 func TestInitEgress_GatewayCreationFailureKeepsTheNATInstance(t *testing.T) {
@@ -743,10 +965,14 @@ func TestInitEgress_SwitchGatewayToInstance(t *testing.T) {
 		t.Errorf("NAT gateways left: %v", got)
 	}
 	if len(env.ec2.eips) != 0 {
-		t.Errorf("Elastic IPs left: %+v", env.ec2.eips)
+		t.Errorf("Elastic IPs left: %v", env.eipIDs())
 	}
 	if env.res.DeletedNATGatewayID != "nat-1" || env.res.ReleasedNATGatewayEIPID != "eipalloc-nat-1" {
 		t.Errorf("result = %+v", env.res)
+	}
+	// The new NAT instance carries the tags the commands look for.
+	if got := env.liveNATInstances(); len(got) != 1 {
+		t.Errorf("NAT instances = %v, want the new one", got)
 	}
 }
 
@@ -759,8 +985,8 @@ func TestInitEgress_SwitchToABrokenNATInstanceKeepsTheGateway(t *testing.T) {
 		withRouteTables(ec2types.Route{NatGatewayId: aws.String("nat-1")})
 
 	_, err := env.svc.initEgress(context.Background(), env.res)
-	if err == nil || !strings.Contains(err.Error(), "forwarding") {
-		t.Fatalf("initEgress = %v, want the forwarding failure", err)
+	if err == nil || !strings.Contains(err.Error(), "repair failed") {
+		t.Fatalf("initEgress = %v, want the failed forwarding repair", err)
 	}
 	if got := env.privateRoute(t); got != "nat-1" {
 		t.Errorf("private route -> %q; it must stay on the NAT gateway", got)
@@ -801,10 +1027,14 @@ func TestInitEgress_UnknownMode(t *testing.T) {
 func TestReleaseNATGatewayEIPs(t *testing.T) {
 	t.Parallel()
 	env := newInfraEnv(NATModeGateway, nil)
+	ours := ec2Tags(tagging.ForShared(tagging.ComponentEIP, naming.NATGWEIP()))
 	env.ec2.eips = []*ec2types.Address{
-		{AllocationId: aws.String("eipalloc-keep")},
-		{AllocationId: aws.String("eipalloc-held"), AssociationId: aws.String("eipassoc-1")},
-		{AllocationId: aws.String("eipalloc-free")},
+		{AllocationId: aws.String("eipalloc-keep"), Tags: ours},
+		{AllocationId: aws.String("eipalloc-held"), AssociationId: aws.String("eipassoc-1"), Tags: ours},
+		{AllocationId: aws.String("eipalloc-free"), Tags: ours},
+		// Not the NAT gateway's: never released, even when nakama's.
+		{AllocationId: aws.String("eipalloc-mine")},
+		{AllocationId: aws.String("eipalloc-nakama-other"), Tags: ec2Tags(tagging.ForShared(tagging.ComponentEIP, "nakama-something-else"))},
 	}
 	released, err := env.svc.releaseNATGatewayEIPs(context.Background(), "eipalloc-keep")
 	if err != nil {
@@ -813,8 +1043,24 @@ func TestReleaseNATGatewayEIPs(t *testing.T) {
 	if !slices.Equal(released, []string{"eipalloc-free"}) {
 		t.Errorf("released %v, want only the free one", released)
 	}
-	if len(env.ec2.eips) != 2 {
-		t.Errorf("addresses left: %d, want the kept and the associated one", len(env.ec2.eips))
+	if got := env.eipIDs(); !slices.Equal(got, []string{"eipalloc-keep", "eipalloc-held", "eipalloc-mine", "eipalloc-nakama-other"}) {
+		t.Errorf("addresses left: %v", got)
+	}
+}
+
+// TestFakeInfraRejectsUnknownFilters keeps the fake honest: a filter it
+// does not model fails the call instead of being ignored.
+func TestFakeInfraRejectsUnknownFilters(t *testing.T) {
+	t.Parallel()
+	env := newInfraEnv(NATModeGateway, nil).withNATGateway("nat-1", ec2types.NatGatewayStateAvailable)
+	_, err := env.ec2.DescribeNatGateways(context.Background(), &ec2.DescribeNatGatewaysInput{
+		Filter: []ec2types.Filter{{Name: aws.String("subnet-id"), Values: []string{"subnet-public"}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "subnet-id") {
+		t.Fatalf("an unknown filter = %v, want an error", err)
+	}
+	if _, err := env.svc.listNATGateways(context.Background(), "vpc-1"); err != nil {
+		t.Fatalf("the filters listNATGateways sends must be modeled: %v", err)
 	}
 }
 
