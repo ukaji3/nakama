@@ -54,6 +54,19 @@ func TestInitSwitchPrompt(t *testing.T) {
 	if strings.Contains(toInstance, "Running instances") {
 		t.Errorf("no running instance, no session warning:\n%s", toInstance)
 	}
+
+	// A mode the prompt does not know describes neither NAT.
+	unknown := initSwitchPrompt(&service.InitPlan{NATMode: "regional", From: service.NATModeInstance, Switch: true})
+	for _, want := range []string{`from "instance" to "regional"`, "cannot describe", "[y/N]: "} {
+		if !strings.Contains(unknown, want) {
+			t.Errorf("unknown-mode prompt lacks %q:\n%s", want, unknown)
+		}
+	}
+	for _, notWant := range []string{"NAT gateway", "NAT instance (t4g.nano)", "Elastic IP"} {
+		if strings.Contains(unknown, notWant) {
+			t.Errorf("unknown-mode prompt describes %q:\n%s", notWant, unknown)
+		}
+	}
 }
 
 func TestInitSummary(t *testing.T) {

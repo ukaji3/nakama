@@ -114,6 +114,9 @@ const initNATGatewayCostNote = "note: the private subnets reach the internet thr
 	"instead, which costs almost nothing while the instances are stopped.\n"
 
 // initSwitchPrompt explains a change of the NAT mode and asks for a y/N.
+// Each mode names exactly what init will do; a mode this function does
+// not know (PlanInit validates it, so only a programming error gets
+// here) says so plainly instead of describing either NAT.
 func initSwitchPrompt(p *service.InitPlan) string {
 	var b strings.Builder
 	switch p.NATMode {
@@ -124,12 +127,15 @@ func initSwitchPrompt(p *service.InitPlan) string {
 			"  - terminate the NAT instance and delete its security group (its IAM role and instance profile are kept)\n" +
 			"  The NAT gateway is charged hourly while it exists, also when every instance is stopped,\n" +
 			"  plus per GB it carries (connect / tunnel traffic included) and its Elastic IP.\n")
-	default:
+	case service.NATModeInstance:
 		b.WriteString("nakama aws init will move the egress of the private subnets from the NAT gateway to the NAT instance:\n" +
 			"  - create the NAT instance (t4g.nano) in the public subnet and check that it forwards\n" +
 			"  - repoint the private default route to the NAT instance\n" +
 			"  - delete the NAT gateway and release its Elastic IP (the egress IP address changes)\n" +
 			"  The NAT instance then runs only while a code-server instance runs; nakama runs its operating system.\n")
+	default:
+		fmt.Fprintf(&b, "nakama aws init will change the egress mode of the private subnets from %q to %q,\n"+
+			"  which this version of nakama cannot describe.\n", p.From, p.NATMode)
 	}
 	if len(p.ActiveInstances) > 0 {
 		fmt.Fprintf(&b, "Running instances: %s.\n"+
