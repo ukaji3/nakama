@@ -268,6 +268,13 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 	slog.Info("restore: building a new instance", "name", p.Name, "label", p.Backup.Label,
 		"instance_type", p.InstanceType, "bare", p.Bare)
 
+	// As in create, the CloudFront prerequisites are looked up before
+	// anything is built.
+	pre, err := s.resolveCloudFrontPrereqs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	amiID, err := s.clients.AMIResolver.LatestUbuntu2604(ctx, p.Architecture)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ubuntu 26.04 %s ami: %w", p.Architecture, err)
@@ -283,7 +290,7 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 			return nil, fmt.Errorf("store password: %w", err)
 		}
 	}
-	net, err := s.prepareInstanceNetwork(ctx, p.Name)
+	net, err := s.prepareInstanceNetwork(ctx, p.Name, &pre)
 	if err != nil {
 		return nil, err
 	}
@@ -331,26 +338,11 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 	}
 
 	if !p.Bare {
-		privateDNS, err := s.privateDNSNameForInstance(ctx, instanceID)
-		if err != nil {
-			return nil, fmt.Errorf("resolve private DNS: %w", err)
+		var ic instanceCloudFront
+		if err := s.ensureInstanceCloudFront(ctx, p.Name, instanceID, pre.wafWebACLARN, &ic); err != nil {
+			return nil, err
 		}
-		if meta.VPCOriginID, err = s.createInstanceVPCOrigin(ctx, p.Name, instanceID); err != nil {
-			return nil, fmt.Errorf("create vpc origin: %w", err)
-		}
-		if err := s.writeInstanceMeta(ctx, p.Name, instanceMetaEntries(p.Name, meta)); err != nil {
-			return nil, fmt.Errorf("write instance metadata: %w", err)
-		}
-		if err := s.waitVPCOriginDeployed(ctx, meta.VPCOriginID); err != nil {
-			return nil, fmt.Errorf("wait vpc origin: %w", err)
-		}
-		if meta.DistributionID, meta.DistributionDomain, err = s.createInstanceDistribution(
-			ctx, p.Name, meta.VPCOriginID, privateDNS, net.base.WAFWebACLARN); err != nil {
-			return nil, fmt.Errorf("create distribution: %w", err)
-		}
-		if err := s.writeInstanceMeta(ctx, p.Name, instanceMetaEntries(p.Name, meta)); err != nil {
-			return nil, fmt.Errorf("write instance metadata: %w", err)
-		}
+		meta.VPCOriginID, meta.DistributionID, meta.DistributionDomain = ic.VPCOriginID, ic.DistributionID, ic.DistributionDomain
 	}
 
 	// The distribution deploys in the background while the disk is

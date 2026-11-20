@@ -29,12 +29,12 @@ type DeleteInstanceInput struct {
 // DeleteInstance tears down every resource owned by the named
 // nakama instance. The order is the reverse of CreateInstance:
 //
-//  1. CloudFront distribution (disable, wait, delete)
-//  2. CloudFront VPC origin
-//  3. EC2 instance (terminate, wait)
-//  4. ENI
-//  5. Security group
-//  6. SSM Parameter Store entries under /nakama/<name>/
+//  1. CloudFront distributions and VPC origin, when the instance has
+//     them (deleteCloudFrontResources)
+//  2. EC2 instance (terminate, wait)
+//  3. ENI
+//  4. Security group
+//  5. SSM Parameter Store entries under /nakama/<name>/
 func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) error {
 	if err := ValidateInstanceName(in.Name); err != nil {
 		return err
@@ -88,41 +88,13 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 		"distribution", distID, "kirocrew_distribution", crewID, "vpc_origin", vpcOriginID,
 		"instance", instanceIDs, "eni", eniIDs, "sg", sgIDs)
 
-	// The Kiro Crew distribution (ADR 0020) shares the VPC origin, so it
-	// must be gone before the VPC origin below can be deleted.
-	if crewID != "" {
-		if err := s.deleteKirocrewDistributionForInstance(ctx, crewID); err != nil {
-			if !in.Force {
-				return fmt.Errorf("kirocrew distribution: %w", err)
-			}
-			slog.Warn("delete: kirocrew distribution failed (continuing due to --force)", "error", err)
-		}
-	}
-	if distID != "" {
-		if err := s.deleteDistribution(ctx, distID); err != nil {
-			if !in.Force {
-				return fmt.Errorf("distribution: %w", err)
-			}
-			slog.Warn("delete: distribution failed (continuing due to --force)", "error", err)
-		}
-	}
-	// The redirect function is referenced by the code-server
-	// distribution's behaviors; it can only go once that is deleted.
-	if crewID != "" {
-		if err := s.deleteKirocrewFunction(ctx, in.Name); err != nil {
-			if !in.Force {
-				return fmt.Errorf("kirocrew function: %w", err)
-			}
-			slog.Warn("delete: kirocrew function failed (continuing due to --force)", "error", err)
-		}
-	}
-	if vpcOriginID != "" {
-		if err := s.deleteVPCOrigin(ctx, vpcOriginID); err != nil {
-			if !in.Force {
-				return fmt.Errorf("vpc origin: %w", err)
-			}
-			slog.Warn("delete: vpc origin failed (continuing due to --force)", "error", err)
-		}
+	// The CloudFront resources go first: the VPC origin points at the
+	// instance. The Kiro Crew distribution (ADR 0020) shares the VPC
+	// origin, so it goes before the VPC origin as well.
+	if err := s.deleteCloudFrontResources(ctx, cloudFrontResources{
+		name: in.Name, distributionID: distID, crewID: crewID, vpcOriginID: vpcOriginID,
+	}, in.Force); err != nil {
+		return err
 	}
 	for _, id := range instanceIDs {
 		if err := s.terminateInstanceAndWait(ctx, id); err != nil {
@@ -308,6 +280,53 @@ func (s *Service) findTaggedSecurityGroups(ctx context.Context, name string) ([]
 
 // --- distribution ---------------------------------------------------------
 
+// cloudFrontResources are an instance's CloudFront resources, as SSM
+// records them. An empty ID means the resource is not recorded.
+type cloudFrontResources struct {
+	name           string
+	distributionID string
+	crewID         string // the Kiro Crew distribution (ADR 0020)
+	vpcOriginID    string
+}
+
+// deleteCloudFrontResources removes an instance's CloudFront resources
+// in dependency order: the Kiro Crew distribution and the code-server
+// distribution, which both use the VPC origin; the Kiro Crew redirect
+// function, which the code-server distribution's behaviors reference;
+// and the VPC origin last. Shared by `nakama aws delete` and
+// `nakama aws cloudfront delete` (ADR 0028).
+//
+// Every step tolerates a resource that is already gone, so a re-run
+// completes what an earlier run left. Without force the first failure
+// stops; with force (`delete --force`) it only warns and the next step
+// runs. The redirect function is touched only when Kiro Crew web access
+// was enabled, so a plain delete needs no CloudFront Functions
+// permissions.
+func (s *Service) deleteCloudFrontResources(ctx context.Context, r cloudFrontResources, force bool) error {
+	steps := []struct {
+		what string
+		skip bool
+		run  func() error
+	}{
+		{"kirocrew distribution", r.crewID == "", func() error { return s.deleteKirocrewDistributionForInstance(ctx, r.crewID) }},
+		{"distribution", r.distributionID == "", func() error { return s.deleteDistribution(ctx, r.distributionID) }},
+		{"kirocrew function", r.crewID == "", func() error { return s.deleteKirocrewFunction(ctx, r.name) }},
+		{"vpc origin", r.vpcOriginID == "", func() error { return s.deleteVPCOrigin(ctx, r.vpcOriginID) }},
+	}
+	for _, st := range steps {
+		if st.skip {
+			continue
+		}
+		if err := st.run(); err != nil {
+			if !force {
+				return fmt.Errorf("%s: %w", st.what, err)
+			}
+			slog.Warn("delete: "+st.what+" failed (continuing due to --force)", "error", err)
+		}
+	}
+	return nil
+}
+
 func (s *Service) deleteDistribution(ctx context.Context, id string) error {
 	cfgOut, err := s.clients.CloudFront.GetDistributionConfig(ctx, &cloudfront.GetDistributionConfigInput{
 		Id: aws.String(id),
@@ -325,19 +344,23 @@ func (s *Service) deleteDistribution(ctx context.Context, id string) error {
 	if cfgOut.DistributionConfig.Enabled != nil && *cfgOut.DistributionConfig.Enabled {
 		cfg := *cfgOut.DistributionConfig
 		cfg.Enabled = aws.Bool(false)
-		upd, err := s.clients.CloudFront.UpdateDistribution(ctx, &cloudfront.UpdateDistributionInput{
+		if _, err := s.clients.CloudFront.UpdateDistribution(ctx, &cloudfront.UpdateDistributionInput{
 			Id:                 aws.String(id),
 			DistributionConfig: &cfg,
 			IfMatch:            cfgOut.ETag,
-		})
-		if err != nil {
+		}); err != nil {
 			return fmt.Errorf("UpdateDistribution(disable): %w", err)
 		}
-		_ = upd
 		slog.Info("distribution: disabled, waiting for Deployed", "id", id)
-		if err := s.waitDistributionDeployed(ctx, id); err != nil {
-			return err
-		}
+	} else {
+		slog.Info("distribution: already disabled, waiting for Deployed", "id", id)
+	}
+	// CloudFront deletes a distribution only once the disable has
+	// deployed. An earlier run that stopped right after disabling it
+	// leaves it Enabled=false but still InProgress, and DeleteDistribution
+	// then answers DistributionNotDisabled; so the wait runs either way.
+	if err := s.waitDistributionDeployed(ctx, id); err != nil {
+		return err
 	}
 
 	// Re-fetch ETag (any update changes it).

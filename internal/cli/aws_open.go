@@ -572,11 +572,18 @@ func renderOpenResultTo(cmd *cobra.Command, view openView, method string, opened
 	return renderOutput(cmd.OutOrStdout(), global.Output, res, text)
 }
 
+// allowlistChecker is what warnIfNotAllowlisted needs: the WAF
+// allowlist and this machine's public IP.
+type allowlistChecker interface {
+	ListACL(ctx context.Context) ([]service.ACLEntry, error)
+	PublicIPv4(ctx context.Context) (string, error)
+}
+
 // warnIfNotAllowlisted checks the caller's public IPv4 against the WAF
 // allowlist and prints a stderr warning when it is not covered. The
 // check is strictly best-effort (ADR 0012): any failure is logged at
-// debug level and must never break `open`.
-func warnIfNotAllowlisted(ctx context.Context, backend openBackend, stderr io.Writer) {
+// debug level and must never break `open` or `cloudfront add`.
+func warnIfNotAllowlisted(ctx context.Context, backend allowlistChecker, stderr io.Writer) {
 	ip, err := backend.PublicIPv4(ctx)
 	if err != nil {
 		slog.Debug("open: skip WAF allowlist check (public IP discovery failed)", "error", err)

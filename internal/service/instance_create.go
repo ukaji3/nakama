@@ -150,11 +150,17 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		}
 	}
 
-	net, err := s.prepareInstanceNetwork(ctx, in.Name)
+	// The CloudFront prefix list and the shared WAF web ACL.
+	pre, err := s.resolveCloudFrontPrereqs(ctx)
 	if err != nil {
 		return nil, err
 	}
-	base, sgID, eniID := net.base, net.sgID, net.eniID
+	cf := &pre
+	net, err := s.prepareInstanceNetwork(ctx, in.Name, cf)
+	if err != nil {
+		return nil, err
+	}
+	sgID, eniID := net.sgID, net.eniID
 
 	var ud string
 	if in.Bare {
@@ -220,29 +226,11 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	// exists only for code-server instances. Skipping it is what makes
 	// --bare fast: no CloudFront deploy wait (Issue #52).
 	if !in.Bare {
-		privateDNS, err := s.privateDNSNameForInstance(ctx, instanceID)
-		if err != nil {
-			return nil, fmt.Errorf("resolve private DNS: %w", err)
+		var ic instanceCloudFront
+		if err := s.ensureInstanceCloudFront(ctx, in.Name, instanceID, cf.wafWebACLARN, &ic); err != nil {
+			return nil, err
 		}
-		slog.Info("create: private DNS resolved", "private_dns", privateDNS)
-
-		if meta.VPCOriginID, err = s.createInstanceVPCOrigin(ctx, in.Name, instanceID); err != nil {
-			return nil, fmt.Errorf("create vpc origin: %w", err)
-		}
-		if err := s.writeInstanceMeta(ctx, in.Name, instanceMetaEntries(in.Name, meta)); err != nil {
-			return nil, fmt.Errorf("write instance metadata: %w", err)
-		}
-		if err := s.waitVPCOriginDeployed(ctx, meta.VPCOriginID); err != nil {
-			return nil, fmt.Errorf("wait vpc origin: %w", err)
-		}
-
-		if meta.DistributionID, meta.DistributionDomain, err = s.createInstanceDistribution(
-			ctx, in.Name, meta.VPCOriginID, privateDNS, base.WAFWebACLARN); err != nil {
-			return nil, fmt.Errorf("create distribution: %w", err)
-		}
-		if err := s.writeInstanceMeta(ctx, in.Name, instanceMetaEntries(in.Name, meta)); err != nil {
-			return nil, fmt.Errorf("write instance metadata: %w", err)
-		}
+		meta.VPCOriginID, meta.DistributionID, meta.DistributionDomain = ic.VPCOriginID, ic.DistributionID, ic.DistributionDomain
 		if err := s.waitDistributionDeployed(ctx, meta.DistributionID); err != nil {
 			return nil, fmt.Errorf("wait distribution: %w", err)
 		}
@@ -470,20 +458,43 @@ type instanceNetwork struct {
 	eniID string
 }
 
+// cloudFrontPrereqs are the shared pieces the CloudFront entry path of
+// an instance needs: the managed prefix list its SG rule allows, and
+// the WAF web ACL its distribution uses (ADR 0028).
+type cloudFrontPrereqs struct {
+	prefixListID string
+	wafWebACLARN string
+}
+
+// resolveCloudFrontPrereqs looks up the CloudFront prefix list and the
+// shared WAF web ACL. Read-only; the callers run it before creating
+// anything so that a missing piece leaves nothing behind.
+func (s *Service) resolveCloudFrontPrereqs(ctx context.Context) (cloudFrontPrereqs, error) {
+	var p cloudFrontPrereqs
+	var err error
+	if p.prefixListID, err = s.cloudFrontPrefixListID(ctx); err != nil {
+		return p, fmt.Errorf("resolve CloudFront prefix list: %w", err)
+	}
+	// The WAFv2 client is in us-east-1 (CLOUDFRONT scope), so the web
+	// ACL is found with ListWebACLs, not by the EC2/SSM tags.
+	if p.wafWebACLARN, err = s.findWAFWebACLARN(ctx); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
 // prepareInstanceNetwork discovers the base infrastructure and creates
 // (or reuses) the instance's security group and ENI. Shared by create
 // and by restore of a deleted instance (Issue #96). Each of the two is
 // recorded as soon as it exists, so that `nakama aws delete` removes it
-// even when a later step (such as RunInstances) fails.
-func (s *Service) prepareInstanceNetwork(ctx context.Context, name string) (instanceNetwork, error) {
+// even when a later step (such as RunInstances) fails. With cf the SG
+// gets the CloudFront inbound rule; without it the SG has no inbound
+// rule at all (ADR 0028).
+func (s *Service) prepareInstanceNetwork(ctx context.Context, name string, cf *cloudFrontPrereqs) (instanceNetwork, error) {
 	var n instanceNetwork
 	var err error
 	if n.base, err = s.discoverBaseInfra(ctx); err != nil {
 		return n, fmt.Errorf("discover base infrastructure: %w", err)
-	}
-	prefixListID, err := s.cloudFrontPrefixListID(ctx)
-	if err != nil {
-		return n, fmt.Errorf("resolve CloudFront prefix list: %w", err)
 	}
 	if n.sgID, err = s.upsertInstanceSecurityGroup(ctx, name, n.base.VPCID); err != nil {
 		return n, fmt.Errorf("security group: %w", err)
@@ -491,8 +502,10 @@ func (s *Service) prepareInstanceNetwork(ctx context.Context, name string) (inst
 	if err := s.writeInstanceMeta(ctx, name, map[string]string{ssmSGIDPath(name): n.sgID}); err != nil {
 		return n, fmt.Errorf("write instance metadata: %w", err)
 	}
-	if err := s.ensureSGIngress(ctx, n.sgID, prefixListID); err != nil {
-		return n, fmt.Errorf("security group: %w", err)
+	if cf != nil {
+		if err := s.ensureSGIngress(ctx, n.sgID, cf.prefixListID); err != nil {
+			return n, fmt.Errorf("security group: %w", err)
+		}
 	}
 	if n.eniID, err = s.upsertInstanceENI(ctx, name, n.base.PrivateSubnet1aID, n.sgID); err != nil {
 		return n, fmt.Errorf("eni: %w", err)
@@ -508,7 +521,6 @@ func (s *Service) prepareInstanceNetwork(ctx context.Context, name string) (inst
 type baseInfra struct {
 	VPCID             string
 	PrivateSubnet1aID string
-	WAFWebACLARN      string
 }
 
 func (s *Service) discoverBaseInfra(ctx context.Context) (baseInfra, error) {
@@ -535,13 +547,5 @@ func (s *Service) discoverBaseInfra(ctx context.Context) (baseInfra, error) {
 		return b, errors.New("private subnet 1a not found; run \"nakama aws init\"")
 	}
 	b.PrivateSubnet1aID = *subOut.Subnets[0].SubnetId
-
-	// WAF web ACL ARN; constructed via ListWebACLs because the
-	// WAFv2 client is in us-east-1 and not visible to EC2/SSM tag APIs.
-	aclARN, err := s.findWAFWebACLARN(ctx)
-	if err != nil {
-		return b, err
-	}
-	b.WAFWebACLARN = aclARN
 	return b, nil
 }

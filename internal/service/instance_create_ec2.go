@@ -90,21 +90,28 @@ func (s *Service) upsertInstanceSecurityGroup(ctx context.Context, instanceName,
 	return sgID, nil
 }
 
+// cloudFrontIngress is the one inbound rule nakama manages on an
+// instance's SG: code-server's port from the CloudFront managed prefix
+// list, which the VPC origin's traffic comes from.
+func cloudFrontIngress(prefixListID string) []ec2types.IpPermission {
+	return []ec2types.IpPermission{{
+		IpProtocol: aws.String("tcp"),
+		FromPort:   aws.Int32(int32(config.CodeServerPort)),
+		ToPort:     aws.Int32(int32(config.CodeServerPort)),
+		PrefixListIds: []ec2types.PrefixListId{{
+			PrefixListId: aws.String(prefixListID),
+			Description:  aws.String("CloudFront VPC Origins managed prefix list"),
+		}},
+	}}
+}
+
 // ensureSGIngress installs the CloudFront prefix-list ingress rule
 // if it is not already present. AWS rejects duplicate rules with
 // InvalidPermission.Duplicate; we treat that as success.
 func (s *Service) ensureSGIngress(ctx context.Context, sgID, prefixListID string) error {
 	_, err := s.clients.EC2.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
-		GroupId: aws.String(sgID),
-		IpPermissions: []ec2types.IpPermission{{
-			IpProtocol: aws.String("tcp"),
-			FromPort:   aws.Int32(int32(config.CodeServerPort)),
-			ToPort:     aws.Int32(int32(config.CodeServerPort)),
-			PrefixListIds: []ec2types.PrefixListId{{
-				PrefixListId: aws.String(prefixListID),
-				Description:  aws.String("CloudFront VPC Origins managed prefix list"),
-			}},
-		}},
+		GroupId:       aws.String(sgID),
+		IpPermissions: cloudFrontIngress(prefixListID),
 	})
 	if err != nil {
 		if awshelper.IsAPIError(err, "InvalidPermission.Duplicate") {
@@ -114,6 +121,29 @@ func (s *Service) ensureSGIngress(ctx context.Context, sgID, prefixListID string
 	}
 	slog.Info("sg: ingress added", "sg_id", sgID, "prefix_list_id", prefixListID, "port", config.CodeServerPort)
 	return nil
+}
+
+// revokeSGIngress removes the rule ensureSGIngress adds, and reports
+// whether there was one. Other rules of the group are left alone. A
+// missing rule or group is not an error: for a VPC security group, AWS
+// answers a rule that does not exist with success and lists it in
+// UnknownIpPermissions (older behavior: InvalidPermission.NotFound).
+func (s *Service) revokeSGIngress(ctx context.Context, sgID, prefixListID string) (bool, error) {
+	out, err := s.clients.EC2.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
+		GroupId:       aws.String(sgID),
+		IpPermissions: cloudFrontIngress(prefixListID),
+	})
+	if err != nil {
+		if awshelper.IsAPIError(err, "InvalidPermission.NotFound", "InvalidGroup.NotFound") {
+			return false, nil
+		}
+		return false, fmt.Errorf("RevokeSecurityGroupIngress: %w", err)
+	}
+	if out != nil && len(out.UnknownIpPermissions) > 0 {
+		return false, nil
+	}
+	slog.Info("sg: ingress removed", "sg_id", sgID, "prefix_list_id", prefixListID, "port", config.CodeServerPort)
+	return true, nil
 }
 
 // upsertInstanceENI creates (or re-uses) the per-instance ENI in the

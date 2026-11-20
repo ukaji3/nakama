@@ -74,6 +74,73 @@ func (s *Service) privateDNSNameForInstance(ctx context.Context, instanceID stri
 	return dns, err
 }
 
+// instanceCloudFront is the CloudFront entry path of an instance, as
+// recorded under /nakama/<name>/meta/ (ADR 0001, ADR 0028).
+type instanceCloudFront struct {
+	VPCOriginID        string
+	DistributionID     string
+	DistributionDomain string
+}
+
+// ensureInstanceCloudFront builds what is missing of an instance's
+// CloudFront entry path: the VPC origin in front of code-server, then
+// the distribution behind the shared WAF web ACL. Shared by create,
+// restore of a deleted instance and `nakama aws cloudfront add`.
+//
+// Each ID is recorded the moment it exists, before anything waits on
+// it, so that a failure or an interruption leaves it where
+// `nakama aws delete` and `nakama aws cloudfront delete` find it. The
+// VPC origin has to be Deployed before the distribution can use it; the
+// distribution's own deploy is left to the caller (create waits at
+// once, restore after the disk swap, cloudfront add at the end).
+//
+// ic holds the parts that exist already: create and restore pass it
+// empty, cloudfront add passes the ones it checked, so a re-run resumes
+// where an earlier one stopped. The instance must be running.
+func (s *Service) ensureInstanceCloudFront(ctx context.Context, name, instanceID, wafWebACLARN string, ic *instanceCloudFront) error {
+	// The private DNS name becomes the distribution's origin domain. It
+	// is resolved before the VPC origin is created, so that a lookup
+	// failure creates nothing.
+	var privateDNS string
+	if ic.DistributionID == "" {
+		dns, err := s.privateDNSNameForInstance(ctx, instanceID)
+		if err != nil {
+			return fmt.Errorf("resolve private DNS: %w", err)
+		}
+		privateDNS = dns
+		slog.Info("cloudfront: private DNS resolved", "private_dns", privateDNS)
+	}
+
+	if ic.VPCOriginID == "" {
+		id, err := s.createInstanceVPCOrigin(ctx, name, instanceID)
+		if err != nil {
+			return fmt.Errorf("create vpc origin: %w", err)
+		}
+		ic.VPCOriginID = id
+		if err := s.writeInstanceMeta(ctx, name, map[string]string{ssmVPCOriginIDPath(name): id}); err != nil {
+			return fmt.Errorf("write instance metadata: %w", err)
+		}
+	}
+	if err := s.waitVPCOriginDeployed(ctx, ic.VPCOriginID); err != nil {
+		return fmt.Errorf("wait vpc origin: %w", err)
+	}
+
+	if ic.DistributionID == "" {
+		id, domain, err := s.createInstanceDistribution(ctx, name, ic.VPCOriginID, privateDNS, wafWebACLARN)
+		if err != nil {
+			return fmt.Errorf("create distribution: %w", err)
+		}
+		ic.DistributionID, ic.DistributionDomain = id, domain
+		if err := s.writeInstanceMeta(ctx, name, map[string]string{
+			ssmDistributionIDPath(name):     id,
+			ssmDistributionDomainPath(name): domain,
+		}); err != nil {
+			return fmt.Errorf("write instance metadata: %w", err)
+		}
+	}
+	return nil
+}
+
 // createInstanceVPCOrigin creates the VPC origin pointing at the
 // instance and returns its ID without waiting for it to be Deployed
 // (which takes up to 20 minutes). The caller records the ID first and
