@@ -1,6 +1,6 @@
 # ADR 0017: `nakama aws tunnel` — バックグラウンド常駐のポート転送はデーモン + ループバック制御チャネルで実現する
 
-- Status: Accepted
+- Status: Accepted (一部を ADR 0027 で置き換え: ローカルポートはデーモンが持って plugin へ中継し (不採用案 6 を改める)、再接続は回数の上限なしで exit 0・通信エラーでも張り直し、使われない転送はセッションを張らない (`idle`)。制御チャネルに `POST /forwards` を足し、`open` / `kirocrew` が転送を足す)
 - Date: 2026-08-27
 - Issue: [#29](https://github.com/ukaji3/nakama/issues/29)
 

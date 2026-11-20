@@ -287,25 +287,28 @@ def d_overview() -> Svg:
         900,
         440,
         "nakama の全体像",
-        "手元の PC のブラウザは CloudFront と WAF を通って AWS 上の code-server に "
-        "つながり、nakama CLI は AWS API と SSM Session Manager を通ってインスタンスを "
+        "手元の PC のブラウザは、nakama が手元に用意する localhost の入口から "
+        "SSM Session Manager を通って AWS 上の code-server につながる (CloudFront と WAF "
+        "の経路は --internet のときだけ)。nakama CLI は AWS API と SSM を通ってインスタンスを "
         "操作する。インスタンスからインターネットへの通信は NAT (NAT ゲートウェイか "
         "NAT インスタンス) を経由する。",
     )
     s.group_frame(20, 55, 200, 290, "あなたの PC")
     s.box(35, 90, 170, 70, ["ブラウザ", "Edge / Chrome"], "local")
-    s.box(35, 250, 170, 70, ["nakama CLI", "コマンド操作"], "local")
+    s.box(35, 250, 170, 70, ["nakama CLI", "localhost の入口"], "local")
 
     s.group_frame(260, 30, 620, 330, "AWS (ap-northeast-1 / 東京)")
-    s.box(300, 90, 190, 70, ["CloudFront + WAF", "許可した IP だけ通す"], "aws")
+    s.box(300, 90, 190, 70, ["CloudFront + WAF", "--internet のときだけ"], "aws")
     s.box(620, 160, 220, 90, ["EC2 インスタンス", "code-server (VS Code)", "プライベートサブネット"], "aws")
-    s.box(300, 250, 190, 70, ["SSM Session Manager", "SSH なしで中に入る"], "aws")
+    s.box(300, 250, 190, 70, ["SSM Session Manager", "ブラウザ・シェル・転送"], "aws")
     s.box(620, 296, 220, 56, ["NAT (外向き通信のみ)", "ゲートウェイかインスタンス"], "aws")
 
     s.arrow(205, 120, 296, 120, "HTTPS")
+    s.arrow(120, 162, 120, 246, "")
+    s.label(128, 210, "localhost", size=12)
     s.arrow(492, 132, 616, 172, "")
     s.label(500, 196, "VPC Origin (HTTP)", size=12)
-    s.arrow(205, 280, 296, 280, "AWS API")
+    s.arrow(205, 280, 296, 280, "SSM / AWS API")
     s.arrow(492, 272, 616, 248, "")
     s.label(500, 300, "SSH なし・ポート開放なし", size=12)
     s.arrow(730, 250, 730, 292, "")
@@ -319,20 +322,19 @@ def d_overview() -> Svg:
 
 
 def d_flow_first_time() -> Svg:
-    """初回セットアップの 5 ステップ。"""
+    """初回セットアップの 4 ステップ。"""
     s = Svg(
         920,
         250,
         "初回セットアップの流れ",
-        "サインイン、基盤の作成、自分の IP の許可、開発環境の作成、ブラウザで開く、"
-        "の 5 ステップで開発を始められる。",
+        "サインイン、基盤の作成、開発環境の作成、ブラウザで開く、"
+        "の 4 ステップで開発を始められる。",
     )
     steps = [
         ("1. サインイン", "nakama aws login", "ブラウザで承認", "約 1 分"),
         ("2. 基盤を作る", "nakama aws init", "1 回だけ (共有)", "約 3 分"),
-        ("3. IP を許可", "nakama aws acl add", "自宅/会社ごとに", "数秒"),
-        ("4. 環境を作る", "nakama aws create", "1 人で何台でも", "約 15 分"),
-        ("5. 使い始める", "nakama aws open", "ブラウザが開く", "数秒"),
+        ("3. 環境を作る", "nakama aws create", "1 人で何台でも", "約 15 分"),
+        ("4. 使い始める", "nakama aws open", "ブラウザが開く", "数秒"),
     ]
     x = 20
     for i, (title, cmd, note, dur) in enumerate(steps):
@@ -341,7 +343,7 @@ def d_flow_first_time() -> Svg:
         if i < len(steps) - 1:
             s.arrow(x + 158, 107, x + 178, 107, "")
         x += 180
-    s.label(20, 215, "2 の init は AWS アカウントに 1 回だけ。3 は接続元のネットワークが変わったときに追加します。",
+    s.label(20, 215, "2 の init は AWS アカウントに 1 回だけ。CloudFront 経由 (--internet) で開くときだけ、acl add で IP を許可します。",
             size=13, color=MUTED)
     return s
 
@@ -474,10 +476,10 @@ def d_access_paths() -> Svg:
         420,
         "4 つのアクセス方法の使い分け",
         "ブラウザで開く open、ターミナルに入る connect、デスクトップのエディタから使う ssh、"
-        "ポートを手元に持ってくる tunnel の 4 つがある。",
+        "ポートを手元に持ってくる tunnel の 4 つがある。どれも既定は SSM 経由。",
     )
     rows = [
-        ("open", "ブラウザで VS Code を開く", ["CloudFront 経由", "(自分の IP の許可が必要)"],
+        ("open", "ブラウザで VS Code を開く", ["SSM 経由 (既定)", "--internet で CloudFront"],
          ["画面だけで完結したい"], "ok"),
         ("connect", "ターミナルに入る", ["SSM 経由"],
          ["ログを見る・コマンドを叩く"], "step"),
@@ -498,8 +500,8 @@ def d_access_paths() -> Svg:
         s.box(640, y, 255, 60, when, "plain", font_size=13, uniform=True)
         y += 72
     s.box(25, 350, 870, 55, [
-        "open だけが CloudFront (インターネット) 経由で、IP の許可が必要です",
-        "connect / ssh / tunnel は SSM 経由なので IP 許可は不要です (AWS の権限で守られます)",
+        "4 つとも既定は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)",
+        "open / kirocrew に --internet を付けたときだけ CloudFront 経由になり、IP の許可が要ります",
     ], "note", font_size=14)
     return s
 

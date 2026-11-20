@@ -88,7 +88,7 @@
     <tr><td><code>proxy</code></td><td>プロキシを見つけられたか、AWS に届くか (<a href="02-proxy-cert.html">第 2 章</a>)</td></tr>
     <tr><td><code>tls</code></td><td>監査プロキシがあるか、OS の証明書リストで検証できたか</td></tr>
     <tr><td><code>credentials</code></td><td>どの AWS アカウント / ユーザーとして動くか、有効期限は切れていないか</td></tr>
-    <tr><td><code>waf-allowlist</code></td><td>自分の接続元 IP が許可リストに入っているか (<a href="03-init.html#acl">第 3 章</a>)</td></tr>
+    <tr><td><code>waf-allowlist</code></td><td>自分の接続元 IP が許可リストに入っているか (<code>--internet</code> で開くときだけ関係します。<a href="03-init.html#acl">第 3 章</a>)</td></tr>
     <tr><td><code>egress</code></td><td>開発環境の外向き通信の中継 (NAT ゲートウェイか NAT インスタンス) が使えるか。<code>init</code> で選んだ中継と、実際の経路が合っているか。切り替えの残り (使われていない中継) があれば <code>warn</code> (<a href="03-init.html#nat">第 3 章</a>)</td></tr>
     <tr><td><code>capability: ...</code></td><td>機能ごとに、必要な IAM 権限が揃っているか</td></tr>
     <tr><td><code>tunnels</code></td><td>このパソコンに記録されたポート転送が生きているか (<a href="05-use.html#tunnel">第 5 章「ポート転送」</a>)</td></tr>
@@ -157,12 +157,28 @@
   <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
-      <td>403 Forbidden になる</td>
-      <td>接続元 IP が許可されていません。<code>nakama aws acl add</code> を実行します。回線を変えた (テザリング、VPN の入切) 場合も IP が変わります。<br><strong>会社のネットワークでは、nakama とブラウザで外への出口 IP が違うことがあります。</strong>その場合はブラウザで <a href="https://checkip.amazonaws.com">https://checkip.amazonaws.com</a> を開き、表示された IP を <code>nakama aws acl add &lt;その IP&gt;</code> で追加してください。ときどきだけ 403 になるなら、出口が複数ある可能性があります。<code>nakama aws acl add</code> をもう一度実行してください</td>
+      <td><code>open</code> / <code>kirocrew</code> が <code>local port 8080 is in use</code> (または <code>is not available</code>) で失敗する</td>
+      <td>手元の 8080 番 (Kiro Crew は 5476 番) を別のプログラムか、nakama の別の開発環境の入口が使っています (後者なら名前が表示されます)。<code>--local-port 18080</code> のように別の番号を指定してください</td>
+    </tr>
+    <tr>
+      <td><code>open</code> / <code>kirocrew</code> が <code>could not launch a browser</code> で失敗する</td>
+      <td>ブラウザを見つけられませんでした。<code>--browser &lt;コマンド&gt;</code> で起動するブラウザを指定してください (入口は動き続けています。止めるなら <code>nakama aws tunnel stop &lt;名前&gt;</code>)</td>
+    </tr>
+    <tr>
+      <td><code>open</code> / <code>kirocrew</code> が <code>did not become usable within 1m0s</code> で失敗する</td>
+      <td>表示された理由を確認します。<code>TargetNotConnected</code> なら、下の「ターミナルや ssh でつながらない」の同じ行と同じ対処です。<code>nakama aws tunnel status &lt;名前&gt;</code> で入口の状態も見られます</td>
+    </tr>
+    <tr>
+      <td><code>open</code> / <code>kirocrew</code> が <code>started by an older nakama</code> で失敗する</td>
+      <td>古い版の nakama が起動した常駐プログラムが残っています。<code>nakama aws tunnel restart &lt;名前&gt;</code> で入れ替えてから、もう一度実行してください</td>
+    </tr>
+    <tr>
+      <td>403 Forbidden になる (<code>--internet</code> のとき)</td>
+      <td>接続元 IP が許可されていません。<code>nakama aws acl add</code> を実行します。回線を変えた (テザリング、VPN の入切) 場合も IP が変わります。<br><strong>会社のネットワークでは、nakama とブラウザで外への出口 IP が違うことがあります。</strong>その場合はブラウザで <a href="https://checkip.amazonaws.com">https://checkip.amazonaws.com</a> を開き、表示された IP を <code>nakama aws acl add &lt;その IP&gt;</code> で追加してください。ときどきだけ 403 になるなら、出口が複数ある可能性があります。<code>nakama aws acl add</code> をもう一度実行してください。SSM 経由 (<code>--internet</code> なし) なら IP の許可は要りません</td>
     </tr>
     <tr>
       <td>ページが表示されない / タイムアウトする</td>
-      <td>環境が停止していないか <code>nakama aws list</code> で確認し、<code>nakama aws start &lt;名前&gt;</code> で起動します。作成直後は CloudFront の反映待ちで数分かかることがあります</td>
+      <td>環境が停止していないか <code>nakama aws list</code> で確認し、<code>nakama aws start &lt;名前&gt;</code> で起動します。<code>--internet</code> では、作成直後は CloudFront の反映待ちで数分かかることがあります</td>
     </tr>
     <tr>
       <td>自動ログインされず、パスワードを求められる</td>
@@ -228,7 +244,11 @@
   <tbody>
     <tr>
       <td><code>status</code> が <code>dead</code></td>
-      <td>多くの場合サインインの期限切れです。<code>nakama aws login</code> の後、<code>nakama aws tunnel restart &lt;名前&gt;</code></td>
+      <td><code>DETAIL</code> の理由を確かめます。開発環境が削除されたなど、続けられない理由で止まっています。直したら <code>nakama aws tunnel restart &lt;名前&gt;</code>。サインインの期限切れでは <code>dead</code> にならず <code>reconnecting</code> のまま 1 分ごとに試すので、<code>nakama aws login</code> だけで戻ります</td>
+    </tr>
+    <tr>
+      <td><code>status</code> が <code>idle</code></td>
+      <td>異常ではありません。5 分使われていない入口が、次の接続を待っています。つなげばセッションを張ります</td>
     </tr>
     <tr>
       <td><code>status</code> が <code>stale</code></td>

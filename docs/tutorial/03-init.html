@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>第 3 章 土台を用意する — nakama チュートリアル</title>
-<meta name="description" content="nakama aws init で共通の土台を作り、nakama aws acl で自分の接続元 IP を許可します。料金の考え方も説明します。">
+<meta name="description" content="nakama aws init で共通の土台を作ります。CloudFront 経由で開くときの接続元 IP の許可 (nakama aws acl) と、料金の考え方も説明します。">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -32,7 +32,7 @@
   <p class="toc-label" style="margin-top:1.2rem">この章の内容</p>
   <ol>
     <li><a href="#init">init で土台を作る</a></li>
-    <li><a href="#acl">自分の IP を許可する</a></li>
+    <li><a href="#acl">CloudFront 経由で開くときは IP を許可する</a></li>
     <li><a href="#cost">料金の考え方</a></li>
   </ol>
 </nav>
@@ -115,8 +115,8 @@ nakama aws init --nat instance    # NAT インスタンスを使う</code></pre>
   <p>nakama は <code>ap-northeast-1</code> (東京) を前提に作られています。他のリージョンを指定するオプションはありません (使うデータセンターの区画も自動で決まるので、気にしなくて構いません)。</p>
 </div>
 
-<h2 id="acl">2. 自分の IP を許可する</h2>
-<p>ブラウザで開発環境を開くには、あなたの接続元 IP アドレスを門番 (WAF) に登録します。登録していない IP からは、正面玄関で拒否されます (403 エラー)。</p>
+<h2 id="acl">2. CloudFront 経由で開くときは IP を許可する</h2>
+<p><code>nakama aws open</code> と <code>nakama aws kirocrew</code> は、既定では SSM 経由で開くので、この節の作業は要りません (<a href="05-use.html#open">第 5 章</a>)。<code>--internet</code> を付けて CloudFront 経由で開くときだけ、あなたの接続元 IP アドレスを門番 (WAF) に登録します。登録していない IP からは、正面玄関で拒否されます (403 エラー)。</p>
 
 <p class="cmd-caption">PowerShell で実行 (いまの接続元 IP を自動で調べて登録します)</p>
 <pre><code>nakama aws acl add</code></pre>
@@ -150,17 +150,17 @@ nakama aws acl delete all                # すべて消す</code></pre>
 
 <div class="callout warn" role="note">
   <span class="title">時刻を更新するのは <code>acl add</code> だけです</span>
-  <p><code>nakama aws open</code> で開いたり、ブラウザで使ったりしても、時刻は更新されません。毎日使っている IP でも、しばらく <code>acl add</code> していなければ古く見えます。その場所から使い続けるなら、<code>acl prune</code> の前に <code>nakama aws acl add</code> を実行してください。</p>
+  <p><code>nakama aws open --internet</code> で開いたり、ブラウザで使ったりしても、時刻は更新されません。毎日使っている IP でも、しばらく <code>acl add</code> していなければ古く見えます。その場所から使い続けるなら、<code>acl prune</code> の前に <code>nakama aws acl add</code> を実行してください。</p>
 </div>
 
 <div class="callout danger" role="note">
   <span class="title"><code>acl delete all</code> は自分も締め出します</span>
-  <p>すべて消すと、<strong>どの開発環境 (Kiro Crew の画面も含む) も、あなたを含むすべてのブラウザに 403 を返します</strong>。使い続けるなら <code>--keep-mine</code> を付けるか、消した後に <code>nakama aws acl add</code> で登録し直してください。<code>connect</code> / <code>ssh</code> / <code>tunnel</code> は許可リストを使わないので、影響を受けません。</p>
+  <p>すべて消すと、<strong>CloudFront 経由 (<code>--internet</code>) では、どの開発環境 (Kiro Crew の画面も含む) も、あなたを含むすべてのブラウザに 403 を返します</strong>。CloudFront 経由で使い続けるなら <code>--keep-mine</code> を付けるか、消した後に <code>nakama aws acl add</code> で登録し直してください。SSM 経由の <code>open</code> / <code>kirocrew</code> と <code>connect</code> / <code>ssh</code> / <code>tunnel</code> は許可リストを使わないので、影響を受けません。</p>
 </div>
 
 <div class="callout tip" role="note">
-  <span class="title">許可が要るのはブラウザからのアクセスだけ</span>
-  <p><code>connect</code> / <code>ssh</code> / <code>tunnel</code> は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)。IP 許可が必要なのは <code>nakama aws open</code> でブラウザから開く場合だけです。<a href="05-use.html">第 5 章</a>で詳しく扱います。</p>
+  <span class="title">許可が要るのは CloudFront 経由のアクセスだけ</span>
+  <p><code>open</code> / <code>kirocrew</code> (既定) と <code>connect</code> / <code>ssh</code> / <code>tunnel</code> は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)。IP 許可が必要なのは <code>--internet</code> を付けて CloudFront 経由で開く場合だけです。<code>--internet</code> を使わないなら、許可リストを空にしておけば (<code>nakama aws acl delete all</code>)、インターネットからの入口はすべて拒否されます。<a href="05-use.html">第 5 章</a>で詳しく扱います。</p>
 </div>
 
 <div class="callout danger" role="note">

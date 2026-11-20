@@ -116,18 +116,18 @@
 <table>
   <thead><tr><th scope="col">コマンド</th><th scope="col">説明</th><th scope="col">主なオプション</th></tr></thead>
   <tbody>
-    <tr><td><code>nakama aws kirocrew &lt;名前&gt;</code></td><td>Kiro Crew の画面を code-server 経由で開く (自動ログイン)</td><td><code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code></td></tr>
-    <tr><td><code>nakama aws kirocrew enable &lt;名前&gt;</code></td><td>Kiro Crew の画面を開く仕組みを用意する (最初に 1 回)</td><td>—</td></tr>
+    <tr><td><code>nakama aws kirocrew &lt;名前&gt;</code></td><td>Kiro Crew の画面を SSM 経由で開く (自動サインイン、<code>enable</code> 不要)</td><td><code>--local-port &lt;番号&gt;</code> (既定 5476)、<code>--internet</code> (CloudFront 経由)、<code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code></td></tr>
+    <tr><td><code>nakama aws kirocrew enable &lt;名前&gt;</code></td><td>Kiro Crew の画面を CloudFront 経由 (<code>--internet</code>) で開く仕組みを用意する (最初に 1 回)</td><td>—</td></tr>
     <tr><td><code>nakama aws kirocrew disable &lt;名前&gt;</code></td><td>上の仕組みを取り外す</td><td>—</td></tr>
-    <tr><td><code>nakama aws open &lt;名前&gt;</code></td><td>ブラウザで開く (自動ログイン)</td><td><code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code> (既定 30s)</td></tr>
+    <tr><td><code>nakama aws open &lt;名前&gt;</code></td><td>ブラウザで開く (SSM 経由、自動ログイン)。入口は裏で動き続け、切れても自動でつなぎ直す</td><td><code>--local-port &lt;番号&gt;</code> (既定 8080)、<code>--internet</code> (CloudFront 経由)、<code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code> (既定 30s)</td></tr>
     <tr><td><code>nakama aws connect &lt;名前&gt; [コマンド...]</code></td><td>ターミナルに入る / コマンド実行。<strong>フラグは名前より前</strong>に置きます (名前より後ろは環境側で実行するコマンドとして扱われます)。コマンド実行は環境側の終了コードで終わります (nakama の失敗は 255)</td><td><code>--tty</code>、<code>--retry &lt;回数&gt;</code> (対話は既定 5、コマンド実行は既定 0)</td></tr>
     <tr><td><code>nakama aws ssh setup &lt;名前&gt;</code></td><td>公開鍵の登録と ssh 設定の生成</td><td><code>--identity &lt;公開鍵&gt;</code>、<code>--no-key</code>、<code>--port &lt;番号&gt;</code> (既定 22)</td></tr>
     <tr><td><code>nakama aws ssh proxy &lt;名前&gt;</code></td><td>ssh の <code>ProxyCommand</code> 用 (手で実行するものではありません)</td><td><code>--port &lt;番号&gt;</code></td></tr>
     <tr><td><code>nakama aws tunnel [start] &lt;名前&gt; -L &lt;指定&gt;</code></td><td>ポート転送を開始</td><td><code>-L &lt;手元&gt;:&lt;相手&gt;</code> または <code>-L &lt;手元&gt;:&lt;ホスト&gt;:&lt;相手&gt;</code> (複数指定可)</td></tr>
-    <tr><td><code>nakama aws tunnel status [名前]</code></td><td>転送状態 (名前を省略すると全件)</td><td>—</td></tr>
+    <tr><td><code>nakama aws tunnel status [名前]</code></td><td>転送状態 (名前を省略すると全件。<code>open</code> / <code>kirocrew</code> の入口も出る)</td><td>—</td></tr>
     <tr><td><code>nakama aws tunnel suggest &lt;名前&gt;</code></td><td>転送候補のポートを提案</td><td>—</td></tr>
-    <tr><td><code>nakama aws tunnel restart &lt;名前&gt;</code></td><td>設定を変えず再接続</td><td>—</td></tr>
-    <tr><td><code>nakama aws tunnel stop &lt;名前&gt;</code></td><td>転送を停止</td><td>—</td></tr>
+    <tr><td><code>nakama aws tunnel restart &lt;名前&gt;</code></td><td>設定を変えず常駐プログラムを入れ替える</td><td>—</td></tr>
+    <tr><td><code>nakama aws tunnel stop &lt;名前&gt;</code></td><td>転送を停止 (<code>open</code> / <code>kirocrew</code> の入口も)</td><td>—</td></tr>
   </tbody>
 </table>
 </div>
@@ -207,7 +207,6 @@
 <p class="cmd-caption">初めて使う (1 回だけ)</p>
 <pre><code>nakama aws login
 nakama aws init
-nakama aws acl add
 nakama aws create --name dev01 --instance-type t3.medium
 nakama aws open dev01</code></pre>
 
@@ -216,12 +215,12 @@ nakama aws open dev01</code></pre>
 nakama aws open dev01
 nakama aws stop dev01       # 使い終わり</code></pre>
 
-<p class="cmd-caption">場所 (回線) を変えたとき</p>
-<pre><code>nakama aws acl add          # いまの IP を追加</code></pre>
+<p class="cmd-caption">CloudFront 経由で開く場所 (回線) を変えたとき</p>
+<pre><code>nakama aws acl add          # いまの IP を追加
+nakama aws open --internet dev01</code></pre>
 
 <p class="cmd-caption">サインインの期限が切れたとき</p>
-<pre><code>nakama aws login
-nakama aws tunnel restart dev01   # 転送を使っていた場合</code></pre>
+<pre><code>nakama aws login            # 転送と open / kirocrew の入口は、これで自動でつなぎ直します</code></pre>
 
 <p class="cmd-caption">手元の VS Code から使う (1 回だけ設定)</p>
 <pre><code>nakama aws ssh setup dev01
