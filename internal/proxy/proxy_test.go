@@ -118,3 +118,30 @@ func TestNewTransport(t *testing.T) {
 		t.Fatal("NewTransport returned http.DefaultTransport itself instead of a clone")
 	}
 }
+
+// TestReloadKeepsFuncsWorking: Reload swaps the shared OS resolution
+// under functions that already exist (the tunnel daemon's SDK transport
+// was built long before), and the environment tier still wins.
+func TestReloadKeepsFuncsWorking(t *testing.T) {
+	clearProxyEnv(t)
+	f := Func()
+	Reload()
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/", nil)
+	if runtime.GOOS != "windows" {
+		u, err := f(req)
+		if err != nil {
+			t.Fatalf("Func after Reload: %v", err)
+		}
+		if u != nil {
+			t.Errorf("proxy after Reload = %v, want direct", u)
+		}
+	}
+	t.Setenv("HTTPS_PROXY", "http://proxy.internal:3128")
+	u, err := f(req)
+	if err != nil {
+		t.Fatalf("Func after Reload with env: %v", err)
+	}
+	if u == nil || u.String() != "http://proxy.internal:3128" {
+		t.Errorf("proxy = %v, want the environment proxy", u)
+	}
+}

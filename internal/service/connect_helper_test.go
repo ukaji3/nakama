@@ -35,7 +35,18 @@ func TestMain(m *testing.M) {
 	case helperShellEscape:
 		os.Exit(runShellEscapeHelper())
 	}
-	os.Exit(m.Run())
+	// No test may read or signal the tunnels of the person running the
+	// tests (DeleteInstance stops the local tunnel of the name it
+	// deletes): point the state directory at a scratch directory.
+	dir, err := os.MkdirTemp("", "nakama-service-test-tunnels-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tunnel state dir:", err)
+		os.Exit(1)
+	}
+	tunnelStateDirOverride = dir
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // runFakeSessionRunner stands in for `nakama aws session-runner` when

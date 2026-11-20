@@ -12,10 +12,53 @@ package proxy
 import (
 	"net/http"
 	"net/url"
+	"sync"
 
 	"github.com/mattn/go-ieproxy"
 	"golang.org/x/net/http/httpproxy"
 )
+
+// osProxy holds the OS-level proxy resolution shared by every Func.
+// go-ieproxy reads the OS settings once per process (a sync.Once on
+// Windows and macOS) and each GetProxyFunc captures them, so a
+// long-running process (the tunnel daemon) keeps the settings of the
+// network it started on. Reload replaces it.
+var osProxy struct {
+	mu sync.RWMutex
+	fn func(*http.Request) (*url.URL, error)
+}
+
+// currentOSProxy returns the OS-level resolution, reading the settings
+// on first use.
+func currentOSProxy() func(*http.Request) (*url.URL, error) {
+	osProxy.mu.RLock()
+	fn := osProxy.fn
+	osProxy.mu.RUnlock()
+	if fn != nil {
+		return fn
+	}
+	osProxy.mu.Lock()
+	defer osProxy.mu.Unlock()
+	if osProxy.fn == nil {
+		osProxy.fn = ieproxy.GetProxyFunc()
+	}
+	return osProxy.fn
+}
+
+// Reload re-reads the OS proxy settings (Windows WinHTTP/IE including
+// PAC; a no-op elsewhere, where only the environment counts). Every
+// function returned by Func, including those inside already-built HTTP
+// transports, resolves through the new settings from then on. The
+// tunnel daemon calls it before it reconnects, so a laptop that moved
+// between a proxied office network and a direct one does not keep
+// dialling the old proxy (Issue #118).
+func Reload() {
+	ieproxy.ReloadConf()
+	fn := ieproxy.GetProxyFunc()
+	osProxy.mu.Lock()
+	osProxy.fn = fn
+	osProxy.mu.Unlock()
+}
 
 // Func returns a proxy resolution function suitable for
 // http.Transport.Proxy.
@@ -37,13 +80,12 @@ import (
 //     system-settings reader in go-ieproxy needs cgo), ieproxy falls
 //     back to the environment, i.e. resolves to no proxy here.
 func Func() func(*http.Request) (*url.URL, error) {
-	osProxy := ieproxy.GetProxyFunc()
 	return func(req *http.Request) (*url.URL, error) {
 		cfg := httpproxy.FromEnvironment()
 		if cfg.HTTPProxy != "" || cfg.HTTPSProxy != "" {
 			return cfg.ProxyFunc()(req.URL)
 		}
-		return osProxy(req)
+		return currentOSProxy()(req)
 	}
 }
 

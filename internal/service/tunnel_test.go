@@ -184,9 +184,20 @@ func TestTunnelStateFileLifecycle(t *testing.T) {
 func TestTunnelControlHandlerAuthAndRoutes(t *testing.T) {
 	stopped := make(chan struct{})
 	var stopOnce sync.Once
-	h := newTunnelControlHandler("secret-token", func() *TunnelStatus {
-		return &TunnelStatus{Name: "dev01", PID: 1, Forwards: []ForwardStatus{{Spec: "8080:8080", State: ForwardStateActive}}}
-	}, func() { stopOnce.Do(func() { close(stopped) }) })
+	var added []ForwardSpec
+	h := newTunnelControlHandler("secret-token", tunnelControl{
+		status: func() *TunnelStatus {
+			return &TunnelStatus{Name: "dev01", PID: 1, Forwards: []ForwardStatus{{Spec: "8080:8080", State: ForwardStateActive}}}
+		},
+		stop: func() { stopOnce.Do(func() { close(stopped) }) },
+		add: func(f ForwardSpec) (ForwardStatus, error) {
+			if f.LocalPort == "9999" {
+				return ForwardStatus{}, &LocalPortInUseError{Port: "9999", Err: errors.New("busy")}
+			}
+			added = append(added, f)
+			return ForwardStatus{Spec: f.String(), Purpose: f.Purpose, State: ForwardStateConnecting}, nil
+		},
+	})
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
@@ -218,6 +229,15 @@ func TestTunnelControlHandlerAuthAndRoutes(t *testing.T) {
 	if code := do(http.MethodGet, "/stop", "secret-token"); code != http.StatusMethodNotAllowed {
 		t.Errorf("GET /stop: status = %d, want 405", code)
 	}
+	if code := do(http.MethodPost, "/forwards", "wrong"); code != http.StatusUnauthorized {
+		t.Errorf("POST /forwards with a wrong token: status = %d, want 401", code)
+	}
+	if code := do(http.MethodGet, "/forwards", "secret-token"); code != http.StatusMethodNotAllowed {
+		t.Errorf("GET /forwards: status = %d, want 405", code)
+	}
+	if code := do(http.MethodPost, "/forwards", "secret-token"); code != http.StatusBadRequest {
+		t.Errorf("POST /forwards without a body: status = %d, want 400", code)
+	}
 	select {
 	case <-stopped:
 		t.Fatal("stop must not have been requested yet")
@@ -225,13 +245,34 @@ func TestTunnelControlHandlerAuthAndRoutes(t *testing.T) {
 	}
 
 	// Authorized status via the real client helper.
-	st := &TunnelState{ControlPort: srv.Listener.Addr().(*net.TCPAddr).Port, Token: "secret-token"}
+	st := &TunnelState{Name: "dev01", ControlPort: srv.Listener.Addr().(*net.TCPAddr).Port, Token: "secret-token"}
 	status, err := queryTunnelStatus(context.Background(), st, 2*time.Second)
 	if err != nil {
 		t.Fatalf("queryTunnelStatus: %v", err)
 	}
 	if status.Name != "dev01" || len(status.Forwards) != 1 || status.Forwards[0].State != ForwardStateActive {
 		t.Errorf("status = %+v", status)
+	}
+
+	// Authorized add via the real client helper: the purpose survives
+	// the round trip.
+	fs, err := requestTunnelAddForward(context.Background(), st,
+		ForwardSpec{LocalPort: "18080", RemotePort: "8080", Purpose: ForwardPurposeCodeServer}, 2*time.Second)
+	if err != nil {
+		t.Fatalf("requestTunnelAddForward: %v", err)
+	}
+	if fs.Spec != "18080:8080" || fs.Purpose != ForwardPurposeCodeServer {
+		t.Errorf("added forward status = %+v", fs)
+	}
+	if len(added) != 1 || added[0].Purpose != ForwardPurposeCodeServer || added[0].LocalPort != "18080" {
+		t.Errorf("handler received %+v", added)
+	}
+	// A port conflict comes back as LocalPortInUseError naming this
+	// tunnel.
+	_, err = requestTunnelAddForward(context.Background(), st, ForwardSpec{LocalPort: "9999", RemotePort: "8080"}, 2*time.Second)
+	var inUse *LocalPortInUseError
+	if !errors.As(err, &inUse) || inUse.Holder != "dev01" {
+		t.Errorf("conflict error = %v, want LocalPortInUseError held by dev01", err)
 	}
 
 	// Authorized stop triggers the callback.
@@ -245,24 +286,39 @@ func TestTunnelControlHandlerAuthAndRoutes(t *testing.T) {
 	}
 }
 
+// TestAddForwardToOldDaemon: a daemon of an earlier nakama has no
+// /forwards route; the client reports that distinctly.
+func TestAddForwardToOldDaemon(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	st := &TunnelState{Name: "dev01", ControlPort: srv.Listener.Addr().(*net.TCPAddr).Port, Token: "t"}
+	_, err := requestTunnelAddForward(context.Background(), st, ForwardSpec{LocalPort: "8080", RemotePort: "8080"}, 2*time.Second)
+	if !errors.Is(err, ErrTunnelDaemonTooOld) {
+		t.Fatalf("err = %v, want ErrTunnelDaemonTooOld", err)
+	}
+}
+
 func TestForwardTrackerTransitions(t *testing.T) {
 	clock := &fakeClock{t: time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)}
-	forwards := []ForwardSpec{
-		{LocalPort: "8080", RemotePort: "8080"},
-		{LocalPort: "5432", RemoteHost: "db.internal", RemotePort: "5432"},
-	}
-	tr := newForwardTracker("dev01", forwards, clock.now)
+	tr := newForwardTracker("dev01", clock.now)
+	a := forwardReport{t: tr, i: tr.add(ForwardSpec{LocalPort: "8080", RemotePort: "8080", Purpose: ForwardPurposeCodeServer})}
+	b := forwardReport{t: tr, i: tr.add(ForwardSpec{LocalPort: "5432", RemoteHost: "db.internal", RemotePort: "5432"})}
 
 	snap := tr.snapshot()
 	if snap[0].State != ForwardStateConnecting || snap[1].State != ForwardStateConnecting {
 		t.Fatalf("initial states = %+v", snap)
 	}
+	if snap[0].Purpose != ForwardPurposeCodeServer || snap[0].Spec != "8080:8080" {
+		t.Errorf("forward 0 = %+v", snap[0])
+	}
 	if len(tr.activeSessionIDs()) != 0 {
 		t.Error("no active sessions initially")
 	}
 
-	tr.observer(0).SessionStarted("sess-a")
-	tr.observer(1).SessionStarted("sess-b")
+	a.active("sess-a")
+	b.active("sess-b")
 	snap = tr.snapshot()
 	if snap[0].State != ForwardStateActive || snap[0].SessionID != "sess-a" {
 		t.Errorf("forward 0 = %+v", snap[0])
@@ -271,37 +327,58 @@ func TestForwardTrackerTransitions(t *testing.T) {
 		t.Errorf("activeSessionIDs = %v", ids)
 	}
 
-	tr.observer(0).SessionRetrying(2, 5, errConnectionLost)
+	a.retrying(2, 2*time.Second, errConnectionLost, "")
 	snap = tr.snapshot()
 	if snap[0].State != ForwardStateReconnecting || snap[0].Attempts != 2 {
 		t.Errorf("forward 0 after retry = %+v", snap[0])
 	}
-	if !strings.Contains(snap[0].Detail, "attempt 2/5") {
+	if !strings.Contains(snap[0].Detail, "attempt 2 (next in 2s): connection lost") {
 		t.Errorf("detail = %q", snap[0].Detail)
+	}
+	// A new attempt keeps the reconnecting detail.
+	a.connecting()
+	if st := tr.get(a.i); st.State != ForwardStateReconnecting || !strings.Contains(st.Detail, "attempt 2") {
+		t.Errorf("forward 0 after connecting = %+v", st)
 	}
 	if ids := tr.activeSessionIDs(); len(ids) != 1 {
 		t.Errorf("activeSessionIDs after retry = %v", ids)
 	}
 
-	// Auth-classified death gets the login + restart advisory with the
-	// instance name filled in (copy-pastable).
+	// Credential failures name the remedy and the automatic retry.
 	authErr := &smithy.GenericAPIError{Code: "ExpiredTokenException", Message: "expired"}
-	tr.setDead(0, authErr)
-	snap = tr.snapshot()
-	if snap[0].State != ForwardStateDead ||
-		!strings.Contains(snap[0].Detail, "nakama aws login") ||
-		!strings.Contains(snap[0].Detail, "nakama aws tunnel restart dev01") {
-		t.Errorf("forward 0 after auth death = %+v", snap[0])
+	a.authFailing(authErr, "ExpiredTokenException")
+	st := tr.get(a.i)
+	if st.State != ForwardStateReconnecting || st.LastErrorCode != "ExpiredTokenException" ||
+		!strings.Contains(st.Detail, "nakama aws login") ||
+		!strings.Contains(st.Detail, "reconnects by itself") ||
+		!strings.Contains(st.Detail, "nakama aws tunnel restart dev01") {
+		t.Errorf("forward 0 after auth failure = %+v", st)
 	}
 
-	// nil reason (normal session end).
-	tr.setDead(1, nil)
+	// Idle: no session, and leaving idle for a new attempt shows
+	// connecting again.
+	a.idle()
+	if st := tr.get(a.i); st.State != ForwardStateIdle || st.Attempts != 0 {
+		t.Errorf("forward 0 idle = %+v", st)
+	}
+	a.connecting()
+	if st := tr.get(a.i); st.State != ForwardStateConnecting || st.Detail != "" {
+		t.Errorf("forward 0 connecting from idle = %+v", st)
+	}
+
+	b.dead(errInstanceGone)
 	snap = tr.snapshot()
-	if snap[1].State != ForwardStateDead || snap[1].Detail != "session ended" {
-		t.Errorf("forward 1 after nil death = %+v", snap[1])
+	if snap[1].State != ForwardStateDead || !strings.Contains(snap[1].Detail, "no longer exists") {
+		t.Errorf("forward 1 after death = %+v", snap[1])
 	}
 	if ids := tr.activeSessionIDs(); len(ids) != 0 {
 		t.Errorf("activeSessionIDs after deaths = %v", ids)
+	}
+
+	// reset revives a dead slot for a new runner.
+	tr.reset(b.i, ForwardSpec{LocalPort: "5432", RemotePort: "5432"})
+	if st := tr.get(b.i); st.State != ForwardStateConnecting || st.Spec != "5432:5432" {
+		t.Errorf("forward 1 after reset = %+v", st)
 	}
 }
 
@@ -551,44 +628,6 @@ func TestGetTunnelStatusLiveAndStale(t *testing.T) {
 	}
 	if _, err := readTunnelState("dev01"); err == nil {
 		t.Error("stale state file must be cleaned up")
-	}
-}
-
-// recordingObserver captures superviseSession lifecycle callbacks.
-type recordingObserver struct {
-	started  []string
-	retrying []string
-}
-
-func (r *recordingObserver) SessionStarted(id string) { r.started = append(r.started, id) }
-func (r *recordingObserver) SessionRetrying(attempt, maxRetries int, reason error) {
-	r.retrying = append(r.retrying, reason.Error())
-}
-
-func TestSuperviseSessionNotifiesObserver(t *testing.T) {
-	// disconnect once (74), then clean exit: observer sees two session
-	// starts and one retry.
-	env := newConnectTestEnv(t, []sessionRun{
-		{code: DisconnectExitCode, alive: time.Second},
-		{code: 0, alive: time.Second},
-	}, nil)
-	obs := &recordingObserver{}
-	docName, params := portForwardDocument(ForwardSpec{LocalPort: "8080", RemotePort: "8080"})
-	err := env.svc.superviseSession(context.Background(), superviseSessionInput{
-		InstanceID:   "i-0123456789abcdef0",
-		DocumentName: docName,
-		Parameters:   params,
-		MaxRetries:   5,
-		Observer:     obs,
-	})
-	if err != nil {
-		t.Fatalf("superviseSession: %v", err)
-	}
-	if len(obs.started) != 2 {
-		t.Errorf("started = %v, want 2 entries", obs.started)
-	}
-	if len(obs.retrying) != 1 || !strings.Contains(obs.retrying[0], "connection lost") {
-		t.Errorf("retrying = %v", obs.retrying)
 	}
 }
 

@@ -19,16 +19,18 @@ import (
 // This file implements the `nakama aws tunnel-daemon` process (ADR
 // 0017): the middle layer of the three-tier model (CLI -> daemon ->
 // session-runner children). One daemon owns all forwards of one
-// instance name; each forward is a supervised SSM port-forwarding
-// session reusing the ADR 0014 loop (superviseSession).
+// instance name; each forward is a forwardRunner (tunnel_forward.go,
+// ADR 0027) that owns the local port and supervises the SSM
+// port-forwarding sessions behind it. Forwards can be added while the
+// daemon runs (`nakama aws open` / `kirocrew`, Issue #118).
 
 // forwardTracker holds the observable state of every forward. It is
-// written by the supervision goroutines (through forwardObserver) and
-// read by the control channel's /status handler.
+// written by the forward runners (through forwardReport) and read by
+// the control channel's /status handler.
 type forwardTracker struct {
 	mu sync.Mutex
 	// name is the instance name, used to render copy-pastable recovery
-	// commands in dead-forward details.
+	// commands in details.
 	name     string
 	now      func() time.Time
 	statuses []ForwardStatus
@@ -37,41 +39,45 @@ type forwardTracker struct {
 	sessionIDs []string
 }
 
-func newForwardTracker(name string, forwards []ForwardSpec, now func() time.Time) *forwardTracker {
-	t := &forwardTracker{name: name, now: now, sessionIDs: make([]string, len(forwards))}
-	t.statuses = make([]ForwardStatus, len(forwards))
-	for i, f := range forwards {
-		t.statuses[i] = ForwardStatus{
-			Spec:  f.String(),
-			State: ForwardStateConnecting,
-			Since: now(),
-		}
-	}
-	return t
+func newForwardTracker(name string, now func() time.Time) *forwardTracker {
+	return &forwardTracker{name: name, now: now}
 }
 
-// observer returns the sessionObserver for forward i.
-func (t *forwardTracker) observer(i int) sessionObserver {
-	return &forwardObserver{t: t, i: i}
-}
-
-// setDead marks forward i terminally dead. reason may be nil (normal
-// session end, e.g. server-side timeout without retry budget).
-func (t *forwardTracker) setDead(i int, reason error) {
+// add appends a forward in the connecting state and returns its index.
+func (t *forwardTracker) add(f ForwardSpec) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	st := &t.statuses[i]
-	st.State = ForwardStateDead
-	st.Since = t.now()
-	st.SessionID = ""
-	switch {
-	case reason == nil:
-		st.Detail = "session ended"
-	case classifyStartSessionError(reason) == startSessionErrAuth:
-		st.Detail = fmt.Sprintf("credentials expired or invalid; run `nakama aws login` then `nakama aws tunnel restart %s`", t.name)
-	default:
-		st.Detail = reason.Error()
-	}
+	t.statuses = append(t.statuses, ForwardStatus{
+		Spec:    f.String(),
+		Purpose: f.Purpose,
+		State:   ForwardStateConnecting,
+		Since:   t.now(),
+	})
+	t.sessionIDs = append(t.sessionIDs, "")
+	return len(t.statuses) - 1
+}
+
+// reset puts forward i back to the connecting state for a new runner
+// (a dead forward revived by `open`).
+func (t *forwardTracker) reset(i int, f ForwardSpec) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.statuses[i] = ForwardStatus{Spec: f.String(), Purpose: f.Purpose, State: ForwardStateConnecting, Since: t.now()}
+	t.sessionIDs[i] = ""
+}
+
+// state returns the current state of forward i.
+func (t *forwardTracker) state(i int) ForwardState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.statuses[i].State
+}
+
+// get returns a copy of forward i's status.
+func (t *forwardTracker) get(i int) ForwardStatus {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.statuses[i]
 }
 
 // snapshot returns a copy of all forward statuses.
@@ -84,7 +90,8 @@ func (t *forwardTracker) snapshot() []ForwardStatus {
 }
 
 // activeSessionIDs returns the sessions worth terminating server-side
-// on shutdown (best-effort; dead forwards have no live session).
+// on shutdown (best-effort; dead and idle forwards have no live
+// session).
 func (t *forwardTracker) activeSessionIDs() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -97,35 +104,84 @@ func (t *forwardTracker) activeSessionIDs() []string {
 	return ids
 }
 
-// forwardObserver adapts tracker updates to the sessionObserver
-// callbacks of one forward's supervision loop.
-type forwardObserver struct {
+// update applies fn to forward i under the lock.
+func (t *forwardTracker) update(i int, fn func(st *ForwardStatus)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	fn(&t.statuses[i])
+}
+
+// forwardReport adapts the tracker to one forward's forwardReporter.
+type forwardReport struct {
 	t *forwardTracker
 	i int
 }
 
-// SessionStarted marks the forward active with its new session.
-func (o *forwardObserver) SessionStarted(sessionID string) {
-	o.t.mu.Lock()
-	defer o.t.mu.Unlock()
-	st := &o.t.statuses[o.i]
-	st.State = ForwardStateActive
-	st.SessionID = sessionID
-	st.Since = o.t.now()
-	st.Detail = ""
-	o.t.sessionIDs[o.i] = sessionID
+// connecting marks a session attempt. A reconnecting or auth-failing
+// forward keeps its state and detail, so `tunnel status` still says why
+// it is retrying while the attempt runs.
+func (r forwardReport) connecting() {
+	r.t.update(r.i, func(st *ForwardStatus) {
+		if st.State != ForwardStateIdle && st.State != ForwardStateDead {
+			return
+		}
+		st.State = ForwardStateConnecting
+		st.Since = r.t.now()
+		st.Detail = ""
+	})
 }
 
-// SessionRetrying marks the forward reconnecting with the attempt info.
-func (o *forwardObserver) SessionRetrying(attempt, maxRetries int, reason error) {
-	o.t.mu.Lock()
-	defer o.t.mu.Unlock()
-	st := &o.t.statuses[o.i]
-	st.State = ForwardStateReconnecting
-	st.SessionID = ""
-	st.Since = o.t.now()
-	st.Attempts = attempt
-	st.Detail = fmt.Sprintf("attempt %d/%d: %v", attempt, maxRetries, reason)
+func (r forwardReport) active(sessionID string) {
+	r.t.mu.Lock()
+	defer r.t.mu.Unlock()
+	st := &r.t.statuses[r.i]
+	st.State = ForwardStateActive
+	st.SessionID = sessionID
+	st.Since = r.t.now()
+	st.Detail = ""
+	st.LastErrorCode = ""
+	r.t.sessionIDs[r.i] = sessionID
+}
+
+func (r forwardReport) retrying(attempt int, delay time.Duration, reason error, code string) {
+	r.t.update(r.i, func(st *ForwardStatus) {
+		st.State = ForwardStateReconnecting
+		st.SessionID = ""
+		st.Since = r.t.now()
+		st.Attempts = attempt
+		st.LastErrorCode = code
+		st.Detail = fmt.Sprintf("attempt %d (next in %s): %v", attempt, delay, reason)
+	})
+}
+
+func (r forwardReport) authFailing(reason error, code string) {
+	r.t.update(r.i, func(st *ForwardStatus) {
+		st.State = ForwardStateReconnecting
+		st.SessionID = ""
+		st.Since = r.t.now()
+		st.LastErrorCode = code
+		st.Detail = fmt.Sprintf("credentials expired or invalid (%v); run `nakama aws login`: the forward retries every %s "+
+			"and reconnects by itself once they work (or run `nakama aws tunnel restart %s`)", reason, forwardAuthRetry, r.t.name)
+	})
+}
+
+func (r forwardReport) idle() {
+	r.t.update(r.i, func(st *ForwardStatus) {
+		st.State = ForwardStateIdle
+		st.SessionID = ""
+		st.Since = r.t.now()
+		st.Attempts = 0
+		st.Detail = "no session; the next local connection starts one"
+	})
+}
+
+func (r forwardReport) dead(reason error) {
+	r.t.update(r.i, func(st *ForwardStatus) {
+		st.State = ForwardStateDead
+		st.SessionID = ""
+		st.Since = r.t.now()
+		st.Detail = reason.Error()
+	})
 }
 
 // TunnelDaemonInput parameterizes one daemon run.
@@ -134,14 +190,118 @@ type TunnelDaemonInput struct {
 	Forwards []ForwardSpec
 }
 
+// errForwardConflict reports an add request for a local port the
+// daemon already forwards.
+var errForwardConflict = errors.New("this tunnel already forwards that local port")
+
+// tunnelDaemon is the state of a running daemon.
+type tunnelDaemon struct {
+	name   string
+	logger tunnelLogger
+	// ctx is cancelled to stop every forward.
+	ctx     context.Context
+	tracker *forwardTracker
+	wg      sync.WaitGroup
+
+	mu       sync.Mutex
+	closing  bool
+	state    *TunnelState
+	forwards []ForwardSpec // index-aligned with the tracker
+	// newDeps builds a forward's dependencies (tests substitute fakes).
+	newDeps func(f ForwardSpec, childOut *lineWriter, logf func(string, ...any)) *forwardDeps
+	// listen binds a forward's local port.
+	listen func(port string) ([]net.Listener, error)
+}
+
+// startForward binds f's local port and starts its runner. persist
+// rewrites the state file (forwards added after startup).
+func (d *tunnelDaemon) startForward(f ForwardSpec, persist bool) (ForwardStatus, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closing {
+		return ForwardStatus{}, errors.New("the tunnel daemon is stopping")
+	}
+	slot := -1
+	for i, existing := range d.forwards {
+		if existing.LocalPort != f.LocalPort {
+			continue
+		}
+		if d.tracker.state(i) != ForwardStateDead {
+			return ForwardStatus{}, fmt.Errorf("%w (%s)", errForwardConflict, existing.Stored())
+		}
+		slot = i // a dead forward on the same port is replaced
+	}
+	listeners, err := d.listen(f.LocalPort)
+	if err != nil {
+		return ForwardStatus{}, err
+	}
+	logf := func(format string, args ...any) {
+		d.logger.Infof("%s: forward %s: %s", d.name, f.Stored(), fmt.Sprintf(format, args...))
+	}
+	out := newLineWriter(func(line string) {
+		d.logger.Infof("%s: forward %s: session-runner: %s", d.name, f.Stored(), line)
+	})
+	if slot < 0 {
+		slot = d.tracker.add(f)
+		d.forwards = append(d.forwards, f)
+	} else {
+		d.tracker.reset(slot, f)
+		d.forwards[slot] = f
+	}
+	if persist {
+		d.state.Forwards = storedForwards(d.forwards)
+		if err := rewriteTunnelState(d.state); err != nil {
+			d.logger.Errorf("%s: record forward %s: %v", d.name, f.Stored(), err)
+		}
+	}
+	runner := newForwardRunner(f, listeners, d.newDeps(f, out, logf), forwardReport{t: d.tracker, i: slot})
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		logf("starting")
+		runner.run(d.ctx)
+		out.Flush()
+		logf("stopped")
+	}()
+	return d.tracker.get(slot), nil
+}
+
+// markDead records a forward that could not even start (its local port
+// was taken between the CLI's check and the daemon's bind).
+func (d *tunnelDaemon) markDead(f ForwardSpec, reason error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	i := d.tracker.add(f)
+	d.forwards = append(d.forwards, f)
+	forwardReport{t: d.tracker, i: i}.dead(reason)
+}
+
+// status renders the daemon status.
+func (d *tunnelDaemon) status() *TunnelStatus {
+	return &TunnelStatus{
+		Name:      d.state.Name,
+		PID:       d.state.PID,
+		StartedAt: d.state.StartedAt,
+		Forwards:  d.tracker.snapshot(),
+	}
+}
+
+// storedForwards renders forwards in their state-file form.
+func storedForwards(forwards []ForwardSpec) []string {
+	out := make([]string, len(forwards))
+	for i, f := range forwards {
+		out[i] = f.Stored()
+	}
+	return out
+}
+
 // RunTunnelDaemon is the entry point of the hidden
-// `nakama aws tunnel-daemon` command. It supervises one SSM
-// port-forwarding session per forward until a graceful stop arrives
-// via the control channel (or SIGTERM/SIGINT on unix). It exits with
-// an error before writing any state when preconditions fail
-// (unresolvable instance, state file conflict); after that, individual
-// forward failures never terminate the daemon — they surface as dead
-// forwards in `tunnel status`.
+// `nakama aws tunnel-daemon` command. It supervises the forwards until
+// a graceful stop arrives via the control channel (or SIGTERM/SIGINT on
+// unix). It exits with an error before writing any state when
+// preconditions fail (unresolvable instance, state file conflict);
+// after that, individual forward failures never terminate the daemon:
+// they surface as dead forwards in `tunnel status`.
 func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) error {
 	logger := openTunnelLogger()
 	defer func() { _ = logger.Close() }()
@@ -180,16 +340,12 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 	}
 	token := hex.EncodeToString(tokenBytes)
 
-	specs := make([]string, len(in.Forwards))
-	for i, f := range in.Forwards {
-		specs[i] = f.String()
-	}
 	state := &TunnelState{
 		Name:        in.Name,
 		PID:         os.Getpid(),
 		ControlPort: listener.Addr().(*net.TCPAddr).Port,
 		Token:       token,
-		Forwards:    specs,
+		Forwards:    storedForwards(in.Forwards),
 		StartedAt:   time.Now().UTC(),
 	}
 	if err := writeTunnelState(state); err != nil {
@@ -198,7 +354,25 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 	}
 	defer func() { _ = removeTunnelStateOwned(in.Name, state.Token) }()
 
-	tracker := newForwardTracker(in.Name, in.Forwards, time.Now)
+	fwdCtx, cancelForwards := context.WithCancel(ctx)
+	defer cancelForwards()
+	d := &tunnelDaemon{
+		name:    in.Name,
+		logger:  logger,
+		ctx:     fwdCtx,
+		tracker: newForwardTracker(in.Name, time.Now),
+		state:   state,
+		newDeps: func(_ ForwardSpec, childOut *lineWriter, logf func(string, ...any)) *forwardDeps {
+			return s.newForwardDeps(in.Name, childOut, logf)
+		},
+		listen: listenLoopback,
+	}
+	for _, f := range in.Forwards {
+		if _, err := d.startForward(f, false); err != nil {
+			logger.Errorf("%s: forward %s: %v", in.Name, f.Stored(), err)
+			d.markDead(f, err)
+		}
+	}
 
 	// Graceful stop plumbing: control channel POST /stop, and (unix)
 	// SIGTERM/SIGINT, both funnel into stopOnce.
@@ -209,14 +383,13 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 	defer cleanupSignals()
 
 	server := &http.Server{
-		Handler: newTunnelControlHandler(token, func() *TunnelStatus {
-			return &TunnelStatus{
-				Name:      state.Name,
-				PID:       state.PID,
-				StartedAt: state.StartedAt,
-				Forwards:  tracker.snapshot(),
-			}
-		}, requestStop),
+		Handler: newTunnelControlHandler(token, tunnelControl{
+			status: d.status,
+			stop:   requestStop,
+			add: func(f ForwardSpec) (ForwardStatus, error) {
+				return d.startForward(f, true)
+			},
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -225,54 +398,21 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 			requestStop()
 		}
 	}()
-
-	// One supervision goroutine per forward. The daemon deliberately
-	// outlives dead forwards so `tunnel status` can show why they died
-	// (e.g. expired credentials).
-	fwdCtx, cancelForwards := context.WithCancel(ctx)
-	defer cancelForwards()
-	childOut := newLineWriter(func(line string) { logger.Infof("%s: session-runner: %s", in.Name, line) })
-	hooks := s.tunnelDaemonConnectHooks(childOut)
-	var wg sync.WaitGroup
-	for i, f := range in.Forwards {
-		wg.Add(1)
-		go func(i int, f ForwardSpec) {
-			defer wg.Done()
-			docName, params := portForwardDocument(f)
-			logger.Infof("%s: forward %s: starting", in.Name, f)
-			err := s.superviseSessionWithHooks(fwdCtx, superviseSessionInput{
-				InstanceID:         instanceID,
-				DocumentName:       docName,
-				Parameters:         params,
-				MaxRetries:         defaultTunnelRetries,
-				RetryChildFailures: true,
-				Observer:           tracker.observer(i),
-			}, hooks)
-			// Context cancellation is the shutdown path, not a forward
-			// failure.
-			if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-				return
-			}
-			tracker.setDead(i, err)
-			if err != nil {
-				logger.Errorf("%s: forward %s: %v", in.Name, f, err)
-			} else {
-				logger.Infof("%s: forward %s: session ended", in.Name, f)
-			}
-		}(i, f)
-	}
 	logger.Infof("%s: tunnel daemon started (pid %d, %d forward(s))", in.Name, state.PID, len(in.Forwards))
 
 	<-stopCh
 	logger.Infof("%s: stop requested; shutting down", in.Name)
 
-	// Shutdown order: remember live sessions, terminate the children
-	// (which tears the local listeners down), then best-effort close
-	// the server-side sessions, then stop answering control requests.
-	liveSessions := tracker.activeSessionIDs()
+	// Shutdown order: refuse new forwards, remember live sessions, stop
+	// the runners (which kills the children and closes the local
+	// ports), then best-effort close the server-side sessions, then stop
+	// answering control requests.
+	d.mu.Lock()
+	d.closing = true
+	d.mu.Unlock()
+	liveSessions := d.tracker.activeSessionIDs()
 	cancelForwards()
-	wg.Wait()
-	childOut.Flush()
+	d.wg.Wait()
 	termCtx, termCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer termCancel()
 	for _, id := range liveSessions {
@@ -290,31 +430,4 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 	}
 	logger.Infof("%s: tunnel daemon stopped", in.Name)
 	return nil
-}
-
-// defaultTunnelRetries is the per-forward reconnect budget. Same
-// policy as connect's interactive shell default (ADR 0014): the budget
-// replenishes after 60s of stability, so long-lived tunnels survive
-// repeated disconnects across days.
-const defaultTunnelRetries = 5
-
-// tunnelDaemonConnectHooks returns supervision hooks for daemon use:
-// child stdio goes to the OS log instead of a terminal, and terminal
-// signal guarding is skipped (the daemon has no terminal).
-func (s *Service) tunnelDaemonConnectHooks(childOut *lineWriter) *connectHooks {
-	base := defaultConnectHooks()
-	return &connectHooks{
-		runSession: func(ctx context.Context, req sessionRunRequest) (sessionRunResult, error) {
-			return spawnSessionRunnerIO(ctx, req, sessionRunnerIO{
-				stdin:                nil,
-				stdout:               childOut,
-				stderr:               childOut,
-				guardTerminalSignals: false,
-			})
-		},
-		sleep:       base.sleep,
-		now:         base.now,
-		notify:      newLineWriter(func(string) {}), // transitions reach the log via the tracker
-		stableAfter: base.stableAfter,
-	}
 }

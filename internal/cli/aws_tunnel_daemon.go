@@ -24,7 +24,7 @@ func newAWSTunnelDaemonCommand() *cobra.Command {
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := withCancel(cmd)
-			specs, err := service.ParseForwardSpecs(forwards)
+			specs, err := service.ParseStoredForwardSpecs(forwards)
 			if err != nil {
 				return err
 			}

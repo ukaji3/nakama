@@ -24,10 +24,20 @@ func newAWSTunnelCommand() *cobra.Command {
 		Short: "Forward local ports to a nakama instance in the background",
 		Long: `Start a background daemon that forwards local ports to a nakama
 instance over SSM Session Manager, without occupying the terminal.
-"start" may be omitted. Each -L forward uses one SSM session; on
-disconnect the daemon reconnects automatically with the same policy as
-connect (ADR 0014). Daemon logs go to the OS log (unix: syslog tag
+"start" may be omitted. Daemon logs go to the OS log (unix: syslog tag
 nakama-tunnel, Windows: Application event log, source nakama).
+
+The daemon holds each local port itself (on 127.0.0.1 and ::1) and
+relays it through an SSM port-forwarding session (ADR 0027). When a
+session is lost (network errors, a network change, sleep, the Session
+Manager idle timeout) the port stays open and the daemon reconnects by
+itself, with no attempt limit; a connection that arrives meanwhile
+waits up to 30 seconds for the new session. A forward that has not been
+used for 5 minutes does not reconnect until the next connection
+arrives (state "idle"). After a credential error the daemon retries
+every minute, so ` + "`nakama aws login`" + ` is enough to bring it back.
+` + "`nakama aws open`" + ` and ` + "`nakama aws kirocrew`" + ` add their forwards to the
+same daemon.
 
 -L specs take <local>:<remote> (to the instance itself) or
 <local>:<host>:<remote> (through the instance to another host).
@@ -55,11 +65,12 @@ Examples:
 		Use:   "restart <name>",
 		Short: "Restart port forwarding with the same forwards (e.g. after re-login)",
 		Long: `Stop the tunnel daemon (if it is still alive) and start a new one
-with the forward specs recorded in the tunnel state file. The new
-daemon picks up this process's current AWS credentials, so after
-credentials expire (forwards shown as dead by "tunnel status"), run
-"nakama aws login" and then this command to reconnect with the same
-settings. To change the forwards instead, use stop and start.`,
+with the forwards recorded in the tunnel state file (including those
+` + "`open`" + ` and ` + "`kirocrew`" + ` added). The new daemon picks up this
+process's current AWS credentials and nakama version. A running daemon
+already retries after credential errors by itself, so this is mostly
+for a daemon started by an older nakama, or for dead forwards. To
+change the forwards instead, use stop and start.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := withCancel(cmd)
@@ -108,7 +119,8 @@ settings. To change the forwards instead, use stop and start.`,
 	status := &cobra.Command{
 		Use:   "status [name]",
 		Short: "Show the state of each port forward (all instances when name is omitted)",
-		Long: `Show every port forward and its state (active / reconnecting / dead).
+		Long: `Show every port forward and its state (connecting / active /
+reconnecting / idle / dead).
 
 With no name, list the tunnels of all instances recorded on this machine
 (same convention as ` + "`nakama aws backup list`" + `), adding a NAME column.
@@ -209,15 +221,24 @@ func runTunnelStart(cmd *cobra.Command, args []string) error {
 // `tunnel status` and after `tunnel start`.
 func formatTunnelStatus(st *service.TunnelStatus, now time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-24s  %-12s  %-10s  %s\n", "FORWARD", "STATE", "SINCE", "DETAIL")
+	fmt.Fprintf(&b, "%-26s  %-12s  %-10s  %s\n", "FORWARD", "STATE", "SINCE", "DETAIL")
 	for _, f := range st.Forwards {
 		since := "-"
 		if !f.Since.IsZero() {
 			since = now.Sub(f.Since).Round(time.Second).String()
 		}
-		fmt.Fprintf(&b, "%-24s  %-12s  %-10s  %s\n", f.Spec, string(f.State), since, f.Detail)
+		fmt.Fprintf(&b, "%-26s  %-12s  %-10s  %s\n", forwardLabel(f), string(f.State), since, f.Detail)
 	}
 	return b.String()
+}
+
+// forwardLabel is the FORWARD column: the -L spec, plus what nakama
+// opened it for (`open` / `kirocrew`).
+func forwardLabel(f service.ForwardStatus) string {
+	if f.Purpose == service.ForwardPurposeNone {
+		return f.Spec
+	}
+	return f.Spec + " (" + string(f.Purpose) + ")"
 }
 
 // formatTunnelOverview renders the cross-instance listing (NAME column,
@@ -235,7 +256,7 @@ func formatTunnelOverview(items []service.TunnelOverview, now time.Time) string 
 		return "no tunnels\n"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-16s  %-24s  %-12s  %-10s  %s\n", "NAME", "FORWARD", "STATE", "SINCE", "DETAIL")
+	fmt.Fprintf(&b, "%-16s  %-26s  %-12s  %-10s  %s\n", "NAME", "FORWARD", "STATE", "SINCE", "DETAIL")
 	for _, it := range items {
 		switch {
 		case it.Status != nil:
@@ -244,13 +265,13 @@ func formatTunnelOverview(items []service.TunnelOverview, now time.Time) string 
 				if !f.Since.IsZero() {
 					since = now.Sub(f.Since).Round(time.Second).String()
 				}
-				fmt.Fprintf(&b, "%-16s  %-24s  %-12s  %-10s  %s\n", it.Name, f.Spec, string(f.State), since, f.Detail)
+				fmt.Fprintf(&b, "%-16s  %-26s  %-12s  %-10s  %s\n", it.Name, forwardLabel(f), string(f.State), since, f.Detail)
 			}
 		case it.Stale:
-			fmt.Fprintf(&b, "%-16s  %-24s  %-12s  %-10s  %s\n", it.Name, "-", "stale", "-",
+			fmt.Fprintf(&b, "%-16s  %-26s  %-12s  %-10s  %s\n", it.Name, "-", "stale", "-",
 				"the daemon does not answer; leftover state removed")
 		default:
-			fmt.Fprintf(&b, "%-16s  %-24s  %-12s  %-10s  %s\n", it.Name, "-", "error", "-", it.Err)
+			fmt.Fprintf(&b, "%-16s  %-26s  %-12s  %-10s  %s\n", it.Name, "-", "error", "-", it.Err)
 		}
 	}
 	return b.String()
