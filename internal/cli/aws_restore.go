@@ -27,12 +27,14 @@ volume (destructive).
 If the instance was deleted, restore builds a new instance of the same
 name from the backup: a fresh instance with the resources create makes,
 whose root volume is then replaced by the backup. Software is not
-reinstalled. The URL and the code-server password are new; the SSH host
-keys are the backup's. The instance type and kind (code-server or bare)
-recorded on the backup are used; --instance-type overrides the type
-within the same CPU architecture, and is required for backups taken
-before nakama recorded it (add --bare for a bare instance). An IAM role
-is attached only with --with-admin or --with-role.
+reinstalled. The code-server password is new; the SSH host keys are the
+backup's. The instance type and kind (code-server or bare) recorded on
+the backup are used; --instance-type overrides the type within the same
+CPU architecture, and is required for backups taken before nakama
+recorded it (add --bare for a bare instance). An IAM role is attached
+only with --with-admin or --with-role, and CloudFront is built only with
+--cloudfront (a new URL); restore warns when the deleted instance had
+either.
 
 Either way the instance is left stopped; start it with "nakama aws start".`,
 		Args: cobra.ExactArgs(1),
@@ -80,7 +82,10 @@ Either way the instance is left stopped; start it with "nakama aws start".`,
 		"Deleted instance only: attach the shared nakama-managed IAM role with AdministratorAccess")
 	cmd.Flags().StringVar(&in.WithRole, "with-role", "",
 		"Deleted instance only: attach an existing IAM role (by name)")
+	cmd.Flags().BoolVar(&in.CloudFront, "cloudfront", false,
+		"Deleted instance only: also build the CloudFront entry path, as `create --cloudfront` does")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")
+	cmd.MarkFlagsMutuallyExclusive("bare", "cloudfront")
 	return cmd
 }
 
@@ -109,11 +114,17 @@ func restorePrompt(p *service.RestorePlan) string {
 	fmt.Fprintf(&sb, "  instance type : %s (%s)\n", p.InstanceType, p.Architecture)
 	fmt.Fprintf(&sb, "  kind          : %s\n", kind)
 	fmt.Fprintf(&sb, "  IAM role      : %s\n", role)
-	if p.Bare {
+	switch {
+	case p.Bare:
 		sb.WriteString("The disk is the backup's; nothing is reinstalled. The instance is left stopped.\n")
-	} else {
-		sb.WriteString("The disk is the backup's; nothing is reinstalled. The URL and the code-server password\n" +
-			"are new. This takes about 15-20 minutes (CloudFront); the instance is left stopped.\n")
+	case p.CloudFront:
+		sb.WriteString("  CloudFront    : yes (--cloudfront; a new URL)\n")
+		sb.WriteString("The disk is the backup's; nothing is reinstalled. The code-server password is new.\n" +
+			"This takes about 15-20 minutes (CloudFront); the instance is left stopped.\n")
+	default:
+		sb.WriteString("  CloudFront    : no (open it over SSM; add CloudFront later with `nakama aws cloudfront add`)\n")
+		sb.WriteString("The disk is the backup's; nothing is reinstalled. The code-server password is new.\n" +
+			"The instance is left stopped.\n")
 	}
 	sb.WriteString("[y/N]: ")
 	return sb.String()
@@ -128,11 +139,16 @@ func restoreSummary(r *service.RestoreResult) string {
 	s := fmt.Sprintf("restored %s from backup %q as a new instance (left stopped; %s)\n", r.Name, r.Label, next) +
 		"  instance_id       : " + r.InstanceID + "\n" +
 		"  instance_type     : " + r.InstanceType + "\n"
-	if r.Bare {
+	switch {
+	case r.Bare:
 		s += "  kind              : bare (no code-server / CloudFront)\n" +
 			"  access            : nakama aws ssh setup " + r.Name + "  |  nakama aws connect " + r.Name
-	} else {
+	case r.CloudFront:
 		s += "  url               : " + r.URL + "\n" +
+			"  password          : new (use `nakama aws info " + r.Name + " --show-password`)"
+	default:
+		s += "  cloudfront        : none (add it with `nakama aws cloudfront add " + r.Name + "`)\n" +
+			"  open              : nakama aws open " + r.Name + "  (over SSM, once started)\n" +
 			"  password          : new (use `nakama aws info " + r.Name + " --show-password`)"
 	}
 	if r.IAMRole != "" {

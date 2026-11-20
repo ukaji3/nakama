@@ -47,6 +47,14 @@ type CreateInstanceInput struct {
 	// with connect / ssh / tunnel instead of a browser (Issue #52).
 	Bare bool
 
+	// CloudFront also builds the internet entry path: the security
+	// group's inbound rule from the CloudFront managed prefix list, a
+	// VPC origin and a distribution behind the shared WAF web ACL. Off
+	// by default; the browser reaches code-server over SSM (ADR 0027,
+	// ADR 0028). `nakama aws cloudfront add` builds the same thing later.
+	// Mutually exclusive with Bare.
+	CloudFront bool
+
 	// NoKiro skips the Kiro CLI / Kiro Crew install that the
 	// cloud-init user-data performs by default (Issue #68). It is
 	// expressed negatively because installing is the default; the
@@ -74,6 +82,11 @@ type CreateInstanceOutput struct {
 	// CloudFront distribution (Issue #52).
 	Bare bool `json:"bare,omitempty"`
 
+	// CloudFront reports that the instance was given the CloudFront
+	// entry path (--cloudfront, ADR 0028). Without it URL is empty and
+	// the browser reaches code-server with `nakama aws open`.
+	CloudFront bool `json:"cloudfront"`
+
 	// Provision reports the post-create provisioning outcome when
 	// --setup / --dotfiles / --preset were used (Issue #54). A failed
 	// provisioning does not fail the create: the instance exists and is
@@ -81,9 +94,9 @@ type CreateInstanceOutput struct {
 	Provision *ProvisionResult `json:"provision,omitempty"`
 }
 
-// CreateInstance provisions everything needed to expose a new
-// nakama code-server instance through CloudFront. The flow is
-// described in docs/design.md §8.2.
+// CreateInstance provisions a new nakama instance: its security group,
+// ENI and EC2 instance, and with in.CloudFront the CloudFront entry
+// path as well. The flow is described in docs/design.md §8.2.
 func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*CreateInstanceOutput, error) {
 	if err := ValidateNewInstanceName(in.Name); err != nil {
 		return nil, err
@@ -97,6 +110,9 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	if in.WithAdmin && in.WithRole != "" {
 		return nil, errors.New("--with-admin and --with-role are mutually exclusive")
 	}
+	if in.Bare && in.CloudFront {
+		return nil, errors.New("--bare and --cloudfront are mutually exclusive: a bare instance has no code-server to put behind CloudFront")
+	}
 	if in.EBSGiB <= 0 {
 		in.EBSGiB = config.EBSDefaultGiB
 	}
@@ -105,6 +121,18 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 	}
 	if err := s.assertNameAvailable(ctx, in.Name); err != nil {
 		return nil, err
+	}
+
+	// --cloudfront needs the shared WAF web ACL and the CloudFront
+	// prefix list. Both are looked up before anything is created, so a
+	// missing one leaves nothing behind.
+	var cf *cloudFrontPrereqs
+	if in.CloudFront {
+		p, err := s.resolveCloudFrontPrereqs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		cf = &p
 	}
 
 	// --with-admin / --with-role: resolve the dedicated instance role,
@@ -150,12 +178,6 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		}
 	}
 
-	// The CloudFront prefix list and the shared WAF web ACL.
-	pre, err := s.resolveCloudFrontPrereqs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	cf := &pre
 	net, err := s.prepareInstanceNetwork(ctx, in.Name, cf)
 	if err != nil {
 		return nil, err
@@ -222,10 +244,10 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		return nil, fmt.Errorf("wait instance running: %w", err)
 	}
 
-	// The browser entry path (private DNS -> VPC origin -> distribution)
-	// exists only for code-server instances. Skipping it is what makes
-	// --bare fast: no CloudFront deploy wait (Issue #52).
-	if !in.Bare {
+	// The CloudFront entry path (private DNS -> VPC origin ->
+	// distribution) is built only with --cloudfront (ADR 0028). Without
+	// it there is no CloudFront deploy to wait for.
+	if cf != nil {
 		var ic instanceCloudFront
 		if err := s.ensureInstanceCloudFront(ctx, in.Name, instanceID, cf.wafWebACLARN, &ic); err != nil {
 			return nil, err
@@ -246,6 +268,7 @@ func (s *Service) CreateInstance(ctx context.Context, in CreateInstanceInput) (*
 		DistributionDomain: meta.DistributionDomain,
 		Password:           password,
 		Bare:               in.Bare,
+		CloudFront:         cf != nil,
 		IAMRole:            meta.IAMRole,
 		InstanceProfile:    meta.InstanceProfile,
 	}

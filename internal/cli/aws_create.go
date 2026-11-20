@@ -21,6 +21,7 @@ type createFlags struct {
 	preset            string
 	bare              bool
 	noKiro            bool
+	cloudFront        bool
 }
 
 // createInputFromFlags maps the parsed CLI flags to the service-layer
@@ -36,6 +37,7 @@ func createInputFromFlags(f *createFlags) service.CreateInstanceInput {
 		WithRole:          f.withRole,
 		Bare:              f.bare,
 		NoKiro:            f.noKiro,
+		CloudFront:        f.cloudFront,
 		Provision: service.ProvisionSpec{
 			SetupScript: f.setupScript,
 			Dotfiles:    f.dotfiles,
@@ -48,17 +50,28 @@ func newAWSCreateCommand() *cobra.Command {
 	f := &createFlags{}
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Provision a new code-server EC2 instance and CloudFront distribution",
+		Short: "Provision a new code-server EC2 instance (reached over SSM; CloudFront with --cloudfront)",
 		Long: `Provisions:
 
   - A dedicated ENI in the private subnet (Private IP retained across stop/start)
-  - A security group allowing inbound from the CloudFront managed prefix list
+  - A security group with no inbound rule
   - An EC2 instance running Ubuntu 26.04 with code-server installed via cloud-init
-  - A CloudFront VPC origin pointing at the EC2 instance
-  - A CloudFront distribution attached to the WAF web ACL ` + "(`nakama-waf`)" + `
   - SSM Parameter Store entries for the password and instance metadata
 
-The whole flow takes ~15-20 minutes (CloudFront propagation dominates).
+Open code-server with ` + "`nakama aws open <name>`" + ` (an SSM port forward)
+and terminals with connect / ssh / tunnel. Nothing on the instance is
+reachable from the internet.
+
+--cloudfront also builds an internet entry path, for
+` + "`nakama aws open --internet`" + `:
+
+  - An inbound rule on the security group from the CloudFront managed prefix list
+  - A CloudFront VPC origin pointing at the EC2 instance
+  - A CloudFront distribution attached to the WAF web ACL ` + "(`nakama-waf`)" + `
+
+It takes ~15-20 minutes more (CloudFront propagation), and adds
+CloudFront and WAF request charges. ` + "`nakama aws cloudfront add`" + ` builds the
+same thing later, and ` + "`nakama aws cloudfront delete`" + ` removes it.
 
 With --with-admin the instance gets a shared nakama-managed IAM role
 carrying AdministratorAccess (for CDK/CloudFormation work from inside
@@ -95,12 +108,19 @@ resource when the permissions are insufficient.`,
 			fallback := "instance created\n" +
 				"  name              : " + out.Name + "\n" +
 				"  instance_id       : " + out.InstanceID + "\n"
-			if out.Bare {
+			switch {
+			case out.Bare:
 				// No code-server, so no URL and no password exist.
 				fallback += "  kind              : bare (no code-server / CloudFront)\n" +
 					"  access            : nakama aws ssh setup " + out.Name + "  |  nakama aws connect " + out.Name
-			} else {
-				fallback += "  url               : " + out.URL + "\n" + passwordLine
+			case out.CloudFront:
+				fallback += "  url               : " + out.URL + "\n" +
+					"  open              : nakama aws open " + out.Name + "  (over SSM; --internet for the URL above)\n" +
+					passwordLine
+			default:
+				fallback += "  cloudfront        : none (add it with `nakama aws cloudfront add " + out.Name + "`)\n" +
+					"  open              : nakama aws open " + out.Name + "  (over SSM)\n" +
+					passwordLine
 			}
 			if out.IAMRole != "" {
 				fallback += "\n  iam_role          : " + out.IAMRole
@@ -134,12 +154,16 @@ resource when the permissions are insufficient.`,
 		"Create a lightweight box without code-server, CloudFront or a password (use connect/ssh/tunnel)")
 	cmd.Flags().BoolVar(&f.noKiro, "no-kiro", false,
 		"Skip the Kiro CLI / Kiro Crew install that is performed by default")
+	cmd.Flags().BoolVar(&f.cloudFront, "cloudfront", false,
+		"Also build the CloudFront entry path (VPC origin, distribution, WAF) used by `open --internet`")
 	cmd.Flags().StringVar(&f.preset, "preset", "",
 		"Bundled provisioning recipe to apply ("+strings.Join(service.ProvisionPresetNames(), ", ")+")")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")
 	// A bare instance has no code-server, so pinning its version would
 	// be silently meaningless (Issue #61).
 	cmd.MarkFlagsMutuallyExclusive("bare", "code-server-version")
+	// Nor is there a code-server to put behind CloudFront (ADR 0028).
+	cmd.MarkFlagsMutuallyExclusive("bare", "cloudfront")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("instance-type")
 	return cmd

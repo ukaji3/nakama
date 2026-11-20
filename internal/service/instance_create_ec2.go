@@ -50,9 +50,11 @@ func instanceResourceTags(instanceName, nameTag string) map[string]string {
 }
 
 // upsertInstanceSecurityGroup ensures a nakama-tagged SG exists for
-// this instance. The caller records it and then adds the ingress rule
-// with ensureSGIngress, so that an interruption in between cannot leave
-// the SG unrecorded.
+// this instance. A new one has no inbound rules: the SSM paths
+// (connect, ssh, tunnel, open) need none, and the CloudFront rule is
+// added only when the instance gets CloudFront (ensureSGIngress, ADR
+// 0028). The caller records the SG before anything else happens to it,
+// so that an interruption cannot leave the SG unrecorded.
 func (s *Service) upsertInstanceSecurityGroup(ctx context.Context, instanceName, vpcID string) (string, error) {
 	sgName := naming.SecurityGroup(instanceName)
 
@@ -71,8 +73,10 @@ func (s *Service) upsertInstanceSecurityGroup(ctx context.Context, instanceName,
 	} else {
 		tags := tagging.ForInstance(instanceName, tagging.ComponentSG, sgName)
 		c, err := s.clients.EC2.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
-			GroupName:   aws.String(sgName),
-			Description: aws.String("nakama EC2 SG: ingress from CloudFront managed prefix list"),
+			GroupName: aws.String(sgName),
+			// The description cannot be changed later, so it does not
+			// claim a rule the instance may never get.
+			Description: aws.String(securityGroupDescription),
 			VpcId:       aws.String(vpcID),
 			TagSpecifications: []ec2types.TagSpecification{
 				awshelper.EC2TagSpec(ec2types.ResourceTypeSecurityGroup, tags),
@@ -89,6 +93,11 @@ func (s *Service) upsertInstanceSecurityGroup(ctx context.Context, instanceName,
 	}
 	return sgID, nil
 }
+
+// securityGroupDescription is the description of an instance's SG.
+// Groups created before ADR 0028 keep "nakama EC2 SG: ingress from
+// CloudFront managed prefix list".
+const securityGroupDescription = "nakama EC2 SG: inbound only from CloudFront, when CloudFront is added"
 
 // cloudFrontIngress is the one inbound rule nakama manages on an
 // instance's SG: code-server's port from the CloudFront managed prefix

@@ -43,10 +43,14 @@ type RestoreInput struct {
 	Bare         bool
 	WithAdmin    bool
 	WithRole     string
+	// CloudFront also builds the CloudFront entry path, as
+	// `create --cloudfront` does (ADR 0028). Restore never adds it on
+	// its own, even when the deleted instance had it.
+	CloudFront bool
 }
 
 func (in RestoreInput) hasNewInstanceOptions() bool {
-	return in.InstanceType != "" || in.Bare || in.WithAdmin || in.WithRole != ""
+	return in.InstanceType != "" || in.Bare || in.WithAdmin || in.WithRole != "" || in.CloudFront
 }
 
 // RestorePlan is what Restore will do, resolved by PlanRestore with
@@ -62,6 +66,7 @@ type RestorePlan struct {
 	Bare         bool
 	WithAdmin    bool
 	WithRole     string
+	CloudFront   bool
 
 	// Warnings are things the user should know before confirming; the
 	// CLI prints them even with --yes.
@@ -80,6 +85,7 @@ type RestoreResult struct {
 	InstanceType    string `json:"instance_type,omitempty"`
 	URL             string `json:"url,omitempty"`
 	Bare            bool   `json:"bare,omitempty"`
+	CloudFront      bool   `json:"cloudfront,omitempty"`
 	IAMRole         string `json:"iam_role,omitempty"`
 	InstanceProfile string `json:"instance_profile,omitempty"`
 }
@@ -123,8 +129,8 @@ func (s *Service) planInPlace(ctx context.Context, in RestoreInput, instanceID s
 	}
 	if in.hasNewInstanceOptions() {
 		return nil, fmt.Errorf("nakama instance %q exists, so restore replaces its disk in place; "+
-			"--instance-type, --bare, --with-admin and --with-role apply only to a deleted instance "+
-			"(use \"nakama aws edit\" to change the instance type)", in.Name)
+			"--instance-type, --bare, --with-admin, --with-role and --cloudfront apply only to a deleted instance "+
+			"(use \"nakama aws edit\" to change the instance type, \"nakama aws cloudfront add\" to add CloudFront)", in.Name)
 	}
 	b, err := s.findBackup(ctx, in.Name, in.Label)
 	if err != nil {
@@ -163,7 +169,7 @@ func (s *Service) planNewInstance(ctx context.Context, in RestoreInput) (*Restor
 
 	p := &RestorePlan{
 		Name: in.Name, Mode: RestoreModeNewInstance, Backup: *b,
-		WithAdmin: in.WithAdmin, WithRole: in.WithRole,
+		WithAdmin: in.WithAdmin, WithRole: in.WithRole, CloudFront: in.CloudFront,
 	}
 	untagged := b.InstanceType == "" && b.Architecture == "" && b.Kind == ""
 
@@ -176,6 +182,15 @@ func (s *Service) planNewInstance(ctx context.Context, in RestoreInput) (*Restor
 		}
 	default:
 		p.Bare = in.Bare
+	}
+	if p.Bare && p.CloudFront {
+		return nil, errors.New("--cloudfront does not apply to a bare instance: it has no code-server to put behind CloudFront")
+	}
+	// The shared WAF web ACL must exist before anything is built.
+	if p.CloudFront {
+		if _, err := s.findWAFWebACLARN(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	p.InstanceType = in.InstanceType
@@ -212,6 +227,11 @@ func (s *Service) planNewInstance(ctx context.Context, in RestoreInput) (*Restor
 		}
 		p.Warnings = append(p.Warnings, fmt.Sprintf(
 			"the instance had the IAM role %q; restore does not attach it again. Pass %s to attach it", b.IAMRole, hint))
+	}
+	if b.CloudFront && !p.CloudFront && !p.Bare {
+		p.Warnings = append(p.Warnings, fmt.Sprintf(
+			"the instance had CloudFront; restore does not add it again. Pass --cloudfront to add it, "+
+				"or add it later with \"nakama aws cloudfront add %s\" (code-server is reached over SSM without it)", in.Name))
 	}
 	return p, nil
 }
@@ -251,8 +271,9 @@ func (s *Service) restoreInPlace(ctx context.Context, p *RestorePlan) (*RestoreR
 
 // restoreNewInstance rebuilds a deleted instance from its backup: it
 // launches a fresh Ubuntu instance with the same name and the resources
-// create makes, then swaps the backup in as its root volume. The URL,
-// the code-server password and the private IP are new.
+// create makes (with p.CloudFront, the CloudFront entry path too), then
+// swaps the backup in as its root volume. The code-server password and
+// the private IP are new, and so is the URL with CloudFront.
 func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*RestoreResult, error) {
 	// As in create, the IAM role is prepared (and the caller's
 	// permissions preflighted) before any other resource exists.
@@ -266,13 +287,17 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 		}
 	}
 	slog.Info("restore: building a new instance", "name", p.Name, "label", p.Backup.Label,
-		"instance_type", p.InstanceType, "bare", p.Bare)
+		"instance_type", p.InstanceType, "bare", p.Bare, "cloudfront", p.CloudFront)
 
 	// As in create, the CloudFront prerequisites are looked up before
 	// anything is built.
-	pre, err := s.resolveCloudFrontPrereqs(ctx)
-	if err != nil {
-		return nil, err
+	var cf *cloudFrontPrereqs
+	if p.CloudFront {
+		pre, err := s.resolveCloudFrontPrereqs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		cf = &pre
 	}
 
 	amiID, err := s.clients.AMIResolver.LatestUbuntu2604(ctx, p.Architecture)
@@ -290,7 +315,7 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 			return nil, fmt.Errorf("store password: %w", err)
 		}
 	}
-	net, err := s.prepareInstanceNetwork(ctx, p.Name, &pre)
+	net, err := s.prepareInstanceNetwork(ctx, p.Name, cf)
 	if err != nil {
 		return nil, err
 	}
@@ -337,9 +362,9 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 		return nil, fmt.Errorf("wait instance running: %w", err)
 	}
 
-	if !p.Bare {
+	if cf != nil {
 		var ic instanceCloudFront
-		if err := s.ensureInstanceCloudFront(ctx, p.Name, instanceID, pre.wafWebACLARN, &ic); err != nil {
+		if err := s.ensureInstanceCloudFront(ctx, p.Name, instanceID, cf.wafWebACLARN, &ic); err != nil {
 			return nil, err
 		}
 		meta.VPCOriginID, meta.DistributionID, meta.DistributionDomain = ic.VPCOriginID, ic.DistributionID, ic.DistributionDomain
@@ -355,10 +380,10 @@ func (s *Service) restoreNewInstance(ctx context.Context, p *RestorePlan) (*Rest
 	}
 	res := &RestoreResult{
 		Name: p.Name, Action: "restored", Mode: p.Mode, Label: p.Backup.Label,
-		InstanceID: instanceID, InstanceType: p.InstanceType, Bare: p.Bare,
+		InstanceID: instanceID, InstanceType: p.InstanceType, Bare: p.Bare, CloudFront: cf != nil,
 		IAMRole: meta.IAMRole, InstanceProfile: meta.InstanceProfile,
 	}
-	if !p.Bare {
+	if cf != nil {
 		if err := s.waitDistributionDeployed(ctx, meta.DistributionID); err != nil {
 			return nil, fmt.Errorf("wait distribution: %w", err)
 		}

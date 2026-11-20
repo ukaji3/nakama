@@ -37,8 +37,8 @@ func (s *Service) StartInstance(ctx context.Context, name string) (string, error
 }
 
 // StopInstance stops the EC2 instance backing the named nakama
-// instance. The CloudFront distribution remains live; it will
-// return 502 to viewers while the EC2 is stopped.
+// instance. A CloudFront distribution, when the instance has one,
+// remains live; it returns 502 to viewers while the EC2 is stopped.
 //
 // After stopping, the shared NAT instance is reconciled: if no other
 // code-server instance remains pending/running, the NAT instance is

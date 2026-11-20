@@ -269,9 +269,8 @@ func featurePermissionMatrix() []FeaturePermission {
 				egressActions,
 				remoteScriptActions, // --setup / --dotfiles / --preset
 				buildInstanceActions,
-				cloudFrontBuildActions,
 			),
-			Note: "--bare は cloudfront:* を使わない。NAT インスタンスの初回作成を含む。" +
+			Note: "CloudFront は作らない (--cloudfront のときは cloudfront の行の権限も要る)。NAT インスタンスの初回作成を含む。" +
 				"NAT Gateway の方式 (ADR 0026) では ec2:DescribeNatGateways で NAT Gateway が使えるかを確かめる",
 			Simulate: true,
 		},
@@ -336,7 +335,7 @@ func featurePermissionMatrix() []FeaturePermission {
 		},
 		{
 			Feature:  "cloudfront",
-			Commands: "nakama aws cloudfront add / delete",
+			Commands: "nakama aws cloudfront add / delete、create / restore の --cloudfront",
 			Actions: mergeActions(
 				resolveInstanceActions,
 				remoteScriptActions, // delete: Kiro Crew's instance side
@@ -345,7 +344,8 @@ func featurePermissionMatrix() []FeaturePermission {
 			),
 			Note: "add は running のインスタンスに SG の受信ルール・VPC origin・distribution を作って Deployed まで待つ (ADR 0028)。" +
 				"delete は SG の受信ルールを最初に外し、Kiro Crew の distribution と CloudFront Function があればそれも消す " +
-				"(cloudfront:*Function と Run Command はそのときだけ)",
+				"(cloudfront:*Function と Run Command はそのときだけ)。create / restore の --cloudfront は、本体の権限に加えて " +
+				"add の分を使う",
 			Simulate: true,
 		},
 		{
@@ -459,7 +459,6 @@ func featurePermissionMatrix() []FeaturePermission {
 				resolveInstanceActions,
 				egressActions,
 				buildInstanceActions, // a deleted instance is rebuilt (Issue #96)
-				cloudFrontBuildActions,
 				[]string{
 					"ec2:AttachVolume",
 					"ec2:CreateTags",
@@ -473,7 +472,7 @@ func featurePermissionMatrix() []FeaturePermission {
 				},
 			),
 			Note: "インスタンスが削除済みのときは、同じ名前のインスタンスを作り直すので create と同じ権限が要る " +
-				"(--bare は cloudfront:* を使わない)",
+				"(--cloudfront のときは cloudfront の行の権限も要る)",
 			Simulate: true,
 		},
 		{
@@ -501,7 +500,7 @@ func featurePermissionMatrix() []FeaturePermission {
 					"ssm:GetParametersByPath",
 				},
 			),
-			Note: "--bare で作成したインスタンスは cloudfront:* を使わない。" +
+			Note: "CloudFront の無いインスタンスでは cloudfront:* を使わない。" +
 				"cloudfront:*Function は kirocrew enable 済みのインスタンスでのみ使う。" +
 				"ec2:DescribeNetworkInterfaces は SSM に ENI の記録が無いときだけ使い、拒否されたら警告して続ける",
 			Simulate: true,
