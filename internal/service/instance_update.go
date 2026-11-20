@@ -17,6 +17,7 @@ import (
 	"github.com/ukaji3/nakama/internal/awscli"
 	"github.com/ukaji3/nakama/internal/awshelper"
 	"github.com/ukaji3/nakama/internal/config"
+	"github.com/ukaji3/nakama/internal/userdata"
 )
 
 // UpdateInput controls `nakama aws update`.
@@ -128,7 +129,7 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*UpdateResult, er
 	// 3. Run the update via SSM Run Command.
 	// A bare instance has no code-server to update, so only the OS part
 	// of the script runs (Issue #52).
-	stdout, runErr := s.runUpdateCommand(ctx, instanceID, ssmVersionPath(in.Name), kind == instanceKindBare)
+	stdout, runErr := s.runUpdateCommand(ctx, instanceID, in.Name, kind == instanceKindBare)
 
 	// 4. Reboot handling (only meaningful on success).
 	if runErr == nil && rebootRequired(stdout) {
@@ -293,9 +294,11 @@ apt-get autoremove -y -qq
 
 // buildUpdateScript renders the in-instance update shell script.
 // region/versionParam are injected so the instance can write the
-// post-update code-server version back to Parameter Store.
-func buildUpdateScript(region, versionParam string) string {
-	return updateScriptHeader() + awscli.RunScript() + fmt.Sprintf(`export DEBIAN_FRONTEND=noninteractive
+// post-update code-server version back to Parameter Store; name is the
+// instance name, which becomes code-server's cookie-suffix once the
+// updated code-server supports it (Issue #118).
+func buildUpdateScript(region, name, versionParam string) string {
+	return updateScriptHeader() + awscli.RunScript() + userdata.CookieSuffixScript() + fmt.Sprintf(`export DEBIAN_FRONTEND=noninteractive
 # SSM Run Command runs as root in a non-login shell that does not export
 # HOME; the code-server install.sh reads $HOME. Default to /root (matches
 # the cloud-init userdata workaround).
@@ -312,6 +315,9 @@ apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::=
 
 # code-server -> latest
 curl -fsSL https://code-server.dev/install.sh | sh
+# A session cookie of its own, so instances opened side by side at
+# different localhost ports do not sign each other out (Issue #118).
+nakama_set_cookie_suffix /home/ubuntu/.config/code-server/config.yaml %q ubuntu
 systemctl restart code-server@ubuntu || true
 
 # Best-effort: record the running code-server version back to SSM.
@@ -322,15 +328,15 @@ if VL="$(sudo -u ubuntu code-server --version 2>/dev/null | head -n1)"; then
   fi
 fi
 
-`, region, versionParam) + updateToolsScript + updateRebootMarker
+`, name, region, versionParam) + updateToolsScript + updateRebootMarker
 }
 
 // runUpdateCommand sends the update script via SSM Run Command and
 // returns the command's stdout. It retries SendCommand while the SSM
 // agent is not yet registered (InvalidInstanceId), which happens for a
 // short window after a stopped instance is started.
-func (s *Service) runUpdateCommand(ctx context.Context, instanceID, versionParam string, bare bool) (string, error) {
-	script := buildUpdateScript(config.Region, versionParam)
+func (s *Service) runUpdateCommand(ctx context.Context, instanceID, name string, bare bool) (string, error) {
+	script := buildUpdateScript(config.Region, name, ssmVersionPath(name))
 	if bare {
 		script = buildBareUpdateScript()
 	}
