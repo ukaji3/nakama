@@ -156,11 +156,14 @@ type InstanceInfo struct {
 	// KiroCrewURL is the Kiro Crew dashboard URL when web access was
 	// enabled with `nakama aws kirocrew enable` (Issue #71).
 	KiroCrewURL string `json:"kirocrew_url,omitempty"`
+	// CloudFront reports whether the instance has a CloudFront
+	// distribution (`create --cloudfront` or `cloudfront add`, ADR 0028).
+	CloudFront bool `json:"cloudfront"`
 }
 
 // GetInstanceInfo returns the consolidated state of a nakama instance,
-// including distribution domain and (optionally) the code-server
-// password decrypted from SSM.
+// including the distribution domain when it has CloudFront and
+// (optionally) the code-server password decrypted from SSM.
 func (s *Service) GetInstanceInfo(ctx context.Context, name string, showPassword bool) (*InstanceInfo, error) {
 	if err := ValidateInstanceName(name); err != nil {
 		return nil, err
@@ -190,6 +193,7 @@ func (s *Service) GetInstanceInfo(ctx context.Context, name string, showPassword
 	if info.DistributionDomain != "" {
 		info.URL = "https://" + info.DistributionDomain
 	}
+	info.CloudFront = info.DistributionID != ""
 	crewDomain, err := s.ssmGetOptional(ctx, ssmKirocrewDistributionDomainPath(name))
 	if err != nil {
 		return nil, err

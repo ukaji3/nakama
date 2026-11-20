@@ -94,8 +94,8 @@ func (s *Service) ensureInstanceProfileForCreate(ctx context.Context, in CreateI
 func (s *Service) resolveInstanceProfileSelection(ctx context.Context, in CreateInstanceInput) (*instanceProfileSelection, error) {
 	if in.WithAdmin {
 		slog.Warn("create: --with-admin attaches AdministratorAccess to the instance; " +
-			"anyone who can reach the code-server through CloudFront and the WAF allowlist " +
-			"effectively holds administrator access to this AWS account")
+			"anyone who can sign in to its code-server (over SSM, or through CloudFront and the WAF allowlist " +
+			"when the instance has CloudFront) effectively holds administrator access to this AWS account")
 		return s.resolveAdminProfileSelection(ctx)
 	}
 	return s.resolveCustomProfileSelection(ctx, in.WithRole)

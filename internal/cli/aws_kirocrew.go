@@ -85,6 +85,7 @@ forwards the request to a loopback-only proxy in front of the gateway.
 The same WAF allowlist as code-server applies (` + "`nakama aws acl add`" + `).
 
   nakama aws kirocrew <name>                   open the dashboard over SSM
+  nakama aws cloudfront add <name>             give the instance CloudFront (needed first)
   nakama aws kirocrew enable <name>            build the CloudFront access (once per instance)
   nakama aws kirocrew --internet <name>        open the dashboard through CloudFront
   nakama aws kirocrew disable <name>           remove the CloudFront access
@@ -118,6 +119,10 @@ host-based proxy for that distribution, and makes code-server's
 /proxy/5476/ links (e.g. the URL printed by ` + "`kirocrew token`" + `)
 redirect to it. Only ` + "`nakama aws kirocrew --internet`" + ` needs this; the
 default SSM path does not.
+
+It builds on the instance's code-server CloudFront distribution, which
+instances get only on request: run ` + "`nakama aws cloudfront add <name>`" + `
+first (ADR 0028). ` + "`nakama aws cloudfront delete`" + ` removes both.
 
 The instance must be running. code-server is restarted once, so an open
 browser tab reconnects. CloudFront takes several minutes (up to ~15) to

@@ -21,20 +21,23 @@ func newAWSDeleteCommand() *cobra.Command {
 	f := &deleteFlags{}
 	cmd := &cobra.Command{
 		Use:   "delete <name>",
-		Short: "Delete a nakama instance and its CloudFront / WAF / EC2 / SSM resources",
+		Short: "Delete a nakama instance and its CloudFront / EC2 / SSM resources",
 		Long: `Deletes, in dependency order:
 
-  1. CloudFront distribution (disable, wait, delete)
-  2. CloudFront VPC origin
-  3. EC2 instance (terminate)
-  4. ENI
-  5. Security group
-  6. SSM Parameter Store entries under /nakama/<name>/...
+  1. CloudFront distributions (disable, wait, delete) and the VPC origin,
+     when the instance has them
+  2. EC2 instance (terminate)
+  3. ENI
+  4. Security group
+  5. SSM Parameter Store entries under /nakama/<name>/...
 
 Prompts for confirmation unless --yes is given. --force additionally
 ignores 'already gone' / mid-step errors during cleanup.
 
-The whole flow takes ~15-20 minutes (CloudFront propagation dominates).`,
+With CloudFront this takes ~15-20 minutes (CloudFront propagation
+dominates); without it, only the EC2 termination is waited for. To
+remove only CloudFront and keep the instance, use
+` + "`nakama aws cloudfront delete`" + `.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := withCancel(cmd)

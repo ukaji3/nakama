@@ -509,17 +509,18 @@ func featurePermissionMatrix() []FeaturePermission {
 			Feature:  "doctor",
 			Commands: "nakama aws doctor",
 			Actions: []string{
-				"ec2:DescribeInstances",   // egress: InspectEgress
+				"ec2:DescribeInstances",   // egress: InspectEgress; waf-allowlist: ListInstances
 				"ec2:DescribeNatGateways", // egress
 				"ec2:DescribeRouteTables", // egress
 				"iam:SimulatePrincipalPolicy",
-				"ssm:GetParameter", // egress: the recorded NAT mode
+				"ssm:GetParameter", // egress: the recorded NAT mode; waf-allowlist: the distribution records
 				"ssm:GetParametersByPath",
 				"wafv2:GetIPSet",
 				"wafv2:ListIPSets", // waf-allowlist: ListACL -> findIPSetSummary
 			},
 			Note: "読み取り専用。iam:SimulatePrincipalPolicy が無い場合も " +
-				"capability 判定が warn になるだけで他の診断は動く。egress の確認に ec2:Describe* と ssm:GetParameter を使う",
+				"capability 判定が warn になるだけで他の診断は動く。egress の確認に ec2:Describe* と ssm:GetParameter を使う。" +
+				"waf-allowlist は CloudFront を持つインスタンスが無ければ skip にする",
 			Simulate: true,
 		},
 	}

@@ -19,9 +19,10 @@ func newAWSInfoCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "info <name>",
 		Short: "Show connection details for a nakama instance",
-		Long: `Prints the CloudFront URL, instance state and metadata for the
-named instance. The code-server password stored in SSM Parameter Store
-is NOT printed unless ` + "`--show-password`" + ` is supplied.`,
+		Long: `Prints the instance state and metadata of the named instance, and its
+CloudFront URL when it has CloudFront (` + "`nakama aws cloudfront add`" + `). The
+code-server password stored in SSM Parameter Store is NOT printed unless
+` + "`--show-password`" + ` is supplied.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := withCancel(cmd)
@@ -48,9 +49,14 @@ func formatInfo(i *service.InstanceInfo, showPassword bool) string {
 	fmt.Fprintf(&b, "instance_type     : %s\n", i.InstanceType)
 	fmt.Fprintf(&b, "eni_id            : %s\n", i.ENIID)
 	fmt.Fprintf(&b, "security_group_id : %s\n", i.SecurityGroupID)
-	fmt.Fprintf(&b, "vpc_origin_id     : %s\n", i.VPCOriginID)
-	fmt.Fprintf(&b, "distribution_id   : %s\n", i.DistributionID)
-	fmt.Fprintf(&b, "url               : %s\n", i.URL)
+	if i.CloudFront {
+		fmt.Fprintf(&b, "vpc_origin_id     : %s\n", i.VPCOriginID)
+		fmt.Fprintf(&b, "distribution_id   : %s\n", i.DistributionID)
+		fmt.Fprintf(&b, "url               : %s\n", i.URL)
+	} else if i.Kind != "bare" {
+		fmt.Fprintf(&b, "cloudfront        : none (open over SSM with `nakama aws open %s`; "+
+			"add CloudFront with `nakama aws cloudfront add %s`)\n", i.Name, i.Name)
+	}
 	fmt.Fprintf(&b, "code_server_ver   : %s\n", i.CodeServerVersion)
 	if i.KiroCrewURL != "" {
 		fmt.Fprintf(&b, "kirocrew_url      : %s\n", i.KiroCrewURL)

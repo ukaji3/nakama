@@ -27,13 +27,18 @@ var global = &GlobalFlags{Output: "table"}
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "nakama",
-		Short: "Manage AWS-hosted code-server instances behind CloudFront VPC Origins",
+		Short: "Manage AWS-hosted code-server instances in private subnets, reached over SSM",
 		Long: `nakama provisions and manages cloud development environments on AWS.
 
-Each instance runs coder/code-server on a private-subnet EC2 instance and
-is exposed over HTTPS/WSS through a CloudFront distribution that uses the
-VPC Origins feature. Access from the public internet is restricted by an
-AWS WAFv2 IP set managed via the ` + "`nakama aws acl`" + ` subcommands.`,
+Each instance runs coder/code-server on a private-subnet EC2 instance
+with no inbound rule. The browser reaches it through an AWS Systems
+Manager (SSM) Session Manager port forward (` + "`nakama aws open`" + `), and
+terminals through SSM as well (connect, ssh, tunnel).
+
+An instance can also get an internet entry path: a CloudFront
+distribution that uses the VPC Origins feature, restricted by an AWS
+WAFv2 IP set managed via the ` + "`nakama aws acl`" + ` subcommands. It is built
+only on request (` + "`nakama aws create --cloudfront`" + `, ` + "`nakama aws cloudfront add`" + `).`,
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {

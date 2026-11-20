@@ -142,7 +142,9 @@ func (s *Service) EnableKiroCrewWeb(ctx context.Context, name string) (*EnableKi
 		return nil, err
 	}
 	if m.distributionID == "" {
-		return nil, fmt.Errorf("instance %q has no code-server distribution (/nakama/%s/meta/distribution-id)", name, name)
+		return nil, fmt.Errorf("instance %q has no CloudFront distribution for code-server, which the Kiro Crew access "+
+			"builds on; add it first with `nakama aws cloudfront add %s`, then run `nakama aws kirocrew enable %s` again "+
+			"(`nakama aws kirocrew %s` without --internet needs neither)", name, name, name, name)
 	}
 	if err := s.requireRunning(ctx, m, "`nakama aws kirocrew enable`"); err != nil {
 		return nil, err
@@ -469,6 +471,11 @@ func (s *Service) GetKiroCrewWeb(ctx context.Context, name string) (*KiroCrewWeb
 		return nil, err
 	}
 	if m.crewID == "" || m.crewDomain == "" {
+		if m.distributionID == "" {
+			return nil, fmt.Errorf("%w: %q has no CloudFront; add it with `nakama aws cloudfront add %s`, "+
+				"then run `nakama aws kirocrew enable %s` (or open Kiro Crew over SSM without --internet)",
+				ErrKiroCrewWebNotEnabled, name, name, name)
+		}
 		return nil, fmt.Errorf("%w: run `nakama aws kirocrew enable %s` first", ErrKiroCrewWebNotEnabled, name)
 	}
 	if err := validateCloudFrontDomain(m.crewDomain); err != nil {
@@ -512,11 +519,13 @@ func kirocrewSetupAdvice(name string, err error) error {
 		err, name, name, name)
 }
 
-// deleteKirocrewDistributionForInstance is DeleteInstance's first step when Kiro
-// Crew web access was enabled: the crew distribution shares the VPC
-// origin with the code-server distribution, so it has to go before the
-// VPC origin can be deleted. The redirect function is deleted later by
-// deleteKirocrewFunction, once the code-server distribution is gone.
+// deleteKirocrewDistributionForInstance is the first step of
+// deleteCloudFrontResources (`nakama aws delete`, `nakama aws cloudfront
+// delete`) when Kiro Crew web access was enabled: the crew distribution
+// shares the VPC origin with the code-server distribution, so it has to
+// go before the VPC origin can be deleted. The redirect function is
+// deleted later by deleteKirocrewFunction, once the code-server
+// distribution is gone.
 func (s *Service) deleteKirocrewDistributionForInstance(ctx context.Context, crewID string) error {
 	if crewID == "" {
 		return nil
