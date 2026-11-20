@@ -166,7 +166,7 @@ func ssmStdout(s string) string {
 
 func bothUpdateScripts() map[string]string {
 	return map[string]string{
-		"code-server": buildUpdateScript("ap-northeast-1", "/nakama/dev01/meta/code-server-version"),
+		"code-server": buildUpdateScript("ap-northeast-1", "dev01", "/nakama/dev01/meta/code-server-version"),
 		"bare":        buildBareUpdateScript(),
 	}
 }
@@ -363,7 +363,7 @@ func TestUpdateScriptLeavesOlderInstancesAlone(t *testing.T) {
 // updated by then, so a failing kirocrew does not fail the update.
 func TestUpdateScriptKiroCrewFailureOnlyWarns(t *testing.T) {
 	for _, failOn := range []string{"update", "restart"} {
-		r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "/v"), nil, kiroCrew(t, failOn))
+		r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "dev01", "/v"), nil, kiroCrew(t, failOn))
 		if r.exitErr != nil {
 			t.Fatalf("kirocrew %s failing must not fail the update: %v\n%s", failOn, r.exitErr, r.stderr)
 		}
@@ -382,7 +382,7 @@ func TestUpdateScriptKiroCrewFailureOnlyWarns(t *testing.T) {
 // TestUpdateScriptAWSCLIFailureFailsTheUpdate: as with code-server, a
 // failed AWS CLI update fails the command.
 func TestUpdateScriptAWSCLIFailureFailsTheUpdate(t *testing.T) {
-	r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "/v"), []string{"NAKAMA_STUB_FAIL=awscli install"},
+	r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "dev01", "/v"), []string{"NAKAMA_STUB_FAIL=awscli install"},
 		both(officialAWSCLI(t), kiroCrew(t, "")))
 	if r.exitErr == nil {
 		t.Fatal("a failed AWS CLI update must fail the update")
@@ -396,7 +396,7 @@ func TestUpdateScriptAWSCLIFailureFailsTheUpdate(t *testing.T) {
 // the official CLI, the code-server version is written by running it as
 // ubuntu with ubuntu's AWS settings ignored, not as root.
 func TestUpdateScriptRecordsTheVersionThroughNakamaAWS(t *testing.T) {
-	r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "/nakama/dev01/meta/code-server-version"), nil, officialAWSCLI(t))
+	r := runUpdateScript(t, buildUpdateScript("ap-northeast-1", "dev01", "/nakama/dev01/meta/code-server-version"), nil, officialAWSCLI(t))
 	if r.exitErr != nil {
 		t.Fatalf("update failed: %v\n%s", r.exitErr, r.stderr)
 	}
@@ -407,4 +407,78 @@ func TestUpdateScriptRecordsTheVersionThroughNakamaAWS(t *testing.T) {
 	if r.called("aws ssm put-parameter") {
 		t.Errorf("root's aws (the snap link) must not be used when the official CLI is there; calls %q", r.calls)
 	}
+}
+
+// TestUpdateScriptSetsTheCookieSuffix runs the update against a fake
+// code-server config (Issue #118): a supported code-server gets
+// cookie-suffix set to the instance name, once; a user's own value and
+// an older code-server are left alone.
+func TestUpdateScriptSetsTheCookieSuffix(t *testing.T) {
+	const cfgRel = ".config/code-server/config.yaml"
+	writeCfg := func(content string) func(home string) {
+		return func(home string) {
+			p := filepath.Join(home, cfgRel)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	readCfg := func(r updateRun) string {
+		b, err := os.ReadFile(filepath.Join(r.home, cfgRel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	script := buildUpdateScript("ap-northeast-1", "dev01", "/v")
+	base := "bind-addr: 0.0.0.0:8080\nauth: password\npassword: secret\ncert: false\n"
+
+	t.Run("supported", func(t *testing.T) {
+		r := runUpdateScript(t, script, nil, writeCfg(base))
+		if r.exitErr != nil {
+			t.Fatalf("update failed: %v\n%s", r.exitErr, r.stderr)
+		}
+		if got := readCfg(r); got != base+"cookie-suffix: dev01\n" {
+			t.Errorf("config = %q", got)
+		}
+		if !strings.Contains(r.log, "set cookie-suffix to dev01") {
+			t.Errorf("the log should say what was set")
+		}
+		if strings.Contains(r.stdout, "cookie-suffix") {
+			t.Errorf("stdout carries more than result markers: %q", r.stdout)
+		}
+	})
+	t.Run("already set", func(t *testing.T) {
+		own := base + "cookie-suffix: mine\n"
+		r := runUpdateScript(t, script, nil, writeCfg(own))
+		if r.exitErr != nil {
+			t.Fatalf("update failed: %v\n%s", r.exitErr, r.stderr)
+		}
+		if got := readCfg(r); got != own {
+			t.Errorf("a cookie-suffix the user set must be kept; config = %q", got)
+		}
+	})
+	t.Run("old code-server", func(t *testing.T) {
+		old := func(home string) {
+			writeCfg(base)(home)
+			// Shadow the stub with a code-server that predates the option.
+			bin := filepath.Join(filepath.Dir(filepath.Dir(home)), "stubs", "code-server")
+			if err := os.WriteFile(bin, []byte("#!/bin/bash\necho \"4.106.3 abc with Code 1.106.3\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := runUpdateScript(t, script, nil, old)
+		if r.exitErr != nil {
+			t.Fatalf("update failed: %v\n%s", r.exitErr, r.stderr)
+		}
+		if got := readCfg(r); got != base {
+			t.Errorf("code-server 4.106.3 does not know cookie-suffix (it would not start); config = %q", got)
+		}
+		if !strings.Contains(r.log, "needs 4.107.0 or later") {
+			t.Errorf("the log should say why the suffix was skipped")
+		}
+	})
 }

@@ -265,3 +265,74 @@ func assertAWSCLIFromTheInstaller(t *testing.T, got, aptLine string) {
 		t.Errorf("the AWS CLI fragment was not rendered in")
 	}
 }
+
+// TestRenderCodeServer_CookieSuffix: the user data sets code-server's
+// cookie-suffix to the instance name after it wrote the config and
+// before code-server first starts (Issue #118).
+func TestRenderCodeServer_CookieSuffix(t *testing.T) {
+	t.Parallel()
+
+	got, err := RenderCodeServer(CodeServerParams{
+		InstanceName:         "dev01",
+		Region:               "ap-northeast-1",
+		Port:                 8080,
+		SSMPasswordParameter: "/nakama/dev01/code-server/password",
+		SSMVersionParameter:  "/nakama/dev01/code-server/version",
+	})
+	if err != nil {
+		t.Fatalf("RenderCodeServer: %v", err)
+	}
+	call := `nakama_set_cookie_suffix "${HOME_DIR}/.config/code-server/config.yaml" "${INSTANCE_NAME}" "${TARGET_USER}"`
+	def := strings.Index(got, "nakama_set_cookie_suffix() {")
+	cfg := strings.Index(got, `cat > "${HOME_DIR}/.config/code-server/config.yaml"`)
+	use := strings.Index(got, call)
+	start := strings.Index(got, `systemctl enable --now "code-server@${TARGET_USER}"`)
+	if def < 0 || cfg < 0 || use < 0 || start < 0 {
+		t.Fatalf("missing pieces: def=%d config=%d call=%d start=%d", def, cfg, use, start)
+	}
+	if cfg > use || def > use || use > start {
+		t.Errorf("order: config=%d def=%d call=%d start=%d, want the config and the definition before the call, the call before the start", cfg, def, use, start)
+	}
+	if !strings.Contains(CookieSuffixScript(), "4.107.0") {
+		t.Error("the fragment must gate on code-server 4.107.0")
+	}
+}
+
+// TestCookieSuffixFragmentIsValidBash checks the shared fragment on its
+// own (it is also part of the update script, which bash -n never sees).
+func TestCookieSuffixFragmentIsValidBash(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	cmd := exec.Command("bash", "-n")
+	cmd.Stdin = strings.NewReader(CookieSuffixScript())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("bash -n rejected the fragment: %v\n%s", err, out)
+	}
+}
+
+// TestRenderedUserDataFitsTheEC2Limit: EC2 rejects user data over 16 KB
+// (raw, before base64), and every shared fragment adds to it.
+func TestRenderedUserDataFitsTheEC2Limit(t *testing.T) {
+	t.Parallel()
+	const limit = 16 * 1024
+	for _, installKiro := range []bool{true, false} {
+		got, err := RenderCodeServer(CodeServerParams{
+			InstanceName:         "a-thirty-two-character-name-xyz1",
+			Region:               "ap-northeast-1",
+			Port:                 8080,
+			SSMPasswordParameter: "/nakama/a-thirty-two-character-name-xyz1/code-server/password",
+			SSMVersionParameter:  "/nakama/a-thirty-two-character-name-xyz1/meta/code-server-version",
+			PinnedVersion:        "4.107.0",
+			InstallKiro:          installKiro,
+		})
+		if err != nil {
+			t.Fatalf("RenderCodeServer: %v", err)
+		}
+		if len(got) > limit {
+			t.Errorf("InstallKiro=%v: user data is %d bytes, over the EC2 limit of %d", installKiro, len(got), limit)
+		}
+		t.Logf("InstallKiro=%v: %d bytes", installKiro, len(got))
+	}
+}

@@ -35,7 +35,7 @@ func TestRebootRequired(t *testing.T) {
 }
 
 func TestBuildUpdateScript(t *testing.T) {
-	script := buildUpdateScript("ap-northeast-1", "/nakama/dev01/code-server/version")
+	script := buildUpdateScript("ap-northeast-1", "dev01", "/nakama/dev01/code-server/version")
 	musts := []string{
 		"apt-get update",
 		"apt-get dist-upgrade -y",
@@ -50,11 +50,21 @@ func TestBuildUpdateScript(t *testing.T) {
 		"NAKAMA_REBOOT_REQUIRED=1",
 		"NAKAMA_REBOOT_REQUIRED=0",
 		"/var/run/reboot-required",
+		"nakama_set_cookie_suffix() {",
+		`nakama_set_cookie_suffix /home/ubuntu/.config/code-server/config.yaml "dev01" ubuntu`,
 	}
 	for _, m := range musts {
 		if !strings.Contains(script, m) {
 			t.Errorf("update script missing %q", m)
 		}
+	}
+	// The suffix is set after the new code-server is installed (the
+	// version check needs it) and before code-server restarts.
+	install := strings.Index(script, "code-server.dev/install.sh")
+	suffix := strings.Index(script, "nakama_set_cookie_suffix /home/ubuntu")
+	restart := strings.Index(script, "systemctl restart code-server@ubuntu")
+	if install >= suffix || suffix >= restart {
+		t.Errorf("order install=%d suffix=%d restart=%d, want install < suffix < restart", install, suffix, restart)
 	}
 }
 

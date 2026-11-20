@@ -5,8 +5,9 @@
 # Template variables (Go text/template syntax):
 #   {{`{{.InstanceName}}`}}, {{`{{.Region}}`}}, {{`{{.Port}}`}},
 #   {{`{{.SSMPasswordParameter}}`}}, {{`{{.SSMVersionParameter}}`}},
-#   {{`{{.PinnedVersion}}`}}, and the shared AWS CLI fragments
-#   {{`{{.AWSCLIInstall}}`}}, {{`{{.AWSCLIRun}}`}} (internal/awscli)
+#   {{`{{.PinnedVersion}}`}}, the shared AWS CLI fragments
+#   {{`{{.AWSCLIInstall}}`}}, {{`{{.AWSCLIRun}}`}} (internal/awscli), and
+#   {{`{{.CookieSuffix}}`}} (internal/userdata/cookie_suffix.sh)
 
 set -euxo pipefail
 exec > >(tee -a /var/log/nakama-userdata.log) 2>&1
@@ -65,8 +66,9 @@ fi
 curl -fsSL https://code-server.dev/install.sh \
   | sh -s -- "${INSTALL_FLAGS[@]}"
 
-# 4. Drop the runtime config (auth=password, plain HTTP — TLS terminates
-#    at CloudFront).
+# 4. Drop the runtime config (auth=password, plain HTTP: the browser
+#    reaches code-server over an SSM port forward, or through CloudFront
+#    which terminates TLS).
 mkdir -p "${HOME_DIR}/.config/code-server"
 cat > "${HOME_DIR}/.config/code-server/config.yaml" <<EOF
 bind-addr: 0.0.0.0:${PORT}
@@ -77,6 +79,10 @@ EOF
 # The config contains the plaintext password; keep it owner-only.
 chmod 600 "${HOME_DIR}/.config/code-server/config.yaml"
 chown -R "${TARGET_USER}:${TARGET_USER}" "${HOME_DIR}/.config"
+# A cookie name of its own, so instances opened side by side at
+# different localhost ports keep separate sessions (Issue #118).
+{{.CookieSuffix}}
+nakama_set_cookie_suffix "${HOME_DIR}/.config/code-server/config.yaml" "${INSTANCE_NAME}" "${TARGET_USER}"
 
 # 5. Enable and start the systemd unit (template form: code-server@<user>).
 systemctl daemon-reload

@@ -26,6 +26,17 @@ var bareTemplate string
 //go:embed restore.tmpl.sh
 var restoreTemplate string
 
+//go:embed cookie_suffix.sh
+var cookieSuffixScript string
+
+// CookieSuffixScript returns the shell fragment that defines
+// nakama_set_cookie_suffix <config.yaml> <instance name> <user>: it
+// sets code-server's cookie-suffix to the instance name when the
+// installed code-server knows the option (4.107.0+), so instances
+// opened side by side over SSM keep separate session cookies (Issue
+// #118). Shared by the user data and the update script.
+func CookieSuffixScript() string { return cookieSuffixScript }
+
 // BareParams is the data passed to the bare cloud-init template
 // (`nakama aws create --bare`, Issue #52).
 type BareParams struct {
@@ -132,6 +143,8 @@ type codeServerTemplateData struct {
 	// nakama_aws (Issue #101).
 	AWSCLIInstall string
 	AWSCLIRun     string
+	// CookieSuffix defines nakama_set_cookie_suffix (Issue #118).
+	CookieSuffix string
 }
 
 // RenderCodeServer returns the rendered cloud-init User Data shell
@@ -150,6 +163,7 @@ func RenderCodeServer(p CodeServerParams) (string, error) {
 		KiroScript:       kiroScriptFor(p.InstallKiro),
 		AWSCLIInstall:    awscli.InstallScript(),
 		AWSCLIRun:        awscli.RunScript(),
+		CookieSuffix:     cookieSuffixScript,
 	}); err != nil {
 		return "", err
 	}
