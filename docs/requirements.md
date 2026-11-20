@@ -67,15 +67,15 @@
 | バックアップ | `nakama aws restore <n> [--label <label>] [--instance-type <t>] [--bare] [--with-admin \| --with-role <role>] [--yes]` | インスタンスが**削除済み**のとき: 同じ名前のインスタンスを作り直して復元 (Issue #96、ADR 0023)。`create` と同じリソースを作り、ルートをバックアップから作ったボリュームに差し替える。ソフトウェアは入れ直さない。URL・code-server のパスワード・プライベート IP は新しくなり、SSH のホスト鍵はバックアップのものを引き継ぐ。完了後は停止状態 |
 | 接続 | `nakama aws connect <n>` | AWS Systems Manager Session Manager 経由で対話シェルにログイン (SSH 不要・受信ポート開放なし) |
 | 接続 | `nakama aws connect <n> <command> [args...]` | リモートで単発コマンドを実行 (既定は非対話。`--tty` で対話 PTY)。非対話では stdout と stderr を分けて出し、リモートの終了コードで終わる (受け取れなければ 255)。標準入力は読まない |
-| 接続 | `nakama aws tunnel [start] <n> -L <spec> [-L <spec>...]` | バックグラウンドに常駐してポート転送 (ADR 0017)。`start` は省略可。複数 `-L` 可 (転送ごとに SSM セッション)。既に転送中なら転送一覧を表示して exit 1 |
+| 接続 | `nakama aws tunnel [start] <n> -L <spec> [-L <spec>...]` | バックグラウンドに常駐してポート転送 (ADR 0017)。`start` は省略可。複数 `-L` 可 (転送ごとに SSM セッション)。既に転送中なら転送一覧を表示して exit 1。ローカルポートはデーモンが持ち、セッションが切れても閉じずに上限なく張り直す。5 分使われない転送は次の接続まで張り直さない (ADR 0027) |
 | 接続 | `nakama aws tunnel stop <n>` | ポート転送を停止し、常駐デーモンも終了する |
-| 接続 | `nakama aws tunnel status [<n>]` | 転送ごとの状態 (active / reconnecting / dead) を表示する。名前を省略するとこのマシンに記録された全インスタンスの転送を NAME 列付きで一覧し、デーモン不応答のものは stale として表示して残骸の状態ファイルを掃除する |
+| 接続 | `nakama aws tunnel status [<n>]` | 転送ごとの状態 (connecting / active / reconnecting / idle / dead) と、open / kirocrew が足した転送の用途を表示する。名前を省略するとこのマシンに記録された全インスタンスの転送を NAME 列付きで一覧し、デーモン不応答のものは stale として表示して残骸の状態ファイルを掃除する |
 | 接続 | `nakama aws tunnel suggest <n>` | インスタンス上で listen 中の TCP ポートを SSM Run Command (`ss`/`netstat`) で列挙し、`-L` スペック案とそのまま実行できる tunnel コマンドを表示する。読み取り専用で自動転送はしない。22 番は `nakama aws ssh` を案内し提案から除外する |
-| 接続 | `nakama aws tunnel restart <n>` | 状態ファイルに記録された転送スペックのまま再接続する (stop → start の合成。資格情報失効などで dead になった転送の復旧手段。ADR 0017) |
+| 接続 | `nakama aws tunnel restart <n>` | 状態ファイルに記録された転送スペック (open / kirocrew が足した転送を含む) のまま再接続する (stop → start の合成。古い版のデーモンの入れ替えや dead になった転送の復旧手段。ADR 0017) |
 | 接続 | `nakama aws ssh setup <n> [--identity <pub>] [--no-key] [--port <p>]` | 公開鍵を ubuntu の `authorized_keys` に冪等追加し (SSM Run Command 経由、既存なら追加しない)、ssh config スニペットを `~/.config/nakama/ssh/<n>.conf` (0600) に生成して `Include` 行を案内する。`~/.ssh/config` は変更しない。多行入力 (秘密鍵の誤指定) や非 OpenSSH 公開鍵形式は拒否 (ADR 0019) |
 | 接続 | `nakama aws ssh proxy <n> [--port <p>]` | `AWS-StartSSHSession` のセッションを開き自プロセスの stdin/stdout を中継する (OpenSSH の `ProxyCommand` 用)。1 プロセス 1 セッションで、再接続は ssh クライアントの責務。デスクトップ VS Code Remote-SSH / JetBrains Gateway / scp / rsync が利用可能になる (ADR 0019) |
-| 接続 | `nakama aws kirocrew <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` / `kirocrew enable <n>` / `kirocrew disable <n>` | Kiro Crew の Web 画面を **code-server 経由で**ブラウザに開く (ADR 0020)。enable は、Kiro Crew 専用の CloudFront distribution、インスタンス上の nginx (127.0.0.1:15476)、code-server の proxy-domain と trusted-origins、既存の distribution の `/proxy/5476*` を新しい distribution へ 302 で転送する Function を作る (冪等)。開くときは、code-server の自動ログイン (ADR 0012 の方式) と Kiro Crew のトークン受け渡しを、1 回のブラウザ起動で行う。トークンは RSA-OAEP で暗号化して受け取る。Kiro Crew は CloudFront に直接さらさない。disable と delete で片付ける。bare は対象外 |
-| 接続 | `nakama aws open <n> [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server の CloudFront URL をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・ランチャー不在/失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く/表示するだけの動作へ退避し終了コード 0 (METHOD C fallback)。fatal (未存在・非 running・distribution 未設定) のみエラー。呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
+| 接続 | `nakama aws kirocrew <n> [--internet] [--local-port <port>] [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` / `kirocrew enable <n>` / `kirocrew disable <n>` | Kiro Crew の Web 画面をブラウザで開く。既定は SSM のポート転送でインスタンスの Kiro Crew (127.0.0.1:5476) へ直接届ける (ADR 0027): `http://localhost:5476` (`--local-port` で変更) を開き、トークンを 127.0.0.1 の 1 回限りのページから渡す。enable は要らず、bare でも使える。`--internet` は **code-server 経由で** CloudFront から開く (ADR 0020)。enable は、そのための Kiro Crew 専用の CloudFront distribution、インスタンス上の nginx (127.0.0.1:15476)、code-server の proxy-domain と trusted-origins、既存の distribution の `/proxy/5476*` を新しい distribution へ 302 で転送する Function を作る (冪等)。`--internet` で開くときは、code-server の自動ログイン (ADR 0012 の方式) と Kiro Crew のトークン受け渡しを、1 回のブラウザ起動で行う。トークンは RSA-OAEP で暗号化して受け取る。Kiro Crew は CloudFront に直接さらさない。disable と delete で片付ける |
+| 接続 | `nakama aws open <n> [--internet] [--local-port <port>] [--no-auth] [--print-url] [--browser <cmd>] [--timeout <duration>]` | code-server をブラウザで開き、パスワードログインを自動通過する (ADR 0012)。既定は SSM のポート転送で、インスタンスの tunnel デーモンに転送を足して `http://localhost:8080` (`--local-port` で変更) を開く (ADR 0027)。`--internet` は CloudFront の URL を開く。パスワードを SSM から取得し、127.0.0.1 の one-shot ローカルページから `/login` へ top-level form POST する (METHOD A)。パスワード取得失敗・timeout 内未取得などで自動ログイン不能な場合は、理由を stderr に出して URL を開く動作へ退避し終了コード 0 (METHOD C fallback)。ランチャー不在/失敗のとき、SSM ではエラー (URL を表示しない)、`--internet` では URL を表示して終了コード 0。fatal (未存在・非 running・bare、`--internet` で distribution 未設定) はエラー。`--internet` で呼び出し元 IP が WAF allowlist に無い場合は警告 (中断しない)。パスワードはディスク・ログ・`-o json\|yaml` 出力に一切残さない |
 | 認証 | `nakama aws login [--remote] [--name <alias>]` | AWS Management Console のセッションを使いネイティブにサインイン (OAuth 2.0 authorization code + PKCE + DPoP、aws CLI 不要。ADR 0016)。ブラウザ起動 (不可なら URL 表示で待機継続) → 127.0.0.1 のコールバックで認可コード受領 (10 分タイムアウト、state 検証) → AWS CLI 互換キャッシュ (`~/.aws/login/cache/`) へ保存 → STS で識別確認 → nakama profile へ**自動 save & load**。`--remote` は SSH/headless 向けにブラウザの検証コード貼り付けで完了。`~/.aws/config` は変更しない。要 `SignInLocalDevelopmentAccess` ポリシー |
 | 診断 | `nakama aws doctor [-o json]` | 環境を読み取り専用で一括診断し、各項目を ok / warn / fail + 対処案内で表示する: プロキシ解決 (ADR 0015 の解決器) と AWS 到達性、TLS インスペクション検出 (ADR 0018 の検出エンジン再利用)、資格情報の解決元 (アカウント / identity / active profile)、自 IP の WAF 許可リスト登録、外向き通信 (egress。記録した NAT の方式、private の経路の向き先、NAT インスタンス / NAT Gateway の状態。経路の先が使えなければ fail、切り替えの残りや記録とのずれは warn。ADR 0026)、機能別の IAM 権限充足 (付録 A のマトリクスを SimulatePrincipalPolicy で判定し、機能ごとに ok / 不足アクションを表示)、ローカル tunnel 状態、nakama の版が最新か (`version --check` と同じ確認。古い・確認できないときは warn、開発ビルドは skip)。fail があれば終了コード非 0。資格情報未解決でもローカル診断は継続。機微情報は出力しない |
 | 診断 | `nakama version [--check]` | 版・コミット・ビルド日時を表示する (通信しない)。`--check` は GitHub の Releases API (`https://api.github.com/repos/ukaji3/nakama/releases/latest`) に問い合わせ、今の版・最新の版・リリースページの URL と、最新 / 古い / 手元の方が新しい / 開発ビルド (比較しない) のどれかを表示する。問い合わせの失敗 (遮断、レート制限、5 秒のタイムアウト、壊れた応答) は警告だけで、古い場合も含めて終了コードは 0 |
@@ -110,8 +110,8 @@
 - `--note <text>`: バックアップの自由記述メモ。最大 255 文字、Unicode 可 (日本語・空白可)。`backup note` では必須で、空文字の明示指定でメモ消去 (省略による無警告消去を防ぐ)。識別子ではないため一意性は不要
 - `-L <spec>` (tunnel 専用): `<localPort>:<remotePort>` または `<localPort>:<host>:<remotePort>`。各ポートは 1–65535。`<host>` 省略時は接続先 instance 自身。複数指定可 (転送ごとに SSM セッションを 1 本張る)。start 系呼び出しでは 1 つ以上必須
 - `--tty` (connect 専用): コマンド実行を対話 (PTY) モードにする。省略時は非対話。PTY ではリモートの終了コードを受け取れない (Session Manager の制約) ため、終了コードは 0 になる
-- `--retry <n>` (connect 専用): セッションが恒久的に切断された際の自動再接続の最大試行回数。0 以上の整数。省略時の既定は対話シェル = 5、コマンド実行モード (`--tty` 含む) = 0 (非冪等コマンドの再実行を避けるため)。明示指定した値はモード不問で尊重。`0` で無効。再接続は新規セッション (シェル状態は失われる) で、指数バックオフ (1s〜30s cap)。セッションが 60 秒以上安定してから切断された場合は試行回数をリセット。資格情報失効時は再試行せず `aws login` を促してエラー (詳細は ADR 0014)。`tunnel` の転送はフラグなしで同じポリシー (予算 5・バックオフ・安定リセット) を常に適用 (ADR 0017)
-- `open` のフラグ: `--no-auth` はパスワード取得と one-shot サーバを完全にスキップ。`--print-url` はブラウザを起動せず URL を表示 (auth 有効時は one-shot ログイン URL も表示し、timeout までローカルサーバを維持。headless / SSH 向け)。`--browser <cmd>` はブラウザ起動コマンドの上書き (URL は末尾引数として付加。`$BROWSER` 環境変数も尊重、優先度は `--browser` > `$BROWSER` > OS 既定)。`--timeout <duration>` は one-shot ページの取得待ち上限 (既定 30s)
+- `--retry <n>` (connect 専用): セッションが恒久的に切断された際の自動再接続の最大試行回数。0 以上の整数。省略時の既定は対話シェル = 5、コマンド実行モード (`--tty` 含む) = 0 (非冪等コマンドの再実行を避けるため)。明示指定した値はモード不問で尊重。`0` で無効。再接続は新規セッション (シェル状態は失われる) で、指数バックオフ (1s〜30s cap)。セッションが 60 秒以上安定してから切断された場合は試行回数をリセット。資格情報失効時は再試行せず `aws login` を促してエラー (詳細は ADR 0014)。`tunnel` の転送 (open / kirocrew が足したものを含む) はこのフラグの対象外で、回数の上限なく張り直す (ADR 0027)
+- `open` / `kirocrew` のフラグ: `--no-auth` は自動のサインインをスキップ (open はパスワード取得と one-shot サーバ、kirocrew の SSM ではトークンの受け渡し)。`--print-url` はブラウザを起動せず URL を表示 (auth 有効時は one-shot ログイン URL も表示し、timeout までローカルサーバを維持)。`--browser <cmd>` はブラウザ起動コマンドの上書き (URL は末尾引数として付加。`$BROWSER` 環境変数も尊重、優先度は `--browser` > `$BROWSER` > OS 既定)。`--timeout <duration>` は one-shot ページの取得待ち上限 (既定 30s)。`--internet` は CloudFront の経路を使う。`--local-port <port>` は SSM の転送のローカルポート (1–65535。既定は open が 8080、kirocrew が 5476)。`--internet` との併用はエラー。ポートが使用中ならエラーにし (別のポートへ逃げない)、nakama の別の転送が使っていればそのインスタンス名を示す。同じインスタンスの同じ先への転送が既にあれば、そのポートを使う (`--local-port` で別のポートを明示したらエラー)
 - connect の位置引数: `<name>` の後続をすべてリモートコマンドとして扱う (cobra `SetInterspersed(false)`)。`--retry` 等の nakama フラグは `<name>` より前に置く
 - `profile save --name <alias>`: alias が**別アカウント**の alias またはアカウント ID と衝突する場合はエラー (`profile load <alias>` の曖昧化防止)。自アカウントのエントリ上書きは可
 - `profile load/delete <account|alias>`: アカウント ID 完全一致を優先し、次に alias 一致。見つからない場合は保存済み候補一覧付きのエラー
@@ -134,12 +134,15 @@
 - Microsoft Marketplace は使用不可。code-server は Open VSX を使用 (上流仕様)
 - 外向き通信の中継 (ADR 0026): `gateway` (NAT Gateway) では、nakama が OS を管理するホストを public subnet に置かない。`instance` (NAT インスタンス) は、OS (カーネル、SSM エージェント、iptables) の更新が初回起動時と init の修理のときだけで、SG は VPC の CIDR からの全プロトコルを受け付け、全インスタンスの外向き通信が通る。攻撃面を減らすなら `gateway` を選ぶ (新しい環境の既定)
 - NAT インスタンスの IAM ロール (`nakama-nat-role`) は SSM の管理だけで Parameter Store を読めない。gateway に切り替えても残す (戻すときに使う)
+- ブラウザからの接続 (ADR 0027): `open` / `kirocrew` は既定で SSM のポート転送を使い、WAF の許可リストへの登録は要らない。転送のローカルポートは 127.0.0.1 と ::1 だけで待ち受けるが、同じ機械のほかのプロセスからは届く (code-server はパスワード、Kiro Crew はトークンを求める)。SSM 経由の Kiro Crew は要求をこの機械からとみなし、ブラウザから設定の変更と秘密情報の表示を許す。CloudFront の distribution と SG の CloudFront の許可は残るので、`--internet` を使わないなら許可リストを空にしておく (`acl delete all`) と CloudFront の経路は WAF ですべて拒否される
+- Kiro Crew のトークンは、SSM の経路でも 127.0.0.1 の 1 回限りのページから渡し、ブラウザのコマンドラインに載せない (期限内に読まれなかったときだけ、トークン付きの URL を直接開く)
 
 ### 5.2 可用性
 
 - 外向き通信の中継は単一 AZ (1a)。`gateway` は zonal の NAT Gateway (AWS が管理、常時稼働。ADR 0026)、`instance` は NAT インスタンス (`t4g.nano`, コスト優先。ADR 0007)
 - `instance` の NAT インスタンスの電源は code-server のライフサイクルに連動 (全停止時は自動停止)。`gateway` では NAT の電源を操作しない
 - 単点障害が発生しても再 `init` で復旧可能 (タグベースの冪等性。`failed` の NAT Gateway は init が作り直す)
+- SSM の転送 (open / kirocrew / tunnel) は、切断 (通信エラー、ネットワークの切り替え、スリープ、アイドルタイムアウト、インスタンスの停止と起動、資格情報の期限切れ) のあと、回数の上限なく張り直す。応答の返らない切断には、open / kirocrew の転送で最長およそ 1 分で気づく (ADR 0027)
 
 ### 5.3 観測性
 
@@ -153,6 +156,7 @@
 - `gateway` では `create` / `start` / `update` が NAT の起動を待たない
 - `create` 所要時間: 約 15〜20 分 (CloudFront propagation がボトルネック)
 - `delete` 所要時間: 約 15〜20 分 (CloudFront disable + delete)
+- SSM の転送は CloudFront より遅い (実測でセッション 1 本あたり約 750 KB/s。並行する接続の合計も同じ)。ブラウザの初回の読み込みに数秒から十数秒かかりうる (ADR 0027)
 
 ## 6. 状態管理
 
@@ -238,6 +242,8 @@
 
 32. 外向き通信の方式 (ADR 0026、設計 §8.28): 新しい環境で `nakama aws init` を実行すると、public subnet に NAT Gateway (EIP 付き) ができ、private の `0.0.0.0/0` がそれを向き、NAT インスタンスは作られない (料金の注記が出る)。記録の無い既存環境 (この版より前の init で作った環境) で `nakama aws init` を実行しても、NAT インスタンスのまま何も変わらない。`init --nat gateway` は確認を取り (稼働中のインスタンス名とセッションが切れることを表示。`--yes` で省略)、NAT Gateway が `available` になってから経路を張り替え、その後に NAT インスタンスを terminate して SG を削除する (IAM ロールは残る)。`init --nat instance` は NAT インスタンスを作って転送を確かめてから経路を張り替え、NAT Gateway を削除して EIP を解放する。どちらも、経路を張り替える前に失敗したら古い NAT が残り、init の再実行で完了する。同じ方式の init をもう一度実行しても何も変わらない。gateway の環境では、`create` / `start` / `update` / `restore` が NAT Gateway が `available` かを確かめ (使えなければ init を案内してエラー)、`stop` / `delete` などは NAT に触れない。`list --show-nat` は NAT Gateway の行と外向きの IP を、`doctor` の `egress` 行は方式・経路・NAT の状態を表示する。フェイクを相手に、両方向の切り替えの順序、NAT Gateway の作成の失敗、`failed` の NAT Gateway の作り直し、転送しない NAT インスタンスへの切り替えの失敗、2 回目の init を、テストで確かめる
 
+33. ブラウザからの接続 (ADR 0027、設計 §8.29): `nakama aws open <n>` は、インスタンスの tunnel デーモンに code-server への転送を足し (デーモンが無ければ起動し、同じ先への転送があれば使い回す)、`http://localhost:8080` (`--local-port` で変更) が応答してからブラウザを開いてパスワードログインを自動で通す。`nakama aws kirocrew <n>` は Kiro Crew (インスタンスの 127.0.0.1:5476) への転送で `http://localhost:5476` を開き、トークンでサインインさせる (`kirocrew enable` は不要、bare でも動く)。どちらも WAF の許可リストに依らず、`--internet` を付けたときだけ CloudFront を使う。ローカルポートが使用中ならエラーにし、nakama の別の転送ならそのインスタンス名を示す。ブラウザを起動できなければ、URL を表示せずにエラーにする。転送は、サーバー側の終了 (exit 0)、通信エラー、スロットリング、5xx、TargetNotConnected のあとも、回数の上限なくローカルポートを開いたまま張り直す。資格情報のエラーは 60 秒ごとに再試行し、`nakama aws login` で戻る。応答の返らないセッションは、ブラウザの接続があるあいだ HTTP の確認で検知して張り替える。5 分使われていない転送は張り直さず、次の接続で張る。code-server 4.107.0 以降のインスタンスでは、create と update が `cookie-suffix` にインスタンス名を設定する。`nakama aws delete` はこの機械の同名の tunnel デーモンを止める。plugin の待ち受けを模した本物のソケットを相手に、再接続・待ち・検知・idle・終了の条件を、テストで確かめる
+
 ## 付録 A. 機能別 IAM 権限マトリクス
 
 呼び出し側プリンシパルに必要な IAM アクションの機能別一覧。`internal/service/permissions.go` の表から生成される (受け入れ基準 19)。現在の資格情報でどの機能が使えるかは `nakama aws doctor` が同じ表に基づいて判定・表示する。
@@ -288,3 +294,5 @@
 | R10 | plugin 取り込みによるバイナリサイズ増 | PoC で実測し許容範囲を確認 |
 | R11 | Session Manager の独自プロトコル変更・コマンド終了コード伝播の制約 | 取り込み版を pin。終了コードの非互換は制限事項として扱う |
 | R12 | NAT インスタンスの攻撃面 (自前管理の OS、VPC 内からの到達、全外向き通信の経路) | ADR 0026 で NAT Gateway を選べるようにし、新しい環境の既定にした。NAT インスタンスを選んだ環境の強化 (SG の受信を絞る、定期的な更新) は別の Issue で扱う |
+| R13 | CloudFront の経路 (distribution、VPC Origin、SG の CloudFront の許可、code-server の `0.0.0.0:8080`) が、SSM を既定にしたあとも残る | ADR 0027 でブラウザの既定を SSM にした。CloudFront を作るかどうかをインスタンスごとに選べるようにする件は別に扱う。それまでは、`--internet` を使わないなら許可リストを空にしておく |
+| R14 | SSM の転送の速度 (セッション単位で約 750 KB/s) と、Session Manager 側の切断 (アイドルタイムアウト、WebSocket の作り直し) | 転送はデーモンが張り直し、ローカルポートは閉じない (ADR 0027)。速度が足りなければ、転送 1 本に複数のセッションを張る案を別に検討する |

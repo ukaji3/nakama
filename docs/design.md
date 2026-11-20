@@ -51,6 +51,13 @@
 
 - `--bare` のインスタンスは、code-server・VPC Origin・CloudFront distribution・パスワードを持たない (§8.17)。パスワードと distribution 系のメタキーも書かない。
 - `nakama aws kirocrew enable` は、インスタンスごとに Kiro Crew 専用の distribution をもう 1 つ作る。オリジンは同じ VPC Origin (code-server:8080) で、WAF も共有する (§8.19、ADR 0020)。
+- 上の CloudFront の経路は `open --internet` / `kirocrew --internet` のときに使う。既定では、ブラウザは手元の tunnel デーモンが持つ `localhost:<ポート>` から SSM のポート転送でインスタンスに届く (受信の規則は使わない。§8.29、ADR 0027):
+
+```
+[User Browser] ──HTTP──> [localhost:8080 / :5476 (tunnel デーモン)] ──SSM (HTTPS)──> [SSM エージェント]
+                                                                                 ├── code-server:8080
+                                                                                 └── Kiro Crew 127.0.0.1:5476
+```
 
 ## 2. パッケージ構成
 
@@ -403,45 +410,48 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 
 ### 8.10 `nakama aws open`
 
-code-server の URL をブラウザで開き、パスワードログインを自動通過する
+code-server をブラウザで開き、パスワードログインを自動通過する
 (根拠と代替案の比較は ADR 0012)。code-server の認証は cookie のみで
 URL トークン認証が存在せず、CLI はブラウザの cookie store に書き込めない
 ため、「ブラウザ自身に `/login` へ top-level form POST させる」方式を取る。
+
+既定の送信先は SSM のポート転送 (`http://localhost:<ポート>`) で、CloudFront
+(`https://<domain>`) は `--internet` のときだけ使う (ADR 0027、§8.29)。以下の
+手順は両方に共通で、違いは §8.29 に書く。
 
 1. **preflight**: `GetInstanceInfo(ctx, name, showPassword)` で情報取得
    (`--no-auth` 時は showPassword=false)。パスワード読取のみが失敗した
    場合は showPassword=false で再取得し、成功すれば自動ログインだけを
    スキップして継続 (METHOD C fallback)。インスタンス未存在は即エラー
-2. **fatal チェック**: distribution domain 未設定 → エラー (provisioning
-   中の可能性を案内)。state が running 以外 → エラー
-   (`nakama aws start <name>` を案内)
-3. **WAF soft check**: `IPDiscoverer.PublicIPv4` + `ListACL` で呼び出し元
+2. **fatal チェック**: `--internet` で distribution domain 未設定 → エラー
+   (provisioning 中の可能性を案内)。bare → エラー。state が running 以外 →
+   エラー (`nakama aws start <name>` を案内)
+3. **WAF soft check** (`--internet` のときだけ): `IPDiscoverer.PublicIPv4` + `ListACL` で呼び出し元
    IP が allowlist に**CIDR containment** (net/netip) で含まれるか確認。
    未収載なら stderr に警告 (`nakama aws acl add` を案内)。チェック自体の
    失敗は debug ログのみで続行 (絶対に open を壊さない)
 4. **METHOD A (既定)**: crypto/rand 128 bit の URL-safe トークンを採番し、
    `127.0.0.1:0` (カーネル割当ポート) に one-shot HTTP サーバを起動。
    `/<token>` だけが自動 submit フォーム
-   (`POST https://<domain>/login?to=/`、hidden の `password` / `base=.` /
-   `href=https://<domain>/login` は code-server の対話ログインフォームと
-   同一構成) を **1 回だけ**返す (他パスは 404、再取得は 410 Gone)。
+   (`POST <origin>/login?to=/`、hidden の `password` / `base=.` /
+   `href=<origin>/login` は code-server の対話ログインフォームと
+   同一構成。`<origin>` は `http://localhost:<ポート>` か `https://<domain>`) を **1 回だけ**返す (他パスは 404、再取得は 410 Gone)。
    `Cache-Control: no-store` / `Referrer-Policy: no-referrer` 付与、
    html/template でエスケープ、外部リソース無し。ブラウザを one-shot URL
    で起動し、ページ配信を待つ (上限 `--timeout`, 既定 30s)。配信後は
    猶予付き Shutdown。JS 無効環境向けに可視の submit ボタンも置く
 5. **METHOD C fallback**: パスワード取得失敗 / listener bind 失敗 /
-   ランチャー不在・起動失敗 (`errors.Is(err, exec.ErrNotFound)` で判別) /
-   timeout 内未取得のいずれでも、プレーン URL を開く (ランチャー不在時は
-   stdout に表示する) 動作へ退避。理由と
-   `nakama aws info <name> --show-password` の案内を stderr に出し、
-   URL を開けた/表示できた場合は終了コード 0
+   timeout 内未取得のいずれでも、プレーン URL を開く動作へ退避。理由と
+   `nakama aws info <name> --show-password` の案内を stderr に出す。
+   ランチャー不在・起動失敗のときは、`--internet` では URL を stdout に表示して終了コード 0、
+   SSM では URL を表示せずにエラーにする (`--browser` を案内。ADR 0027 の Decision 10)
 6. **フラグ**: `--no-auth` (METHOD C を明示利用)、`--print-url`
    (ブラウザ非起動。auth 有効時は plain URL と one-shot URL の両方を表示し
-   timeout までサーバ維持。headless / SSH 向け)、`--browser <cmd>`
+   timeout までサーバ維持)、`--browser <cmd>`
    (起動コマンド上書き。優先度 `--browser` > `$BROWSER` > OS 既定
    (darwin=`open`, linux=`xdg-open`, windows=`rundll32` best effort))、
-   `--timeout <duration>`
-7. **出力**: `-o json|yaml` は name / url / method (`auto-login`|`plain`) /
+   `--timeout <duration>`、`--internet`、`--local-port <port>` (SSM のときだけ)
+7. **出力**: `-o json|yaml` は name / url / via (`ssm`|`internet`) / local_port / method (`auto-login`|`plain`) /
    opened / auto_login (`completed`|`skipped`|`timeout`) / note の
    構造体。**パスワードはいかなる出力にも含めない**
 
@@ -504,22 +514,22 @@ vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` ま�
   │   └ ローカルポートの空き検査           │   loop: ssm:StartSession (Port ドキュメント)
   ├ tunnel-daemon を detach 起動           │        → session-runner spawn (payload pipe /
   │   (unix: Setsid / windows:            │           exit 74 ゲート。§8.11 と同一機構)
-  │    DETACHED_PROCESS)                  │        → 恒久切断: バックオフ再接続 (予算 5,
+  │    DETACHED_PROCESS)                  │        → 子の終了: バックオフ再接続 (上限なし,
   ├ readiness ポーリング                   │           60s 安定でリセット) / 認証エラー:
-  │   (状態ファイル + 制御 ping,           │           当該転送を dead(auth) に遷移
+  │   (状態ファイル + 制御 ping,           │           60 秒ごとに再試行 (§8.29)
   │    タイムアウト付き)                   ├ ログ: unix=syslog / windows=Event Log (OS に
   └ 転送一覧を表示して即終了               │   ローテーション委譲)。子の stdout/stderr も回収
                                           └ stop: 全子終了 → TerminateSession (best-effort)
                                              → 状態ファイル削除 → exit
 ```
 
-- **SSM ドキュメント**: `-L L:R` → `AWS-StartPortForwardingSession` (`portNumber`, `localPortNumber`)、`-L L:host:R` → `AWS-StartPortForwardingSessionToRemoteHost` (+`host`)。1 セッション 1 ポートのため複数 `-L` はセッションを転送数ぶん並行に張る。ローカル listener は vendored plugin (session-runner 子) が bind する
-- **一般エラー終了の再試行** (Issue #45): exit 74 ゲートは「確立済みチャネルの喪失」にしか発火せず、再接続時のセッション確立失敗 (`Execute` → `OpenDataChannel` エラー。スリープ復帰直後の WSS dial 失敗など) は一般エラー (exit 1) になる。tunnel の forward 監視は `RetryChildFailures` で非 0・非 74 の子終了も同じ再接続予算の対象とする (バックオフ・60s 安定リセットも共通)。予算枯渇時は dead (Detail に exit code と枯渇を明記)。`connect` はこのフラグを使わない — 子の終了コードはリモートコマンドの終了コードとして無変更で伝搬する必要がある (§8.11 / ADR 0014)
+- **SSM ドキュメント**: `-L L:R` → `AWS-StartPortForwardingSession` (`portNumber`, `localPortNumber`)、`-L L:host:R` → `AWS-StartPortForwardingSessionToRemoteHost` (+`host`)。1 セッション 1 ポートのため複数 `-L` はセッションを転送数ぶん並行に張る。利用者のローカルポートはデーモンが持ち、`localPortNumber` にはデーモンが選んだ別の空きポートを渡して中継する (ADR 0027、§8.29)
+- **再接続**: 転送ごとの監督は `forwardRunner` (§8.29)。exit 0 を含む子の終了すべて、StartSession の通信エラー・5xx・スロットリングで、回数の上限なく張り直す。Issue #45 の `RetryChildFailures` はこれに含まれたので無くなった
 - **in-place resume の資格情報** (Issue #49): vendored plugin の ResumeSession 制御プレーンとデータチャネル再署名は上流では default 資格情報チェーンを使うため、nakama login のみの環境では resume が構造的に失敗する。session-runner が `NakamaAWSConfigProvider` (NAKAMA PATCH) に nakama 解決済み `aws.Config` (プロキシ対応 HTTPClient 込み) を注入し、WebSocket 断のたびにフルセッション置換へ落ちずに in-place resume が機能するようにする (詳細は third_party/session-manager-plugin/PINNED.md)
 - **stop の経路**: 制御チャネル経由のグレースフル停止が正 (Windows の外部 Kill は子を道連れにしないため)。unix ではデーモンが SIGTERM でも同じ停止経路に合流する
 - **横断一覧と提案** (Issue #55): `tunnel status` の名前省略時は状態ファイルディレクトリを走査し (`listTunnelStateNames`)、各インスタンスへ `GetTunnelStatus` を実行して NAME 列付きで一覧する。デーモン不応答は `NoTunnelError` として stale 表示 (単一指定時と同じ掃除が働く)。`tunnel suggest <n>` は `runRemoteScript` で `ss -ltnH` (無ければ `netstat -ltn`) を実行し、ポート重複の畳み込み・プロセス名付きエントリ優先・昇順ソートを経て `-L` 案を出す。22 番は `ssh` の案内に回し提案コマンドから除外。`suggest` も曖昧性回避のため予約インスタンス名に追加
-- **status**: CLI が状態ファイル → `GET /status` で転送ごとの {spec, state (active/reconnecting/dead), 直近エラー, 開始時刻, 再接続消費数} を取得して表示。デーモン不在 (ping 不達) なら stale 掃除の上「転送なし」を表示
-- **restart**: 状態ファイルに記録された転送スペックのまま stop → start を合成 (`-L` は受け付けない。変更は stop → start で)。スペックの再検証は stop の**前**に行い、壊れた状態ファイルのために生きているデーモンを止めない。新デーモンは CLI プロセスの現行資格情報チェーンで起動するため、資格情報失効で dead(auth) になった転送の復旧手段 (`nakama aws login` → `tunnel restart <n>`)。状態ファイルが無い場合はエラー (推測で張らない)
+- **status**: CLI が状態ファイル → `GET /status` で転送ごとの {spec, purpose, state (connecting/active/reconnecting/idle/dead), 直近エラー, 直近の AWS のエラーコード, 開始時刻, 再接続の回数} を取得して表示。デーモン不在 (ping 不達) なら stale 掃除の上「転送なし」を表示
+- **restart**: 状態ファイルに記録された転送スペック (用途付きの形を含む) のまま stop → start を合成 (`-L` は受け付けない。変更は stop → start で)。スペックの再検証は stop の**前**に行い、壊れた状態ファイルのために生きているデーモンを止めない。新デーモンは CLI プロセスの現行資格情報チェーンと nakama の版で起動する。資格情報のエラーは動いているデーモンが 60 秒ごとに再試行するので、主な用途は古い版のデーモンの入れ替えと dead の転送の復旧。状態ファイルが無い場合はエラー (推測で張らない)
 - **予約名**: `start` / `stop` / `status` / `restart` は `tunnel <name>` 省略形と曖昧になるため create の新規名として拒否 (`service.ValidateNewInstanceName`。既存インスタンス操作の `ValidateInstanceName` は不変)
 - **転送量計測は非対応** (要件から除外。ADR 0017 Alternatives 6)
 
@@ -604,7 +614,7 @@ code-server のパス転送 (`/proxy/5476/`) では、Kiro Crew の Host 検査�
 - **enable** (冪等、途中から再実行できる): 次の順に進む。① インスタンスの確認 (bare は拒否、停止中は `start` を案内) → ② 既存の distribution の構成から VPC Origin と WAF を読む → ③ Kiro Crew 用 distribution を作り、**作った直後に ID とドメインをメタデータへ書く** → ④ Run Command でインスタンス側を設定する (nginx の導入と設定、`VSCODE_PROXY_URI` を固定する systemd drop-in、`config.yaml` の管理ブロック、code-server の再起動。結果は `NAKAMA_KIROCREW_OK` / `NAKAMA_KIROCREW_ERROR` で返す) → ⑤ Function を作成または更新して LIVE に公開 → ⑥ 既存の distribution に behavior を足す → ⑦ 2 つの distribution が Deployed になるのを並行して待つ。④ が失敗したら ⑥ は行わないので、壊れた設定へ誘導されることはない
 - **disable / delete**: disable は、behavior を外して反映を待つ → Function を削除する (CloudFront が使用中と返す間は再試行) → Kiro Crew 用 distribution を削除する → インスタンスが起動していれば後片付けのスクリプトを実行する (停止中なら飛ばして、そのことを知らせる) → 最後にメタデータを消す、の順に進む。delete は、Kiro Crew 用 distribution を**既存の distribution と VPC Origin より先に**消し (どちらも同じ VPC Origin を参照しているため)、Function は既存の distribution を消した後に消す
 - **トークン**: `MintKiroCrewToken` が、リクエストのたびに RSA-4096 の鍵を作り、公開鍵を埋め込んだスクリプトを Run Command で実行する。スクリプトは `kirocrew token` の出力からループバックの URL を取り出し、`openssl pkeyutl` (OAEP、SHA-256、MGF1 も SHA-256) で暗号化して `NAKAMA_KIROCREW_TOKEN_RSA <base64>` として返す。復号した値は `[A-Za-z0-9._-]` の 20〜1024 バイトかを確かめ、エラーメッセージにも値を含めない。Run Command の成功ログには、出力の中身を書かずバイト数だけを DEBUG で出す
-- **ブラウザの起動**: 1 回限りログインページ (ADR 0012) を `newOneShotLoginServerFor(…, loginTarget{domain, label, extra})` に汎用化した。Kiro Crew では送信先を `https://<crew>/login?to=/&token=…`、href を crew にする。`open` が生成する HTML は変わっていない (テストで固定)。`--no-auth` を付けると `https://<crew>/?token=…` を直接開くので、code-server のログイン画面が先に出る
+- **ブラウザの起動**: 1 回限りログインページ (ADR 0012) を `newOneShotLoginServerFor(…, loginTarget{origin, label, extra})` に汎用化した。Kiro Crew では送信先を `https://<crew>/login?to=/&token=…`、href を crew にする。`open` が生成する HTML は変わっていない (テストで固定)。`--no-auth` を付けると `https://<crew>/?token=…` を直接開くので、code-server のログイン画面が先に出る。以上は `--internet` のときの動きで、既定の SSM の経路は §8.29
 - **Ports パネル**: code-server は、`proxy-domain` があって `VSCODE_PROXY_URI` が未設定だと、`VSCODE_PROXY_URI=//{{port}}.<proxy-domain>` を自分で設定する (`src/node/cli.ts`)。このままでは Ports パネルとターミナルのリンクがすべて `<port>.kirocrew.nakama.internal` を指してしまう。そこで enable では、code-server を再起動する前に drop-in (`/etc/systemd/system/code-server@ubuntu.service.d/nakama-kirocrew.conf`) を置き、`VSCODE_PROXY_URI=./proxy/{{port}}/` (code-server 自身の既定値) に固定する。利用者が `VSCODE_PROXY_URI` を自分で設定していれば触らない。disable は drop-in を消し、code-server の再起動は 1 回にまとめる
 - **メタデータ**: `/nakama/<名前>/meta/kirocrew-distribution-id` と `kirocrew-distribution-domain`。`info` は後者から `kirocrew_url` を表示する
 - **予約名**: `enable` と `disable` はサブコマンド名なので、インスタンス名として予約する
@@ -710,6 +720,32 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
 - **古い版との混在** (ADR 0026 の Decision 8): NAT Gateway の名前は `nakama-natgw` のまま。ADR 0026 より前の版の init は、この NAT Gateway を削除して NAT インスタンスへ戻す。新しい版の doctor が記録とのずれを warn で知らせ、`init` で gateway に戻せる
 - **権限**: 付録 A。init に `ec2:AllocateAddress` / `ec2:CreateNatGateway` / `ec2:DeleteSecurityGroup` / `ec2:TerminateInstances`。`egressActions` (create / start / update / restore) と `natLookupActions` (connect / ssh / tunnel) と list / doctor に `ec2:DescribeNatGateways`。doctor に `ec2:DescribeRouteTables` / `ec2:DescribeInstances` / `ssm:GetParameter`
 - **テスト**: `init_egress_test.go` の状態を持つフェイク (NAT インスタンス、SG、経路表、NAT Gateway、EIP。変更の呼び出しを順に記録) で、両方向の切り替えの順序、失敗時に古い NAT が残ること、`failed` の NAT Gateway の作り直し、2 回目の init、`initIAM` の NAT 用ロールを確かめる。`nat_mode_test.go` は方式の決め方、`egress_test.go` は `InspectEgress` と doctor の判定、`nat_instance_test.go` は `ensureEgress` と電源の再調整を確かめる。実際の AWS での確認は手動 (§9)
+
+### 8.29 ブラウザからの接続を SSM で — `open` / `kirocrew` と転送の監督 (ADR 0027 / Issue #118)
+
+`open` と `kirocrew` は、既定でインスタンスの tunnel デーモン (§8.12) に転送を足し、`http://localhost:<ポート>` をブラウザで開く。CloudFront の経路 (§8.10、§8.19) は `--internet` のときだけ。
+
+```
+ブラウザ ─ http://localhost:8080 (127.0.0.1 / ::1)
+  → tunnel デーモン (forwardRunner。ポートを持ち続け、接続を中継する)
+  → 127.0.0.1:<空きポート> (session-runner 子の plugin。セッションごとに選び直す)
+  → SSM (AWS-StartPortForwardingSession) → インスタンスの code-server:8080 / Kiro Crew 127.0.0.1:5476
+```
+
+- **転送の追加** (`EnsureBrowserForward`、`tunnel_browser.go`): 状態ファイルのデーモンが応答すれば、同じリモートポート (ホスト指定なし) の dead でない転送を再利用する (`--local-port` の明示と食い違えば `ErrLocalPortMismatch`)。無ければ `POST /forwards` で `code-server=8080:8080` / `kirocrew=5476:5476` の形の転送を足す (404 は古いデーモン → `tunnel restart` を案内)。デーモンが無ければ `StartTunnel` で起動する。足す前に、ポートが空いているかを 127.0.0.1 と ::1 で確かめ、ふさがっていれば状態ファイルからその転送のインスタンスを探して示す (`LocalPortInUseError`)。その後、ローカルポート経由の HTTP (`/healthz` / `/api/health`) が応答するまで最大 60 秒待つ。dead になれば理由を返し、時間切れでは最後の理由と、`LastErrorCode` が TargetNotConnected なら NAT の案内を返す
+- **デーモン** (`tunnel_daemon.go`): 転送ごとに `startForward` がローカルポートを bind し (`listenLoopback`。::1 が使える機械で ::1 がふさがっていれば使用中)、`forwardRunner` を動かす。同じローカルポートの dead の転送は置き換え、生きている転送とは衝突 (409)。足した転送は状態ファイルに書き直す (`rewriteTunnelState`。トークンが一致するときだけ、一時ファイル + rename)。起動時の転送の bind に失敗したら、その転送を dead にして続ける。子の出力は転送ごとの `lineWriter` で OS のログへ
+- **forwardRunner** (`tunnel_forward.go`): 
+  - セッション 1 回: instance ID を読む → 空きポートを選ぶ → StartSession → 子を起動 (`SSM_PLUGIN_DISCONNECT_EXIT_CODE` 付き) → 空きポートに接続できるまで待つ (30 秒、200 ms ごと) → 接続を中継する → 子が終わるか検知が失敗するまで
+  - 中継: 届いた接続はセッションができるまで最大 30 秒待ち、そのセッションの世代に結び付く。セッションが終わると、その世代の接続を閉じる。待っている接続は残す
+  - 判断: 子の終了はすべて再試行。StartSession と instance ID の読み取りの失敗は `classifyForwardError` (応答なし・TargetNotConnected・スロットリング・5xx・429 → 再試行、資格情報 → 60 秒ごと、その他の 4xx → dead)。instance ID が無ければ dead。待ち時間は `backoffDelay` (1 秒から 30 秒)、60 秒以上使えたら 1 秒に戻す。再試行の前に `proxy.Reload`
+  - 必要なときだけ: ローカルの接続が開いているか、5 分以内に見たときだけ張り直す。そうでなければ `idle` で次の接続を待つ
+  - 検知: 用途 (`ForwardPurpose`) のある転送で、接続が開いているあいだ 15 秒ごとに HTTP (Host `localhost:<ポート>`) を送り、10 秒で失敗、3 回続いたら子を止め、TerminateSession してから張り直す。確立の時間切れと確立前の子の失敗、子の一般的な失敗のあとも TerminateSession する
+  - 時間の値はパッケージ変数で、テストが短くする
+- **open の SSM 経路** (`runAWSOpenSSM`): `GetInstanceInfo` (bare と停止中は拒否。distribution は要らない) → `EnsureBrowserForward` → 1 回限りのページの送信先を `http://localhost:<ポート>/login` にした METHOD A → METHOD C。ブラウザを起動できなければ (`browserLaunchError`) URL を出さずにエラー。WAF の確認はしない
+- **kirocrew の SSM 経路** (`runKirocrewOpenSSM`): `GetInstanceInfo` (停止中は拒否。bare も可) → `EnsureBrowserForward` → `MintKiroCrewToken` (`readKirocrewInstance` は bare を拒否しない) → 1 回限りのページ (`tokenPageTemplate`、`GET http://localhost:<ポート>/` に hidden の `token`)。期限内に読まれなければ `http://localhost:<ポート>/?token=…` を直接開く。`--no-auth` はトークン無しで開く。`kirocrew enable` / `GetKiroCrewWeb` は使わない
+- **Cookie**: user data と update の `nakama_set_cookie_suffix` (`internal/userdata/cookie_suffix.sh`) が、code-server 4.107.0 以降の config.yaml に `cookie-suffix: <名前>` を足す (既にあれば触らない)。restore は config.yaml のパスワードの行だけを替えるので、そのまま残る
+- **delete**: 最後に `stopLocalTunnel` でこの機械の同名のデーモンを止める (失敗は警告)
+- **テスト**: `tunnel_forward_test.go` (本物のソケットで plugin を模し、再接続・待ち・検知・idle を確かめる)、`tunnel_browser_test.go`、`tunnel_daemon_test.go`、`aws_open_ssm_test.go`、`instance_update_run_test.go` の cookie-suffix。パッケージの `TestMain` は tunnel の状態ディレクトリを一時ディレクトリに向け、テストが利用者のデーモンに触れないようにする
 
 ## 9. テスト戦略
 

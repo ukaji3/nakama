@@ -130,7 +130,7 @@ are new. This takes about 15-20 minutes (CloudFront); the instance is left stopp
 <p>作り直しには、<code>create</code> と同じく 15〜20 分ほどかかります。終わったら <code>nakama aws start dev01</code> で起動し、<code>nakama aws open dev01</code> で開いてください。</p>
 <ul>
   <li><strong>そのまま戻るもの</strong>: ディスクの中身 (コード、設定、入れたソフトウェア)。ソフトウェアは入れ直さないので、バックアップを取ったときの版のままです。最新にするには <code>nakama aws update dev01</code> を使います。<code>ssh</code> の接続先の鍵 (ホスト鍵) も同じなので、<code>nakama aws ssh setup</code> で作った設定はそのまま使えます。</li>
-  <li><strong>新しくなるもの</strong>: URL と code-server のパスワード。<code>open</code> はパスワードを自動で入れるので、いつもどおり開けます。ブラウザのブックマークは作り直してください。Kiro Crew の画面を使っていた場合は、<code>nakama aws kirocrew enable dev01</code> をもう一度実行します。</li>
+  <li><strong>新しくなるもの</strong>: CloudFront の URL と code-server のパスワード。<code>open</code> はパスワードを自動で入れるので、いつもどおり開けます。<code>--internet</code> で開いていた場合は、ブラウザのブックマークを作り直してください。Kiro Crew の画面を <code>--internet</code> で使っていた場合は、<code>nakama aws kirocrew enable dev01</code> をもう一度実行します。</li>
   <li><strong>大きさと種類</strong>: バックアップを取ったときのインスタンスタイプと種類 (<code>--bare</code> かどうか) で作ります。<code>--instance-type</code> で別のタイプにもできますが、<code>t3</code> (Intel/AMD) と <code>t4g</code> (ARM) のように CPU の種類が違うタイプにはできません。</li>
 </ul>
 

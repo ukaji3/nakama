@@ -115,8 +115,8 @@ KNOWN_FLAGS = {
     "nakama aws acl prune": {"--older-than", "--yes", "-y"},
     "nakama aws list": {"--show-nat"},
     "nakama aws info": {"--show-password"},
-    "nakama aws open": {"--no-auth", "--print-url", "--browser", "--timeout"},
-    "nakama aws kirocrew": {"--no-auth", "--print-url", "--browser", "--timeout"},
+    "nakama aws open": {"--no-auth", "--print-url", "--browser", "--timeout", "--internet", "--local-port"},
+    "nakama aws kirocrew": {"--no-auth", "--print-url", "--browser", "--timeout", "--internet", "--local-port"},
     "nakama aws connect": {"--tty", "--retry"},
     "nakama aws ssh setup": {"--identity", "--no-key", "--port"},
     "nakama aws ssh proxy": {"--port"},
@@ -139,6 +139,7 @@ VALUE_FLAGS = {
     "--code-server-version", "--with-role", "--label", "--note", "--keep",
     "--ebs", "--retry", "--identity", "--port", "--timeout", "--browser",
     "--shell", "--output", "-o", "-L", "--forward", "--older-than", "--nat",
+    "--local-port",
 }
 
 # 名前の後ろに任意の外部コマンドを取るコマンド (それ以降は nakama の
