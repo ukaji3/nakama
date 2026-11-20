@@ -43,5 +43,5 @@
   <text x="768" y="314" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#111827">開発サーバーを見る</text>
   <rect x="25" y="350" width="870" height="55" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="2" />
   <text x="460" y="372" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">4 つとも既定は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)</text>
-  <text x="460" y="392" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">open / kirocrew に --internet を付けたときだけ CloudFront 経由になり、IP の許可が要ります</text>
+  <text x="460" y="392" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">CloudFront を足した環境 (cloudfront add) で --internet を付けたときだけ、IP の許可が要ります</text>
 </svg>

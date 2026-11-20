@@ -95,17 +95,20 @@
   <tbody>
     <tr>
       <td><code>nakama aws create</code></td>
-      <td>開発環境を作成</td>
+      <td>開発環境を作成 (CloudFront は作らない)</td>
       <td>
         <code>--name &lt;名前&gt;</code> (必須)、<code>--instance-type &lt;型&gt;</code> (必須)、
+        <code>--cloudfront</code> (CloudFront の入口も作る。15〜20 分)、
         <code>--bare</code>、<code>--preset &lt;名前&gt;</code>、<code>--setup &lt;パス|https URL&gt;</code>、
         <code>--dotfiles &lt;git URL&gt;</code>、<code>--code-server-version &lt;版&gt;</code>、
         <code>--with-admin</code>、<code>--with-role &lt;ロール名&gt;</code>、<code>--show-password</code>、
         <code>--no-kiro</code> (Kiro CLI / Kiro Crew の既定導入をスキップ)
       </td>
     </tr>
+    <tr><td><code>nakama aws cloudfront add &lt;名前&gt;</code></td><td>CloudFront の入口 (<code>open --internet</code> 用) を足す (約 5 分。環境の起動が必要。何度実行しても同じ結果)</td><td>—</td></tr>
+    <tr><td><code>nakama aws cloudfront delete &lt;名前&gt;</code></td><td>CloudFront の入口を外す (Kiro Crew の分も。環境は残る)</td><td><code>-y, --yes</code></td></tr>
     <tr><td><code>nakama aws list</code></td><td>一覧表示</td><td><code>--show-nat</code> (中継役の NAT インスタンス / NAT ゲートウェイも、外向きの IP とともに表示)</td></tr>
-    <tr><td><code>nakama aws info &lt;名前&gt;</code></td><td>詳細表示</td><td><code>--show-password</code></td></tr>
+    <tr><td><code>nakama aws info &lt;名前&gt;</code></td><td>詳細表示 (CloudFront の有無と URL を含む)</td><td><code>--show-password</code></td></tr>
     <tr><td><code>nakama aws setup rerun &lt;名前&gt;</code></td><td>セットアップを再実行</td><td><code>--setup</code>、<code>--dotfiles</code>、<code>--preset</code></td></tr>
   </tbody>
 </table>
@@ -117,7 +120,7 @@
   <thead><tr><th scope="col">コマンド</th><th scope="col">説明</th><th scope="col">主なオプション</th></tr></thead>
   <tbody>
     <tr><td><code>nakama aws kirocrew &lt;名前&gt;</code></td><td>Kiro Crew の画面を SSM 経由で開く (自動サインイン、<code>enable</code> 不要)</td><td><code>--local-port &lt;番号&gt;</code> (既定 5476)、<code>--internet</code> (CloudFront 経由)、<code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code></td></tr>
-    <tr><td><code>nakama aws kirocrew enable &lt;名前&gt;</code></td><td>Kiro Crew の画面を CloudFront 経由 (<code>--internet</code>) で開く仕組みを用意する (最初に 1 回)</td><td>—</td></tr>
+    <tr><td><code>nakama aws kirocrew enable &lt;名前&gt;</code></td><td>Kiro Crew の画面を CloudFront 経由 (<code>--internet</code>) で開く仕組みを用意する (最初に 1 回。<code>cloudfront add</code> が先に要る)</td><td>—</td></tr>
     <tr><td><code>nakama aws kirocrew disable &lt;名前&gt;</code></td><td>上の仕組みを取り外す</td><td>—</td></tr>
     <tr><td><code>nakama aws open &lt;名前&gt;</code></td><td>ブラウザで開く (SSM 経由、自動ログイン)。入口は裏で動き続け、切れても自動でつなぎ直す</td><td><code>--local-port &lt;番号&gt;</code> (既定 8080)、<code>--internet</code> (CloudFront 経由)、<code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code> (既定 30s)</td></tr>
     <tr><td><code>nakama aws connect &lt;名前&gt; [コマンド...]</code></td><td>ターミナルに入る / コマンド実行。<strong>フラグは名前より前</strong>に置きます (名前より後ろは環境側で実行するコマンドとして扱われます)。コマンド実行は環境側の終了コードで終わります (nakama の失敗は 255)</td><td><code>--tty</code>、<code>--retry &lt;回数&gt;</code> (対話は既定 5、コマンド実行は既定 0)</td></tr>
@@ -145,8 +148,8 @@
     <tr><td><code>nakama aws backup list [名前]</code></td><td>バックアップ一覧 (省略で全件)</td><td>—</td></tr>
     <tr><td><code>nakama aws backup note &lt;名前&gt;</code></td><td>メモを付ける</td><td><code>--label</code> (必須)、<code>--note</code> (必須)</td></tr>
     <tr><td><code>nakama aws backup delete &lt;名前&gt;</code></td><td>バックアップ削除</td><td><code>--label</code> (必須)</td></tr>
-    <tr><td><code>nakama aws restore &lt;名前&gt;</code></td><td>バックアップから復元 (上書き)。環境を削除済みなら、同じ名前で作り直す (URL とパスワードは新しくなる)。<strong>完了後は停止状態</strong>なので <code>start</code> が必要</td><td><code>--label &lt;名札&gt;</code> (既定は最新)、<code>-y, --yes</code>。削除済みのときだけ: <code>--instance-type &lt;型&gt;</code>、<code>--bare</code>、<code>--with-admin</code>、<code>--with-role &lt;ロール&gt;</code></td></tr>
-    <tr><td><code>nakama aws delete &lt;名前&gt;</code></td><td>環境を削除 (15〜20 分)。土台は残ります</td><td><code>--force</code>、<code>-y, --yes</code></td></tr>
+    <tr><td><code>nakama aws restore &lt;名前&gt;</code></td><td>バックアップから復元 (上書き)。環境を削除済みなら、同じ名前で作り直す (パスワードは新しくなる。CloudFront は <code>--cloudfront</code> のときだけ作り、URL は新しくなる)。<strong>完了後は停止状態</strong>なので <code>start</code> が必要</td><td><code>--label &lt;名札&gt;</code> (既定は最新)、<code>-y, --yes</code>。削除済みのときだけ: <code>--instance-type &lt;型&gt;</code>、<code>--bare</code>、<code>--with-admin</code>、<code>--with-role &lt;ロール&gt;</code>、<code>--cloudfront</code></td></tr>
+    <tr><td><code>nakama aws delete &lt;名前&gt;</code></td><td>環境を削除 (CloudFront があれば 15〜20 分)。土台は残ります</td><td><code>--force</code>、<code>-y, --yes</code></td></tr>
   </tbody>
 </table>
 </div>
@@ -215,9 +218,17 @@ nakama aws open dev01</code></pre>
 nakama aws open dev01
 nakama aws stop dev01       # 使い終わり</code></pre>
 
+<p class="cmd-caption">CloudFront 経由で開きたいとき (環境ごとに 1 回)</p>
+<pre><code>nakama aws cloudfront add dev01
+nakama aws acl add          # いまの IP を追加
+nakama aws open --internet dev01</code></pre>
+
 <p class="cmd-caption">CloudFront 経由で開く場所 (回線) を変えたとき</p>
 <pre><code>nakama aws acl add          # いまの IP を追加
 nakama aws open --internet dev01</code></pre>
+
+<p class="cmd-caption">CloudFront の入口が要らなくなったとき</p>
+<pre><code>nakama aws cloudfront delete dev01</code></pre>
 
 <p class="cmd-caption">サインインの期限が切れたとき</p>
 <pre><code>nakama aws login            # 転送と open / kirocrew の入口は、これで自動でつなぎ直します</code></pre>
@@ -234,7 +245,7 @@ nakama aws restore dev01 --label before-change   # 戻したいとき (上書き
 
 <p class="cmd-caption">消してしまった環境を戻す</p>
 <pre><code>nakama aws backup list                           # 削除した環境のバックアップも出る
-nakama aws restore dev01                         # 同じ名前で作り直す (15〜20 分)
+nakama aws restore dev01                         # 同じ名前で作り直す (CloudFront は作らない。要るなら --cloudfront)
 nakama aws start dev01</code></pre>
 
 <p class="cmd-caption">調子が悪いとき</p>

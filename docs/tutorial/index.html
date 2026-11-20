@@ -47,23 +47,23 @@
 </ul>
 
 <figure>
-  <img width="900" height="440" src="img/overview.svg" alt="手元の PC のブラウザは、nakama が手元に用意する localhost の入口から SSM Session Manager を通って AWS 上の EC2 インスタンスの code-server につながる。CloudFront と WAF の経路は --internet のときだけ使う。nakama CLI は AWS API と SSM を通ってインスタンスを操作する。インスタンスからインターネットへの外向き通信は NAT (NAT ゲートウェイか NAT インスタンス) を経由する。">
-  <figcaption><strong>図 0-1: nakama の全体像。</strong> 開発環境は AWS の内部 (プライベートサブネット) にあり、外部から直接つなげる口を持ちません。ブラウザもコマンド操作も、SSM という AWS の仕組みを通るので、IP の許可も SSH のポートも要りません。CloudFront という入口 (許可した IP アドレスからしか通れない) は、<code>--internet</code> を付けたときだけ使います。</figcaption>
+  <img width="900" height="440" src="img/overview.svg" alt="手元の PC のブラウザは、nakama が手元に用意する localhost の入口から SSM Session Manager を通って AWS 上の EC2 インスタンスの code-server につながる。CloudFront と WAF の経路は、入口を足した環境に --internet を付けたときだけ使う。nakama CLI は AWS API と SSM を通ってインスタンスを操作する。インスタンスからインターネットへの外向き通信は NAT (NAT ゲートウェイか NAT インスタンス) を経由する。">
+  <figcaption><strong>図 0-1: nakama の全体像。</strong> 開発環境は AWS の内部 (プライベートサブネット) にあり、外部から直接つなげる口を持ちません。ブラウザもコマンド操作も、SSM という AWS の仕組みを通るので、IP の許可も SSH のポートも要りません。CloudFront という入口 (許可した IP アドレスからしか通れない) は、求めた環境にだけ作り (<code>nakama aws cloudfront add</code>)、<code>--internet</code> を付けたときに使います。</figcaption>
 </figure>
 
 <h2>このチュートリアルの読み方</h2>
 <p>最初から順に読めば、初回のセットアップから日々の運用までひととおり分かります。急いでいる場合は次の順で読んでください。</p>
 
 <figure>
-  <img width="920" height="250" src="img/flow-first-time.svg" alt="初回セットアップは、サインイン (約1分)、基盤を作る (約3分)、環境を作る (約15分)、使い始める (数秒) の4ステップ。">
-  <figcaption><strong>図 0-2: 初回セットアップの流れ。</strong> 2 番目の「基盤を作る」は AWS アカウントに 1 回だけ実行します。所要時間は目安です。CloudFront 経由 (<code>--internet</code>) で開くときだけ、自分の IP を許可します (第 3 章)。</figcaption>
+  <img width="920" height="250" src="img/flow-first-time.svg" alt="初回セットアップは、サインイン (約1分)、基盤を作る (約3分)、環境を作る (数分)、使い始める (数秒) の4ステップ。">
+  <figcaption><strong>図 0-2: 初回セットアップの流れ。</strong> 2 番目の「基盤を作る」は AWS アカウントに 1 回だけ実行します。所要時間は目安です。CloudFront の入口を足した環境を <code>--internet</code> で開くときだけ、自分の IP を許可します (第 3 章)。</figcaption>
 </figure>
 
 <ul class="cards" role="list">
   <li><a href="01-install.html"><span class="num">第 1 章</span><span class="name">インストールとサインイン</span><span class="desc">nakama を Windows に入れて、AWS にサインインします。複数の AWS アカウントの切り替えも扱います。</span></a></li>
   <li><a href="02-proxy-cert.html"><span class="num">第 2 章</span><span class="name">会社のプロキシと証明書</span><span class="desc">「証明書エラー」がなぜ起きるのかを図で説明し、<code>nakama aws cli shell</code> の使い方を示します。</span></a></li>
   <li><a href="03-init.html"><span class="num">第 3 章</span><span class="name">土台を用意する</span><span class="desc">ネットワークなどの共通部分を作ります。CloudFront 経由で開くときの接続元 IP の許可と、料金の考え方もここで。</span></a></li>
-  <li><a href="04-create.html"><span class="num">第 4 章</span><span class="name">開発環境を作る</span><span class="desc">インスタンスの作成、大きさの選び方、初期セットアップの自動化、軽量版 (<code>--bare</code>) の使い分け。</span></a></li>
+  <li><a href="04-create.html"><span class="num">第 4 章</span><span class="name">開発環境を作る</span><span class="desc">インスタンスの作成、大きさの選び方、インターネットからの入口 (CloudFront) の追加と削除、初期セットアップの自動化、軽量版 (<code>--bare</code>) の使い分け。</span></a></li>
   <li><a href="05-use.html"><span class="num">第 5 章</span><span class="name">開発環境を使う</span><span class="desc">ブラウザ / ターミナル / 手元の VS Code / ポート転送、4 つのアクセス方法を使い分けます。</span></a></li>
   <li><a href="06-operate.html"><span class="num">第 6 章</span><span class="name">日々の運用</span><span class="desc">起動と停止、バックアップと復元、アップデート、サイズ変更、削除。</span></a></li>
   <li><a href="07-troubleshoot.html"><span class="num">第 7 章</span><span class="name">困ったときは</span><span class="desc"><code>nakama aws doctor</code> の読み方と、症状別の対処一覧。</span></a></li>
@@ -118,7 +118,7 @@
   <dd>ブラウザの中で動く VS Code。見た目も操作も、普段の VS Code とほぼ同じです。</dd>
 
   <dt>CloudFront</dt>
-  <dd>AWS の配信サービス。ここではインターネットから開発環境へ入るための<strong>正面玄関</strong>として使います。</dd>
+  <dd>AWS の配信サービス。ここではインターネットから開発環境へ入るための<strong>正面玄関</strong>として使います。開発環境は正面玄関を持たずに作られ、必要な環境にだけ <code>nakama aws cloudfront add</code> で足します。</dd>
 
   <dt>WAF / IP 許可リスト (ACL)</dt>
   <dd>正面玄関の<strong>門番</strong>。あらかじめ登録した IP アドレス以外からのアクセスを拒否します。自宅や会社の回線ごとに登録します。</dd>

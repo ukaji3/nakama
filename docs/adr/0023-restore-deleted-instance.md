@@ -1,6 +1,6 @@
 # ADR 0023: 削除済みのインスタンスを、バックアップから同じ名前で作り直す
 
-- Status: Accepted
+- Status: Accepted (ADR 0028 で、作り直しは既定で CloudFront を作らなくなった。`--cloudfront` で作る。バックアップのタグ `nakama:cloudfront` で、元のインスタンスに CloudFront があったときは警告する)
 - Date: 2026-10-15
 - Issue: [#96](https://github.com/ukaji3/nakama/issues/96)
 - 関連: ADR 0004 (バックアップとインプレース復元)、ADR 0010 (インスタンスロール)

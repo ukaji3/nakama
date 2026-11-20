@@ -88,7 +88,7 @@
     <tr><td><code>proxy</code></td><td>プロキシを見つけられたか、AWS に届くか (<a href="02-proxy-cert.html">第 2 章</a>)</td></tr>
     <tr><td><code>tls</code></td><td>監査プロキシがあるか、OS の証明書リストで検証できたか</td></tr>
     <tr><td><code>credentials</code></td><td>どの AWS アカウント / ユーザーとして動くか、有効期限は切れていないか</td></tr>
-    <tr><td><code>waf-allowlist</code></td><td>自分の接続元 IP が許可リストに入っているか (<code>--internet</code> で開くときだけ関係します。<a href="03-init.html#acl">第 3 章</a>)</td></tr>
+    <tr><td><code>waf-allowlist</code></td><td>自分の接続元 IP が許可リストに入っているか (<code>--internet</code> で開くときだけ関係します。<a href="03-init.html#acl">第 3 章</a>)。CloudFront の入口を持つ環境が無ければ <code>skip</code>、あればその名前を表示します</td></tr>
     <tr><td><code>egress</code></td><td>開発環境の外向き通信の中継 (NAT ゲートウェイか NAT インスタンス) が使えるか。<code>init</code> で選んだ中継と、実際の経路が合っているか。切り替えの残り (使われていない中継) があれば <code>warn</code> (<a href="03-init.html#nat">第 3 章</a>)</td></tr>
     <tr><td><code>capability: ...</code></td><td>機能ごとに、必要な IAM 権限が揃っているか</td></tr>
     <tr><td><code>tunnels</code></td><td>このパソコンに記録されたポート転送が生きているか (<a href="05-use.html#tunnel">第 5 章「ポート転送」</a>)</td></tr>
@@ -171,6 +171,14 @@
     <tr>
       <td><code>open</code> / <code>kirocrew</code> が <code>started by an older nakama</code> で失敗する</td>
       <td>古い版の nakama が起動した常駐プログラムが残っています。<code>nakama aws tunnel restart &lt;名前&gt;</code> で入れ替えてから、もう一度実行してください</td>
+    </tr>
+    <tr>
+      <td><code>--internet</code> が <code>has no CloudFront</code> で失敗する</td>
+      <td>その環境は CloudFront の入口を持っていません (新しい版では、作るときに <code>--cloudfront</code> を付けたときだけ作ります)。<code>nakama aws cloudfront add &lt;名前&gt;</code> で足すか、<code>--internet</code> を付けずに SSM 経由で開きます (<a href="04-create.html#cloudfront">第 4 章</a>)</td>
+    </tr>
+    <tr>
+      <td><code>cloudfront add</code> が <code>stopped part way</code> で失敗する</td>
+      <td>前に実行した <code>cloudfront delete</code> が途中で止まっています。<code>nakama aws cloudfront delete &lt;名前&gt;</code> をもう一度実行して片付けを終えてから、<code>cloudfront add</code> を実行してください</td>
     </tr>
     <tr>
       <td>403 Forbidden になる (<code>--internet</code> のとき)</td>

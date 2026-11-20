@@ -46,15 +46,15 @@
 
 <h2 id="choose">1. 4 つの方法の使い分け</h2>
 <figure>
-  <img width="920" height="420" src="img/access-paths.svg" alt="open はブラウザで VS Code を開き、既定は SSM 経由で、--internet を付けると CloudFront 経由。connect はターミナルに入り SSM 経由。ssh は手元の VS Code や scp、git を使うために SSM 経由。tunnel はポートを手元に持ってきて SSM 経由。">
-  <figcaption><strong>図 5-1: 4 つのアクセス方法。</strong> どれも既定は SSM 経由なので、IP の許可は不要です。<code>open</code> (と <code>kirocrew</code>) に <code>--internet</code> を付けたときだけ、インターネット (CloudFront) 経由になり、IP の許可が要ります。</figcaption>
+  <img width="920" height="420" src="img/access-paths.svg" alt="open はブラウザで VS Code を開き、既定は SSM 経由で、CloudFront を足した環境では --internet を付けると CloudFront 経由。connect はターミナルに入り SSM 経由。ssh は手元の VS Code や scp、git を使うために SSM 経由。tunnel はポートを手元に持ってきて SSM 経由。">
+  <figcaption><strong>図 5-1: 4 つのアクセス方法。</strong> どれも既定は SSM 経由なので、IP の許可は不要です。CloudFront を足した環境 (<a href="04-create.html#cloudfront">第 4 章</a>) で、<code>open</code> (と <code>kirocrew</code>) に <code>--internet</code> を付けたときだけ、インターネット (CloudFront) 経由になり、IP の許可が要ります。</figcaption>
 </figure>
 
 <h2 id="open">2. ブラウザで開く (open)</h2>
 <p class="cmd-caption">PowerShell で実行</p>
 <pre><code>nakama aws open dev01</code></pre>
 <p>ブラウザが開き、パスワードの入力も自動で通過して、VS Code の画面が表示されます。あとは普段の VS Code と同じように使えます。</p>
-<p>ブラウザのアドレスは <code>http://localhost:8080</code> です。nakama が手元のパソコンに入口を用意し、そこから SSM (AWS の権限で守られた通り道) を通って開発環境の code-server につなぎます。インターネットからの入口は使わないので、IP の許可は要りません。</p>
+<p>ブラウザのアドレスは <code>http://localhost:8080</code> です。nakama が手元のパソコンに入口を用意し、そこから SSM (AWS の権限で守られた通り道) を通って開発環境の code-server につなぎます。開発環境にはインターネットからの入口が無く、IP の許可も要りません。</p>
 
 <div class="callout tip" role="note">
   <span class="title">つなぎっぱなしで構いません</span>
@@ -80,7 +80,7 @@
   <thead><tr><th scope="col">オプション</th><th scope="col">用途</th></tr></thead>
   <tbody>
     <tr><td><code>--local-port &lt;番号&gt;</code></td><td>手元の入口のポート番号を変えます (既定 8080)</td></tr>
-    <tr><td><code>--internet</code></td><td>SSM ではなく、インターネット (CloudFront) 経由で開きます。IP の許可が要ります (<a href="03-init.html#acl">第 3 章</a>)</td></tr>
+    <tr><td><code>--internet</code></td><td>SSM ではなく、インターネット (CloudFront) 経由で開きます。CloudFront を足した環境だけで使え (<a href="04-create.html#cloudfront">第 4 章</a>)、IP の許可が要ります (<a href="03-init.html#acl">第 3 章</a>)</td></tr>
     <tr><td><code>--print-url</code></td><td>ブラウザを開かず URL だけ表示します</td></tr>
     <tr><td><code>--no-auth</code></td><td>自動ログインをせず、URL を開くだけにします (パスワードは手で入力)</td></tr>
     <tr><td><code>--browser &lt;コマンド&gt;</code></td><td>使うブラウザを指定します (URL が最後の引数として渡されます)。ブラウザを見つけられないと、SSM 経由では URL を表示せずにエラーになるので、そのときに使います</td></tr>
@@ -95,8 +95,9 @@
 </div>
 
 <div class="callout warn" role="note">
-  <span class="title"><code>--internet</code> で 403 エラーになるとき</span>
-  <p>あなたの接続元 IP が許可リストに入っていません。<code>nakama aws acl add</code> を実行してください (<a href="03-init.html#acl">第 3 章</a>)。nakama は開く前に IP をチェックし、未登録なら警告を表示します。</p>
+  <span class="title"><code>--internet</code> がエラーや 403 になるとき</span>
+  <p>「has no CloudFront」というエラーなら、その環境は CloudFront の入口を持っていません。必要なら <code>nakama aws cloudfront add dev01</code> で足します (<a href="04-create.html#cloudfront">第 4 章</a>)。</p>
+  <p>403 になるなら、あなたの接続元 IP が許可リストに入っていません。<code>nakama aws acl add</code> を実行してください (<a href="03-init.html#acl">第 3 章</a>)。nakama は開く前に IP をチェックし、未登録なら警告を表示します。</p>
 </div>
 
 <div class="callout note" role="note">
@@ -283,10 +284,11 @@ FORWARD                   STATE         SINCE       DETAIL
 </div>
 
 <h3 id="kirocrew-internet">CloudFront 経由で開く (<code>--internet</code>)</h3>
-<p>SSM が使えないネットワークなどで、インターネット (CloudFront) 経由で開きたいときは、<strong>Kiro Crew を外に直接出さず、必ず code-server を通して</strong>開く仕組みを用意します。IP の許可も要ります (<a href="03-init.html#acl">第 3 章</a>)。</p>
+<p>SSM が使えないネットワークなどで、インターネット (CloudFront) 経由で開きたいときは、<strong>Kiro Crew を外に直接出さず、必ず code-server を通して</strong>開く仕組みを用意します。code-server の CloudFront の入口 (<a href="04-create.html#cloudfront">第 4 章</a>) と IP の許可 (<a href="03-init.html#acl">第 3 章</a>) が先に要ります。</p>
 
 <p class="cmd-caption">PowerShell で実行 (最初の 1 回だけ)</p>
-<pre><code>nakama aws kirocrew enable dev01</code></pre>
+<pre><code>nakama aws cloudfront add dev01            # code-server の入口 (まだ無ければ)
+nakama aws kirocrew enable dev01</code></pre>
 <p>Kiro Crew 用の入口 (CloudFront) と、環境の中の小さなプロキシを用意します。CloudFront の反映待ちで数分から十数分かかります。途中で code-server が 1 回再起動するので、開いているブラウザの VS Code はつなぎ直されます。ポート転送 (Ports パネルやターミナルのリンク) は今までどおり使えます。</p>
 
 <p class="cmd-caption">PowerShell で実行 (使うたび)</p>
@@ -308,9 +310,9 @@ FORWARD                   STATE         SINCE       DETAIL
   <thead><tr><th scope="col">コマンド</th><th scope="col">内容</th></tr></thead>
   <tbody>
     <tr><td><code>nakama aws kirocrew dev01</code></td><td>SSM 経由でブラウザで開く (<code>--local-port</code>、<code>--print-url</code>、<code>--no-auth</code>、<code>--browser</code>、<code>--timeout</code> の意味は <code>open</code> と同じ。<code>--no-auth</code> はトークンを渡さずに開く)</td></tr>
-    <tr><td><code>nakama aws kirocrew enable dev01</code></td><td>CloudFront 経由の仕組みを用意する (何度実行しても同じ結果。途中で失敗しても、もう一度実行すれば続きから進む)</td></tr>
+    <tr><td><code>nakama aws kirocrew enable dev01</code></td><td>CloudFront 経由の仕組みを用意する (<code>cloudfront add</code> が先に要る。何度実行しても同じ結果。途中で失敗しても、もう一度実行すれば続きから進む)</td></tr>
     <tr><td><code>nakama aws kirocrew --internet dev01</code></td><td>CloudFront 経由でブラウザで開く (<code>enable</code> が先に要る)</td></tr>
-    <tr><td><code>nakama aws kirocrew disable dev01</code></td><td>CloudFront 経由の仕組みを取り外す (<code>nakama aws delete</code> でも一緒に消える)</td></tr>
+    <tr><td><code>nakama aws kirocrew disable dev01</code></td><td>CloudFront 経由の仕組みを取り外す (<code>nakama aws cloudfront delete</code> と <code>nakama aws delete</code> でも一緒に消える)</td></tr>
   </tbody>
 </table>
 </div>
