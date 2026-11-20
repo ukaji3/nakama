@@ -32,6 +32,30 @@ type fakeOpenBackend struct {
 	ip          string
 	ipErr       error
 	showPwdArgs []bool
+	// forward is what EnsureBrowserForward returns (an SSM forward on
+	// localhost:8080 unless set); forwardErr fails it.
+	forward     *service.BrowserForward
+	forwardErr  error
+	forwardArgs []service.BrowserForwardInput
+}
+
+func (b *fakeOpenBackend) EnsureBrowserForward(_ context.Context, in service.BrowserForwardInput) (*service.BrowserForward, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.forwardArgs = append(b.forwardArgs, in)
+	if b.forwardErr != nil {
+		return nil, b.forwardErr
+	}
+	if b.forward != nil {
+		bf := *b.forward
+		return &bf, nil
+	}
+	port := in.LocalPort
+	if port == 0 {
+		port = service.DefaultLocalPort(in.Purpose)
+	}
+	return &service.BrowserForward{Name: in.Name, Purpose: in.Purpose, LocalPort: port,
+		Origin: fmt.Sprintf("http://localhost:%d", port)}, nil
 }
 
 func (b *fakeOpenBackend) GetInstanceInfo(_ context.Context, _ string, showPassword bool) (*service.InstanceInfo, error) {
@@ -156,7 +180,7 @@ func TestOpen_EmptyPasswordFallsBack(t *testing.T) {
 	launcher := &fakeLauncher{}
 	deps := newTestOpenDeps(backend, launcher)
 
-	out, errOut, err := runOpenCommand(t, deps, "dev01", "--timeout", "5s")
+	out, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--timeout", "5s")
 	if err != nil {
 		t.Fatalf("open: %v (stderr: %s)", err, errOut)
 	}
@@ -187,7 +211,7 @@ func TestOpen_MethodA_HappyPath(t *testing.T) {
 	}
 	deps := newTestOpenDeps(backend, launcher)
 
-	out, errOut, err := runOpenCommand(t, deps, "dev01", "--timeout", "5s")
+	out, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--timeout", "5s")
 	if err != nil {
 		t.Fatalf("open: %v (stderr: %s)", err, errOut)
 	}
@@ -327,7 +351,7 @@ func TestOpen_NoAuth_NeverFetchesPassword(t *testing.T) {
 	launcher := &fakeLauncher{}
 	deps := newTestOpenDeps(backend, launcher)
 
-	_, errOut, err := runOpenCommand(t, deps, "dev01", "--no-auth")
+	_, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--no-auth")
 	if err != nil {
 		t.Fatalf("open --no-auth: %v (stderr: %s)", err, errOut)
 	}
@@ -349,7 +373,7 @@ func TestOpen_PrintURL_NoLauncherInvocation(t *testing.T) {
 
 	// Short timeout: nobody fetches the one-shot page in this test, so
 	// the command must fall back and finish quickly instead of hanging.
-	out, _, err := runOpenCommand(t, deps, "dev01", "--print-url", "--timeout", "100ms")
+	out, _, err := runOpenCommand(t, deps, "--internet", "dev01", "--print-url", "--timeout", "100ms")
 	if err != nil {
 		t.Fatalf("open --print-url: %v", err)
 	}
@@ -372,7 +396,7 @@ func TestOpen_FallbackToPlain_WhenLauncherMissing(t *testing.T) {
 	launcher := &fakeLauncher{err: fmt.Errorf("browser launcher %q: %w", "xdg-open", exec.ErrNotFound)}
 	deps := newTestOpenDeps(backend, launcher)
 
-	out, errOut, err := runOpenCommand(t, deps, "dev01", "--timeout", "1s")
+	out, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--timeout", "1s")
 	if err != nil {
 		t.Fatalf("open must succeed when only the launcher is missing: %v", err)
 	}
@@ -393,7 +417,7 @@ func TestOpen_FallbackToPlain_WhenPasswordFetchFails(t *testing.T) {
 	launcher := &fakeLauncher{}
 	deps := newTestOpenDeps(backend, launcher)
 
-	_, errOut, err := runOpenCommand(t, deps, "dev01")
+	_, errOut, err := runOpenCommand(t, deps, "--internet", "dev01")
 	if err != nil {
 		t.Fatalf("open must fall back when the password fetch fails: %v", err)
 	}
@@ -415,7 +439,7 @@ func TestOpen_Preflight_NotRunning(t *testing.T) {
 	backend.info.State = "stopped"
 	deps := newTestOpenDeps(backend, &fakeLauncher{})
 
-	_, _, err := runOpenCommand(t, deps, "dev01")
+	_, _, err := runOpenCommand(t, deps, "--internet", "dev01")
 	if err == nil {
 		t.Fatal("expected error for a stopped instance")
 	}
@@ -430,7 +454,7 @@ func TestOpen_Preflight_NoDistributionDomain(t *testing.T) {
 	backend.info.URL = ""
 	deps := newTestOpenDeps(backend, &fakeLauncher{})
 
-	_, _, err := runOpenCommand(t, deps, "dev01")
+	_, _, err := runOpenCommand(t, deps, "--internet", "dev01")
 	if err == nil {
 		t.Fatal("expected error when the distribution domain is missing")
 	}
@@ -444,7 +468,7 @@ func TestOpen_Preflight_InstanceNotFound(t *testing.T) {
 	backend.infoErr = errors.New(`nakama instance "dev01" not found`)
 	deps := newTestOpenDeps(backend, &fakeLauncher{})
 
-	_, _, err := runOpenCommand(t, deps, "dev01")
+	_, _, err := runOpenCommand(t, deps, "--internet", "dev01")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected the not-found error to propagate, got: %v", err)
 	}
@@ -456,7 +480,7 @@ func TestOpen_WAFWarning_IPNotAllowlisted(t *testing.T) {
 	launcher := &fakeLauncher{}
 	deps := newTestOpenDeps(backend, launcher)
 
-	_, errOut, err := runOpenCommand(t, deps, "dev01", "--no-auth")
+	_, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--no-auth")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -472,7 +496,7 @@ func TestOpen_WAFWarning_CIDRContainmentNotStringCompare(t *testing.T) {
 	launcher := &fakeLauncher{}
 	deps := newTestOpenDeps(backend, launcher)
 
-	_, errOut, err := runOpenCommand(t, deps, "dev01", "--no-auth")
+	_, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--no-auth")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -487,7 +511,7 @@ func TestOpen_WAFWarning_ListACLErrorIsNonFatal(t *testing.T) {
 	launcher := &fakeLauncher{}
 	deps := newTestOpenDeps(backend, launcher)
 
-	_, errOut, err := runOpenCommand(t, deps, "dev01", "--no-auth")
+	_, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--no-auth")
 	if err != nil {
 		t.Fatalf("ListACL failure must not break open: %v", err)
 	}
@@ -502,7 +526,7 @@ func TestOpen_Timeout_FallsBackWithoutHanging(t *testing.T) {
 	deps := newTestOpenDeps(backend, launcher)
 
 	start := time.Now()
-	_, errOut, err := runOpenCommand(t, deps, "dev01", "--timeout", "100ms")
+	_, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--timeout", "100ms")
 	if err != nil {
 		t.Fatalf("timeout must degrade to METHOD C, not fail: %v", err)
 	}
@@ -531,7 +555,7 @@ func TestOpen_JSONOutput_NeverContainsPassword(t *testing.T) {
 	}
 	deps := newTestOpenDeps(backend, launcher)
 
-	out, errOut, err := runOpenCommand(t, deps, "dev01", "--timeout", "5s")
+	out, errOut, err := runOpenCommand(t, deps, "--internet", "dev01", "--timeout", "5s")
 	if err != nil {
 		t.Fatalf("open: %v (stderr: %s)", err, errOut)
 	}
@@ -556,7 +580,7 @@ func TestOpen_ListenFailureFallsBack(t *testing.T) {
 		return nil, errors.New("bind: address already in use")
 	}
 
-	_, errOut, err := runOpenCommand(t, deps, "dev01")
+	_, errOut, err := runOpenCommand(t, deps, "--internet", "dev01")
 	if err != nil {
 		t.Fatalf("listener bind failure must fall back to METHOD C: %v", err)
 	}

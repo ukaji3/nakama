@@ -62,7 +62,26 @@ type kirocrewInstance struct {
 	crewDomain     string
 }
 
+// loadKirocrewInstance reads the instance metadata for the operations
+// that route Kiro Crew through code-server (the CloudFront path,
+// ADR 0020), which a bare instance does not have.
 func (s *Service) loadKirocrewInstance(ctx context.Context, name string) (*kirocrewInstance, error) {
+	m, err := s.readKirocrewInstance(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if m.kind == instanceKindBare {
+		return nil, fmt.Errorf("%q is a bare instance: it has no code-server to route Kiro Crew through; "+
+			"open it over SSM with `nakama aws kirocrew %s` (without --internet)", name, name)
+	}
+	return m, nil
+}
+
+// readKirocrewInstance reads the instance metadata for any Kiro Crew
+// operation. Minting a dashboard token and the SSM path (ADR 0027) work
+// on bare instances too: Kiro Crew is installed there as well, and the
+// SSM forward reaches it without code-server.
+func (s *Service) readKirocrewInstance(ctx context.Context, name string) (*kirocrewInstance, error) {
 	if err := ValidateInstanceName(name); err != nil {
 		return nil, err
 	}
@@ -85,10 +104,6 @@ func (s *Service) loadKirocrewInstance(ctx context.Context, name string) (*kiroc
 	}
 	if m.instanceID == "" {
 		return nil, fmt.Errorf("nakama instance %q not found (no /nakama/%s/meta/instance-id)", name, name)
-	}
-	if m.kind == instanceKindBare {
-		return nil, fmt.Errorf("%q is a bare instance: it has no code-server to route Kiro Crew through; "+
-			"reach the gateway with `nakama aws tunnel %s -L 5476:5476` instead", name, name)
 	}
 	return m, nil
 }

@@ -268,7 +268,8 @@ func diagnoseWAF(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 		Name:   "waf-allowlist",
 		Status: CheckWarn,
 		Detail: fmt.Sprintf("this machine (%s) is not in the allowlist (%d entr%s)", ip, len(entries), plural(len(entries))),
-		Advice: "run `nakama aws acl add` to allow it (code-server is unreachable otherwise; connect/tunnel/ssh are unaffected)",
+		Advice: "run `nakama aws acl add` to allow it if you open code-server or Kiro Crew with --internet (CloudFront); " +
+			"open/kirocrew over SSM (the default) and connect/tunnel/ssh do not use the allowlist",
 	})
 }
 
