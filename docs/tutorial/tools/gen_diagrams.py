@@ -289,7 +289,8 @@ def d_overview() -> Svg:
         "nakama の全体像",
         "手元の PC のブラウザは、nakama が手元に用意する localhost の入口から "
         "SSM Session Manager を通って AWS 上の code-server につながる (CloudFront と WAF "
-        "の経路は --internet のときだけ)。nakama CLI は AWS API と SSM を通ってインスタンスを "
+        "の経路は、cloudfront add で足した環境に --internet を付けたときだけ)。nakama CLI は "
+        "AWS API と SSM を通ってインスタンスを "
         "操作する。インスタンスからインターネットへの通信は NAT (NAT ゲートウェイか "
         "NAT インスタンス) を経由する。",
     )
@@ -298,7 +299,7 @@ def d_overview() -> Svg:
     s.box(35, 250, 170, 70, ["nakama CLI", "localhost の入口"], "local")
 
     s.group_frame(260, 30, 620, 330, "AWS (ap-northeast-1 / 東京)")
-    s.box(300, 90, 190, 70, ["CloudFront + WAF", "--internet のときだけ"], "aws")
+    s.box(300, 90, 190, 70, ["CloudFront + WAF", "足した環境だけ (任意)"], "aws")
     s.box(620, 160, 220, 90, ["EC2 インスタンス", "code-server (VS Code)", "プライベートサブネット"], "aws")
     s.box(300, 250, 190, 70, ["SSM Session Manager", "ブラウザ・シェル・転送"], "aws")
     s.box(620, 296, 220, 56, ["NAT (外向き通信のみ)", "ゲートウェイかインスタンス"], "aws")
@@ -316,7 +317,7 @@ def d_overview() -> Svg:
     s.arrow(730, 354, 730, 386, "")
     s.label(730, 402, "インターネット", size=12, anchor="middle")
 
-    s.label(20, 380, "受信ポートの開放は不要 (インスタンスは公開 IP を持ちません)", size=13, color=MUTED)
+    s.label(20, 380, "インスタンスは受信の規則も公開 IP も持ちません (CloudFront を足したときだけ 8080 を CloudFront に開く)", size=13, color=MUTED)
     s.label(20, 403, "パスワードは AWS 側に保管され、PC には保存されません", size=13, color=MUTED)
     return s
 
@@ -333,7 +334,7 @@ def d_flow_first_time() -> Svg:
     steps = [
         ("1. サインイン", "nakama aws login", "ブラウザで承認", "約 1 分"),
         ("2. 基盤を作る", "nakama aws init", "1 回だけ (共有)", "約 3 分"),
-        ("3. 環境を作る", "nakama aws create", "1 人で何台でも", "約 15 分"),
+        ("3. 環境を作る", "nakama aws create", "1 人で何台でも", "数分"),
         ("4. 使い始める", "nakama aws open", "ブラウザが開く", "数秒"),
     ]
     x = 20
@@ -343,7 +344,7 @@ def d_flow_first_time() -> Svg:
         if i < len(steps) - 1:
             s.arrow(x + 158, 107, x + 178, 107, "")
         x += 180
-    s.label(20, 215, "2 の init は AWS アカウントに 1 回だけ。CloudFront 経由 (--internet) で開くときだけ、acl add で IP を許可します。",
+    s.label(20, 215, "2 の init は AWS アカウントに 1 回だけ。IP の許可 (acl add) は、CloudFront を足した環境を --internet で開くときだけ。",
             size=13, color=MUTED)
     return s
 
@@ -501,7 +502,7 @@ def d_access_paths() -> Svg:
         y += 72
     s.box(25, 350, 870, 55, [
         "4 つとも既定は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)",
-        "open / kirocrew に --internet を付けたときだけ CloudFront 経由になり、IP の許可が要ります",
+        "CloudFront を足した環境 (cloudfront add) で --internet を付けたときだけ、IP の許可が要ります",
     ], "note", font_size=14)
     return s
 
@@ -617,18 +618,18 @@ def d_bare_vs_full() -> Svg:
         900,
         400,
         "通常の create と --bare の違い",
-        "通常は code-server と CloudFront を含む一式を作る。--bare は EC2 と SSM だけを"
-        "作るので、ブラウザでは開けないが作成が速い。",
+        "通常は code-server とパスワードを含む一式を作る (CloudFront は --cloudfront の"
+        "ときだけ)。--bare は EC2 と SSM だけを作るので、ブラウザでは開けない。",
     )
     s.label(20, 36, "nakama aws create (通常)", size=15, color=INK, weight="600")
     s.box(20, 50, 420, 210, [
         "作られるもの",
         "・EC2 インスタンス",
         "・code-server (ブラウザ版 VS Code)",
-        "・CloudFront + VPC Origin",
         "・ログイン用パスワード (AWS 側に保管)",
+        "・CloudFront は --cloudfront のときだけ",
         "",
-        "作成時間: 約 15 分 (CloudFront の反映待ち)",
+        "作成時間: 数分 (--cloudfront なら約 15 分)",
     ], "step", font_size=14)
     s.box(20, 275, 420, 100, [
         "使えるもの",
@@ -644,7 +645,7 @@ def d_bare_vs_full() -> Svg:
         "",
         "(code-server / CloudFront / パスワードなし)",
         "",
-        "作成時間: 数分 (待ち時間が短い)",
+        "作成時間: 数分",
     ], "neutral", font_size=14)
     s.box(470, 275, 410, 100, [
         "使えるもの",

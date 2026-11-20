@@ -1,6 +1,6 @@
 # ADR 0001: CloudFront VPC Origins for Private EC2 Code-Server
 
-- Status: Accepted
+- Status: Accepted (ADR 0028 で、CloudFront はインスタンスごとの任意になった。`create` は既定で VPC origin・distribution・SG の CloudFront の規則を作らず、`create --cloudfront` か `nakama aws cloudfront add` のときだけ作る。この ADR の構成は、作るときの形として残る)
 - Date: 2026-05-28
 - Context: nakama v1 design
 

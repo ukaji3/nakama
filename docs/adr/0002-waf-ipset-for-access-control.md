@@ -1,6 +1,6 @@
 # ADR 0002: WAFv2 IP Set for Source-IP Access Control
 
-- Status: Accepted
+- Status: Accepted (ADR 0028 以降、この web ACL を使うのは CloudFront を足したインスタンスだけになった。IP set と web ACL は、CloudFront を持つインスタンスが無くても `init` が作って残す)
 - Date: 2026-05-28
 - Context: nakama v1 design
 

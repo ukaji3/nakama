@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 440" role="img" aria-labelledby="overview-title" aria-describedby="overview-desc" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif">
   <title id="overview-title">nakama の全体像</title>
-  <desc id="overview-desc">手元の PC のブラウザは、nakama が手元に用意する localhost の入口から SSM Session Manager を通って AWS 上の code-server につながる (CloudFront と WAF の経路は --internet のときだけ)。nakama CLI は AWS API と SSM を通ってインスタンスを 操作する。インスタンスからインターネットへの通信は NAT (NAT ゲートウェイか NAT インスタンス) を経由する。</desc>
+  <desc id="overview-desc">手元の PC のブラウザは、nakama が手元に用意する localhost の入口から SSM Session Manager を通って AWS 上の code-server につながる (CloudFront と WAF の経路は、cloudfront add で足した環境に --internet を付けたときだけ)。nakama CLI は AWS API と SSM を通ってインスタンスを 操作する。インスタンスからインターネットへの通信は NAT (NAT ゲートウェイか NAT インスタンス) を経由する。</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#374151" /></marker><marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#374151" /></marker><marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c" /></marker></defs>
   <rect width="900" height="440" fill="#ffffff" />
   <rect x="20" y="55" width="200" height="290" rx="12" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="4 4" />
@@ -15,7 +15,7 @@
   <text x="272" y="50" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="600" fill="#4b5563">AWS (ap-northeast-1 / 東京)</text>
   <rect x="300" y="90" width="190" height="70" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
   <text x="395" y="119" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">CloudFront + WAF</text>
-  <text x="395" y="140" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">--internet のときだけ</text>
+  <text x="395" y="140" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">足した環境だけ (任意)</text>
   <rect x="620" y="160" width="220" height="90" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
   <text x="730" y="188" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">EC2 インスタンス</text>
   <text x="730" y="210" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#4b5563">code-server (VS Code)</text>
@@ -40,6 +40,6 @@
   <text x="740" y="276" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="12" font-weight="400" fill="#4b5563">apt / git などの通信</text>
   <line x1="730" y1="354" x2="730" y2="386" stroke="#374151" stroke-width="2" marker-end="url(#arrow)" />
   <text x="730" y="402" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="12" font-weight="400" fill="#4b5563">インターネット</text>
-  <text x="20" y="380" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">受信ポートの開放は不要 (インスタンスは公開 IP を持ちません)</text>
+  <text x="20" y="380" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">インスタンスは受信の規則も公開 IP も持ちません (CloudFront を足したときだけ 8080 を CloudFront に開く)</text>
   <text x="20" y="403" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">パスワードは AWS 側に保管され、PC には保存されません</text>
 </svg>

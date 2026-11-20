@@ -57,7 +57,7 @@
     <tr><td>インターネットゲートウェイとルートテーブル</td><td>外向きの通信経路の設定 (触る必要はありません)</td></tr>
     <tr><td>外向き通信の中継 (NAT ゲートウェイ、または NAT インスタンス)</td><td>開発環境が外部と通信する (ソフトのダウンロードなど) ための中継。どちらを使うかは <a href="#nat">次の節</a>で選びます</td></tr>
     <tr><td>IAM ロールとインスタンスプロファイル</td><td>開発環境が AWS の機能 (SSM 経由の接続など) を使うための権限 (触る必要はありません)</td></tr>
-    <tr><td>WAF (Web ACL と IP セット)</td><td>正面玄関の門番。許可した IP からのアクセスだけ通します</td></tr>
+    <tr><td>WAF (Web ACL と IP セット)</td><td>正面玄関 (CloudFront。入口を足した環境だけが持つ) の門番。許可した IP からのアクセスだけ通します</td></tr>
     <tr><td>SSM パラメータ</td><td>作ったリソースの ID などの控え (nakama が次回以降参照します)</td></tr>
   </tbody>
 </table>
@@ -116,7 +116,7 @@ nakama aws init --nat instance    # NAT インスタンスを使う</code></pre>
 </div>
 
 <h2 id="acl">2. CloudFront 経由で開くときは IP を許可する</h2>
-<p><code>nakama aws open</code> と <code>nakama aws kirocrew</code> は、既定では SSM 経由で開くので、この節の作業は要りません (<a href="05-use.html#open">第 5 章</a>)。<code>--internet</code> を付けて CloudFront 経由で開くときだけ、あなたの接続元 IP アドレスを門番 (WAF) に登録します。登録していない IP からは、正面玄関で拒否されます (403 エラー)。</p>
+<p><code>nakama aws open</code> と <code>nakama aws kirocrew</code> は、既定では SSM 経由で開くので、この節の作業は要りません (<a href="05-use.html#open">第 5 章</a>)。開発環境に CloudFront の入口を足して (<a href="04-create.html#cloudfront">第 4 章</a>)、<code>--internet</code> を付けて CloudFront 経由で開くときだけ、あなたの接続元 IP アドレスを門番 (WAF) に登録します。登録していない IP からは、正面玄関で拒否されます (403 エラー)。</p>
 
 <p class="cmd-caption">PowerShell で実行 (いまの接続元 IP を自動で調べて登録します)</p>
 <pre><code>nakama aws acl add</code></pre>
@@ -160,7 +160,7 @@ nakama aws acl delete all                # すべて消す</code></pre>
 
 <div class="callout tip" role="note">
   <span class="title">許可が要るのは CloudFront 経由のアクセスだけ</span>
-  <p><code>open</code> / <code>kirocrew</code> (既定) と <code>connect</code> / <code>ssh</code> / <code>tunnel</code> は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)。IP 許可が必要なのは <code>--internet</code> を付けて CloudFront 経由で開く場合だけです。<code>--internet</code> を使わないなら、許可リストを空にしておけば (<code>nakama aws acl delete all</code>)、インターネットからの入口はすべて拒否されます。<a href="05-use.html">第 5 章</a>で詳しく扱います。</p>
+  <p><code>open</code> / <code>kirocrew</code> (既定) と <code>connect</code> / <code>ssh</code> / <code>tunnel</code> は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)。IP 許可が必要なのは、CloudFront の入口を足した環境に <code>--internet</code> を付けて開く場合だけです。開発環境は、作った時点ではインターネットからの入口を持ちません (<a href="04-create.html#cloudfront">第 4 章</a>)。<a href="05-use.html">第 5 章</a>で詳しく扱います。</p>
 </div>
 
 <div class="callout danger" role="note">
@@ -179,8 +179,8 @@ nakama aws acl delete all                # すべて消す</code></pre>
     <tr><td>ディスク (EBS)</td><td><strong>作ってある間ずっと</strong>。停止中も保管料がかかります (中身を保つため)</td></tr>
     <tr><td>NAT ゲートウェイ (<code>--nat gateway</code>)</td><td><strong>作ってある間ずっと</strong>。開発環境を全部止めてもかかります。時間割りの料金 + 中継した通信量 (<code>connect</code> / <code>tunnel</code> の通信も含む) + 固定 IP (Elastic IP) の料金 (<a href="https://aws.amazon.com/vpc/pricing/">Amazon VPC の料金</a>)</td></tr>
     <tr><td>NAT インスタンス (<code>--nat instance</code>)</td><td>開発環境が 1 台でも起動している時間だけ (自動で連動します)。ただし <code>init</code> の直後は起動した状態で作られ、次に <code>stop</code> / <code>delete</code> などで電源が見直されるまで動き続けます</td></tr>
-    <tr><td>CloudFront</td><td>通信量とリクエスト数に応じて</td></tr>
-    <tr><td>WAF</td><td>Web ACL が存在する間、時間割りの基本料金 + リクエスト数 (<a href="https://aws.amazon.com/waf/pricing/">AWS WAF の料金</a>)</td></tr>
+    <tr><td>CloudFront</td><td>入口を足した環境だけ。通信量とリクエスト数に応じて</td></tr>
+    <tr><td>WAF</td><td>Web ACL が存在する間、時間割りの基本料金 + リクエスト数 (<a href="https://aws.amazon.com/waf/pricing/">AWS WAF の料金</a>)。CloudFront の入口を持つ環境が無くても、Web ACL は土台に残るので基本料金はかかります</td></tr>
     <tr><td>バックアップ (スナップショット)</td><td>保管している容量に応じて。世代を増やすほど増えます</td></tr>
   </tbody>
 </table>

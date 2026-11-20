@@ -1,6 +1,6 @@
 # ADR 0020: Kiro Crew の Web 画面は code-server のホスト名振り分けと専用プロキシで提供する
 
-- Status: Accepted (`nakama aws kirocrew` の既定は ADR 0027 の SSM の経路 (Kiro Crew の gateway へ直接) になった。この ADR の経路は `--internet` のときに使い、その場合の要件として残る)
+- Status: Accepted (`nakama aws kirocrew` の既定は ADR 0027 の SSM の経路 (Kiro Crew の gateway へ直接) になった。この ADR の経路は `--internet` のときに使い、その場合の要件として残る。ADR 0028 で code-server の distribution は任意になったので、`kirocrew enable` は `nakama aws cloudfront add` の後に使う。`cloudfront delete` はこの ADR の distribution と Function も消す)
 - Date: 2026-10-06
 - Issue: [#71](https://github.com/ukaji3/nakama/issues/71)、訂正 [#73](https://github.com/ukaji3/nakama/issues/73)
 

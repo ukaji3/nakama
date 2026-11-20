@@ -58,8 +58,9 @@ nakama aws start dev01         # 翌日また使う</code></pre>
 <p><code>list</code> の表示はこうなります。</p>
 <pre class="output"><code>NAME                  INSTANCE_ID            STATE      TYPE    INSTANCE_TYPE  DISTRIBUTION_DOMAIN
 box01                 i-0abcdef1234567890    stopped    BARE    t3.medium
-dev01                 i-0123456789abcdef0    running    VSCODE  t3.medium      d111111abcdef8.cloudfront.net</code></pre>
-<p>名前順に並びます。<code>--bare</code> で作った環境は正面玄関を持たないので <code>DISTRIBUTION_DOMAIN</code> は空欄です。</p>
+dev01                 i-0123456789abcdef0    running    VSCODE  t3.medium
+web01                 i-0fedcba9876543210    running    VSCODE  t3.medium      d111111abcdef8.cloudfront.net</code></pre>
+<p>名前順に並びます。<code>DISTRIBUTION_DOMAIN</code> は、CloudFront の入口を足した環境 (<a href="04-create.html#cloudfront">第 4 章</a>) だけに表示されます。</p>
 <div class="table-wrap">
 <table>
   <thead><tr><th scope="col">列</th><th scope="col">意味</th></tr></thead>
@@ -124,13 +125,15 @@ nakama aws restore dev01 --label before-upgrade  # 世代を指定して作り�
   instance type : t3.medium (x86_64)
   kind          : code-server
   IAM role      : none
-The disk is the backup's; nothing is reinstalled. The URL and the code-server password
-are new. This takes about 15-20 minutes (CloudFront); the instance is left stopped.
+  CloudFront    : no (open it over SSM; add CloudFront later with `nakama aws cloudfront add`)
+The disk is the backup's; nothing is reinstalled. The code-server password is new.
+The instance is left stopped.
 [y/N]:</code></pre>
-<p>作り直しには、<code>create</code> と同じく 15〜20 分ほどかかります。終わったら <code>nakama aws start dev01</code> で起動し、<code>nakama aws open dev01</code> で開いてください。</p>
+<p>CloudFront を作らないので、CloudFront の反映を待つ時間はかかりません (ディスクの入れ替えの待ちはあります)。終わったら <code>nakama aws start dev01</code> で起動し、<code>nakama aws open dev01</code> で開いてください。</p>
 <ul>
   <li><strong>そのまま戻るもの</strong>: ディスクの中身 (コード、設定、入れたソフトウェア)。ソフトウェアは入れ直さないので、バックアップを取ったときの版のままです。最新にするには <code>nakama aws update dev01</code> を使います。<code>ssh</code> の接続先の鍵 (ホスト鍵) も同じなので、<code>nakama aws ssh setup</code> で作った設定はそのまま使えます。</li>
-  <li><strong>新しくなるもの</strong>: CloudFront の URL と code-server のパスワード。<code>open</code> はパスワードを自動で入れるので、いつもどおり開けます。<code>--internet</code> で開いていた場合は、ブラウザのブックマークを作り直してください。Kiro Crew の画面を <code>--internet</code> で使っていた場合は、<code>nakama aws kirocrew enable dev01</code> をもう一度実行します。</li>
+  <li><strong>新しくなるもの</strong>: code-server のパスワード。<code>open</code> はパスワードを自動で入れるので、いつもどおり開けます。</li>
+  <li><strong>CloudFront</strong>: 作り直しでは作りません。元の環境に CloudFront があったときは、そのことを警告で知らせます。要るなら <code>nakama aws restore dev01 --cloudfront</code> のように指定するか、あとで <code>nakama aws cloudfront add dev01</code> を実行します (URL は新しくなるので、ブックマークは作り直してください。<code>--cloudfront</code> を付けると作り直しに 15〜20 分ほどかかります)。Kiro Crew の画面を <code>--internet</code> で使っていた場合は、そのあと <code>nakama aws kirocrew enable dev01</code> も実行します。</li>
   <li><strong>大きさと種類</strong>: バックアップを取ったときのインスタンスタイプと種類 (<code>--bare</code> かどうか) で作ります。<code>--instance-type</code> で別のタイプにもできますが、<code>t3</code> (Intel/AMD) と <code>t4g</code> (ARM) のように CPU の種類が違うタイプにはできません。</li>
 </ul>
 
@@ -202,7 +205,7 @@ nakama aws edit dev01 --instance-type t3.medium --yes    # 確認を省略</code
 
 <h2 id="delete">5. 削除</h2>
 <pre><code>nakama aws delete dev01</code></pre>
-<p>確認のあと、次の順で削除します: CloudFront distribution → VPC Origin → EC2 インスタンス → ENI (ネットワークインターフェース) → セキュリティグループ → SSM のパラメータ。<strong>全体で 15〜20 分ほどかかります</strong> (CloudFront の反映待ちが大半です)。土台 (<code>init</code> で作った VPC や WAF) はそのまま残ります。</p>
+<p>確認のあと、次の順で削除します: (CloudFront の入口があれば) CloudFront distribution → VPC Origin → EC2 インスタンス → ENI (ネットワークインターフェース) → セキュリティグループ → SSM のパラメータ。CloudFront があると<strong>全体で 15〜20 分ほどかかります</strong> (CloudFront の反映待ちが大半です)。無ければ、サーバーの削除を待つだけです。土台 (<code>init</code> で作った VPC や WAF) はそのまま残ります。環境は残して CloudFront の入口だけを外すときは、<code>nakama aws cloudfront delete</code> を使います (<a href="04-create.html#cloudfront">第 4 章</a>)。</p>
 
 <div class="callout danger" role="note">
   <span class="title">中身はディスクごと消えます</span>
