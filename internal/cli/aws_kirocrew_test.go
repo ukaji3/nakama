@@ -28,6 +28,24 @@ type fakeKirocrewBackend struct {
 	disabled []string
 	skipped  bool
 	pwdAsked int
+	// state is the instance state GetInstanceInfo reports ("running"
+	// unless set).
+	state       string
+	forwardErr  error
+	forwardArgs []service.BrowserForwardInput
+}
+
+func (b *fakeKirocrewBackend) EnsureBrowserForward(_ context.Context, in service.BrowserForwardInput) (*service.BrowserForward, error) {
+	b.forwardArgs = append(b.forwardArgs, in)
+	if b.forwardErr != nil {
+		return nil, b.forwardErr
+	}
+	port := in.LocalPort
+	if port == 0 {
+		port = service.DefaultLocalPort(in.Purpose)
+	}
+	return &service.BrowserForward{Name: in.Name, Purpose: in.Purpose, LocalPort: port,
+		Origin: fmt.Sprintf("http://localhost:%d", port)}, nil
 }
 
 func (b *fakeKirocrewBackend) GetKiroCrewWeb(context.Context, string) (*service.KiroCrewWeb, error) {
@@ -45,7 +63,11 @@ func (b *fakeKirocrewBackend) GetInstanceInfo(_ context.Context, name string, sh
 	if b.pwdErr != nil {
 		return nil, b.pwdErr
 	}
-	return &service.InstanceInfo{Name: name, State: "running", Password: b.password}, nil
+	state := b.state
+	if state == "" {
+		state = "running"
+	}
+	return &service.InstanceInfo{Name: name, State: state, Password: b.password}, nil
 }
 
 func (b *fakeKirocrewBackend) MintKiroCrewToken(context.Context, string) (string, error) {
@@ -102,7 +124,7 @@ func TestKirocrew_AutoLogin(t *testing.T) {
 	launcher := &fakeLauncher{}
 	launcher.onOpen = func(u string) { _, pageBody, fetchErr = httpGet(t, u) }
 
-	out, errOut, err := runKirocrewCommand(t, backend, launcher, "dev01", "--timeout", "5s")
+	out, errOut, err := runKirocrewCommand(t, backend, launcher, "--internet", "dev01", "--timeout", "5s")
 	if err != nil {
 		t.Fatalf("kirocrew: %v (stderr %s)", err, errOut)
 	}
@@ -143,7 +165,7 @@ func TestKirocrew_AutoLogin(t *testing.T) {
 func TestKirocrew_NoAuthOpensTokenURL(t *testing.T) {
 	backend := enabledKirocrewBackend()
 	launcher := &fakeLauncher{}
-	_, _, err := runKirocrewCommand(t, backend, launcher, "dev01", "--no-auth")
+	_, _, err := runKirocrewCommand(t, backend, launcher, "--internet", "dev01", "--no-auth")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +181,7 @@ func TestKirocrew_NoAuthOpensTokenURL(t *testing.T) {
 func TestKirocrew_PrintURLWarnsAboutTheToken(t *testing.T) {
 	backend := enabledKirocrewBackend()
 	launcher := &fakeLauncher{}
-	out, errOut, err := runKirocrewCommand(t, backend, launcher, "dev01", "--no-auth", "--print-url")
+	out, errOut, err := runKirocrewCommand(t, backend, launcher, "--internet", "dev01", "--no-auth", "--print-url")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +197,7 @@ func TestKirocrew_PasswordFailureFallsBackToPlain(t *testing.T) {
 	backend := enabledKirocrewBackend()
 	backend.pwdErr = fmt.Errorf("AccessDenied")
 	launcher := &fakeLauncher{}
-	_, errOut, err := runKirocrewCommand(t, backend, launcher, "dev01")
+	_, errOut, err := runKirocrewCommand(t, backend, launcher, "--internet", "dev01")
 	if err != nil {
 		t.Fatalf("a password failure must degrade, not fail: %v", err)
 	}
@@ -189,7 +211,7 @@ func TestKirocrew_PasswordFailureFallsBackToPlain(t *testing.T) {
 
 func TestKirocrew_Preconditions(t *testing.T) {
 	notEnabled := &fakeKirocrewBackend{webErr: fmt.Errorf("%w: run `nakama aws kirocrew enable dev01` first", service.ErrKiroCrewWebNotEnabled)}
-	if _, _, err := runKirocrewCommand(t, notEnabled, &fakeLauncher{}, "dev01"); err == nil || !strings.Contains(err.Error(), "kirocrew enable dev01") {
+	if _, _, err := runKirocrewCommand(t, notEnabled, &fakeLauncher{}, "--internet", "dev01"); err == nil || !strings.Contains(err.Error(), "kirocrew enable dev01") {
 		t.Errorf("not enabled: err = %v", err)
 	}
 	if notEnabled.minted != 0 {
@@ -198,7 +220,7 @@ func TestKirocrew_Preconditions(t *testing.T) {
 
 	stopped := enabledKirocrewBackend()
 	stopped.web.State = "stopped"
-	if _, _, err := runKirocrewCommand(t, stopped, &fakeLauncher{}, "dev01"); err == nil || !strings.Contains(err.Error(), "nakama aws start dev01") {
+	if _, _, err := runKirocrewCommand(t, stopped, &fakeLauncher{}, "--internet", "dev01"); err == nil || !strings.Contains(err.Error(), "nakama aws start dev01") {
 		t.Errorf("stopped: err = %v", err)
 	}
 	if stopped.minted != 0 {
@@ -207,7 +229,7 @@ func TestKirocrew_Preconditions(t *testing.T) {
 
 	deploying := enabledKirocrewBackend()
 	deploying.web.Deployed = false
-	_, errOut, err := runKirocrewCommand(t, deploying, &fakeLauncher{}, "dev01", "--no-auth")
+	_, errOut, err := runKirocrewCommand(t, deploying, &fakeLauncher{}, "--internet", "dev01", "--no-auth")
 	if err != nil || !strings.Contains(errOut, "still deploying") {
 		t.Errorf("a deploying distribution must warn but proceed: err=%v stderr=%s", err, errOut)
 	}
@@ -219,7 +241,7 @@ func TestKirocrew_EnableAndDisableSubcommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(backend.enabled) != 1 || backend.enabled[0] != "dev01" || !strings.Contains(out, "nakama aws kirocrew dev01") {
+	if len(backend.enabled) != 1 || backend.enabled[0] != "dev01" || !strings.Contains(out, "nakama aws kirocrew --internet dev01") {
 		t.Errorf("enable: calls=%v out=%s", backend.enabled, out)
 	}
 

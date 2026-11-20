@@ -276,14 +276,18 @@ func featurePermissionMatrix() []FeaturePermission {
 			Commands: "nakama aws open",
 			Actions: mergeActions(
 				resolveInstanceActions,
+				sessionActions, // the SSM port forward (the default, ADR 0027)
+				natLookupActions,
 				[]string{
 					"ssm:GetParametersByPath",
 					"wafv2:GetIPSet",
 					"wafv2:ListIPSets", // ListACL -> findIPSetSummary
 				},
 			),
-			Note: "wafv2:ListIPSets / wafv2:GetIPSet と ssm:GetParametersByPath は許可リスト未登録の " +
-				"警告表示のためだけに使い、読めない場合は警告を出さずに続行する",
+			Note: "既定の SSM 経由ではポート転送に ssm:StartSession などを使い、tunnel デーモンが再接続のたびに " +
+				"instance ID を読み直す。wafv2:ListIPSets / wafv2:GetIPSet と ssm:GetParametersByPath は " +
+				"--internet のときに許可リスト未登録の警告表示のためだけに使い、読めない場合は警告を出さずに続行する。" +
+				"ec2:DescribeNatGateways は TargetNotConnected の案内で NAT の方式を調べるときだけ使う",
 			Simulate: true,
 		},
 		{
@@ -291,11 +295,14 @@ func featurePermissionMatrix() []FeaturePermission {
 			Commands: "nakama aws kirocrew",
 			Actions: mergeActions(
 				resolveInstanceActions,
+				sessionActions,      // the SSM port forward to Kiro Crew (the default, ADR 0027)
+				natLookupActions,    // TargetNotConnected advice
 				remoteScriptActions, // the dashboard token is minted on the instance
 				[]string{"cloudfront:GetDistribution"},
 			),
 			Note: "トークンは RSA-OAEP で暗号化して Run Command で受け取る (ADR 0020)。" +
-				"code-server のパスワード読み取りは open と同じ",
+				"既定の SSM 経由では Kiro Crew へポート転送する (ADR 0027)。cloudfront:GetDistribution と " +
+				"code-server のパスワード読み取りは --internet のときだけ使う",
 			Simulate: true,
 		},
 		{

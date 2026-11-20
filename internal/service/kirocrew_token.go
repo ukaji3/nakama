@@ -127,7 +127,7 @@ func decryptKirocrewToken(priv *rsa.PrivateKey, stdout string) (string, error) {
 // MintKiroCrewToken runs `kirocrew token` on the instance and returns
 // the dashboard token. The instance must be running.
 func (s *Service) MintKiroCrewToken(ctx context.Context, name string) (string, error) {
-	m, err := s.loadKirocrewInstance(ctx, name)
+	m, err := s.readKirocrewInstance(ctx, name)
 	if err != nil {
 		return "", err
 	}
