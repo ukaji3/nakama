@@ -71,17 +71,17 @@ func TestForBackup(t *testing.T) {
 func TestForBackupRecordsSource(t *testing.T) {
 	t.Parallel()
 	got := ForBackup("dev01", "l", "n", "t", "", BackupSource{
-		InstanceType: "t4g.medium", Architecture: "arm64", Kind: "bare", IAMRole: "my-role",
+		InstanceType: "t4g.medium", Architecture: "arm64", Kind: "bare", IAMRole: "my-role", CloudFront: true,
 	})
 	for k, want := range map[string]string{
-		KeyInstanceType: "t4g.medium", KeyArchitecture: "arm64", KeyKind: "bare", KeyIAMRole: "my-role",
+		KeyInstanceType: "t4g.medium", KeyArchitecture: "arm64", KeyKind: "bare", KeyIAMRole: "my-role", KeyCloudFront: "true",
 	} {
 		if got[k] != want {
 			t.Errorf("%s = %q, want %q", k, got[k], want)
 		}
 	}
 	none := ForBackup("dev01", "l", "n", "t", "", BackupSource{InstanceType: "t3.medium"})
-	for _, k := range []string{KeyArchitecture, KeyKind, KeyIAMRole} {
+	for _, k := range []string{KeyArchitecture, KeyKind, KeyIAMRole, KeyCloudFront} {
 		if _, ok := none[k]; ok {
 			t.Errorf("empty source field must omit %s, got %v", k, none)
 		}

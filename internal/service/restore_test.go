@@ -550,6 +550,88 @@ func TestRestore_NewInstanceFlow(t *testing.T) {
 	}
 }
 
+// TestRestore_NewInstanceHasNoCloudFrontByDefault: like create, the
+// rebuilt instance has no CloudFront unless --cloudfront is given (ADR
+// 0028): no prefix list, no SG rule, no WAF lookup, no VPC origin.
+func TestRestore_NewInstanceHasNoCloudFrontByDefault(t *testing.T) {
+	t.Parallel()
+	f := newFakeRestoreEC2(taggedSnap("snap-b", "l1", "2026-10-01T00:00:00Z", "t4g.medium", "arm64", "vscode", ""))
+	f.state["i-nat"] = ec2types.InstanceStateNameRunning
+	svc, ssmf, _ := restoreService(f, nil)
+	cf := &spyCF{CloudFrontAPI: svc.clients.CloudFront}
+	svc.clients.CloudFront = cf
+	ingress := &spyEC2{EC2API: f}
+	svc.clients.EC2 = ingress
+	waf := &spyWAF{WAFAPI: svc.clients.WAF}
+	svc.clients.WAF = waf
+
+	p, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01"})
+	if err != nil {
+		t.Fatalf("PlanRestore: %v", err)
+	}
+	if p.CloudFront || len(p.Warnings) != 0 {
+		t.Errorf("plan = %+v, want no CloudFront and no warning", p)
+	}
+	res, err := svc.Restore(context.Background(), p)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if cf.calls != 0 || waf.calls != 0 || ingress.authorized != 0 || ingress.prefixLookups != 0 {
+		t.Errorf("CloudFront calls = %d, WAF calls = %d, SG rules = %d, prefix list lookups = %d; want none",
+			cf.calls, waf.calls, ingress.authorized, ingress.prefixLookups)
+	}
+	for _, path := range []string{ssmVPCOriginIDPath("dev01"), ssmDistributionIDPath("dev01"), ssmDistributionDomainPath("dev01")} {
+		if _, ok := ssmf.put[path]; ok {
+			t.Errorf("%s must not be recorded without CloudFront", path)
+		}
+	}
+	if res.URL != "" || res.CloudFront || indexOf(f.log, "AttachVolume vol-restored i-new") < 0 {
+		t.Errorf("result = %+v, log %v", res, f.log)
+	}
+}
+
+// TestPlanRestore_CloudFrontWarningsAndRejections covers --cloudfront in
+// the plan: a backup of an instance that had CloudFront warns when the
+// flag is missing; the flag is rejected for a bare backup and for an
+// instance that still exists.
+func TestPlanRestore_CloudFrontWarningsAndRejections(t *testing.T) {
+	t.Parallel()
+	withCF := taggedSnap("snap-c", "l1", "2026-10-01T00:00:00Z", "t4g.medium", "arm64", "vscode", "")
+	withCF.Tags = append(withCF.Tags, ec2types.Tag{Key: aws.String(tagging.KeyCloudFront), Value: aws.String(tagging.ValueTrue)})
+
+	svc, _, _ := restoreService(newFakeRestoreEC2(withCF), nil)
+	p, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01"})
+	if err != nil {
+		t.Fatalf("PlanRestore: %v", err)
+	}
+	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "--cloudfront") ||
+		!strings.Contains(p.Warnings[0], "nakama aws cloudfront add dev01") {
+		t.Errorf("warnings = %q, want one pointing at --cloudfront and cloudfront add", p.Warnings)
+	}
+	p, err = svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01", CloudFront: true})
+	if err != nil {
+		t.Fatalf("PlanRestore(--cloudfront): %v", err)
+	}
+	if !p.CloudFront || len(p.Warnings) != 0 {
+		t.Errorf("plan = %+v, want CloudFront and no warning", p)
+	}
+
+	bare := taggedSnap("snap-b", "l1", "2026-10-01T00:00:00Z", "t4g.medium", "arm64", "bare", "")
+	svc, _, _ = restoreService(newFakeRestoreEC2(bare), nil)
+	if _, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01", CloudFront: true}); err == nil ||
+		!strings.Contains(err.Error(), "bare") {
+		t.Errorf("--cloudfront on a bare backup: err = %v, want a rejection", err)
+	}
+
+	f := newFakeRestoreEC2(withCF)
+	f.state["i-old"] = ec2types.InstanceStateNameRunning
+	svc, _, _ = restoreService(f, map[string]string{ssmInstanceIDPath("dev01"): "i-old"})
+	if _, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01", CloudFront: true}); err == nil ||
+		!strings.Contains(err.Error(), "cloudfront add") {
+		t.Errorf("--cloudfront in place: err = %v, want a rejection pointing at cloudfront add", err)
+	}
+}
+
 func TestRestore_NewBareInstanceHasNoBrowserPath(t *testing.T) {
 	t.Parallel()
 	f := newFakeRestoreEC2(taggedSnap("snap-b", "l1", "2026-10-01T00:00:00Z", "t4g.medium", "arm64", "bare", ""))

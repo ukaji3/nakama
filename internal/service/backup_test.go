@@ -188,6 +188,14 @@ func TestCreateBackup_RecordsTheSourceInstance(t *testing.T) {
 				tagging.KeyInstanceType: "m7g.xlarge", tagging.KeyArchitecture: "arm64",
 				tagging.KeyKind: instanceKindVSCode, tagging.KeyIAMRole: "nakama-admin-role",
 			},
+			absent: []string{tagging.KeyCloudFront},
+		},
+		{
+			name:   "code-server instance with CloudFront",
+			params: map[string]string{ssmDistributionIDPath("dev01"): "E1"},
+			want: map[string]string{
+				tagging.KeyInstanceType: "m7g.xlarge", tagging.KeyKind: instanceKindVSCode, tagging.KeyCloudFront: tagging.ValueTrue,
+			},
 		},
 		{
 			name:   "bare instance without a role",
@@ -195,7 +203,7 @@ func TestCreateBackup_RecordsTheSourceInstance(t *testing.T) {
 			want: map[string]string{
 				tagging.KeyInstanceType: "m7g.xlarge", tagging.KeyArchitecture: "arm64", tagging.KeyKind: instanceKindBare,
 			},
-			absent: []string{tagging.KeyIAMRole},
+			absent: []string{tagging.KeyIAMRole, tagging.KeyCloudFront},
 		},
 	}
 	for _, c := range cases {
@@ -225,7 +233,7 @@ func TestCreateBackup_RecordsTheSourceInstance(t *testing.T) {
 					t.Errorf("tag %s must be absent, got %q", k, tags[k])
 				}
 			}
-			if b.InstanceType != "m7g.xlarge" || b.Kind != c.want[tagging.KeyKind] {
+			if b.InstanceType != "m7g.xlarge" || b.Kind != c.want[tagging.KeyKind] || b.CloudFront != (c.want[tagging.KeyCloudFront] == tagging.ValueTrue) {
 				t.Errorf("returned backup does not carry the source: %+v", b)
 			}
 		})
@@ -241,12 +249,13 @@ func TestSnapshotToBackup_MapsTheSourceTags(t *testing.T) {
 		ec2types.Tag{Key: aws.String(tagging.KeyArchitecture), Value: aws.String("x86_64")},
 		ec2types.Tag{Key: aws.String(tagging.KeyKind), Value: aws.String("bare")},
 		ec2types.Tag{Key: aws.String(tagging.KeyIAMRole), Value: aws.String("r")},
+		ec2types.Tag{Key: aws.String(tagging.KeyCloudFront), Value: aws.String(tagging.ValueTrue)},
 	)
 	b := snapshotToBackup(sn)
-	if b.InstanceType != "t3.medium" || b.Architecture != "x86_64" || b.Kind != "bare" || b.IAMRole != "r" {
+	if b.InstanceType != "t3.medium" || b.Architecture != "x86_64" || b.Kind != "bare" || b.IAMRole != "r" || !b.CloudFront {
 		t.Errorf("source tags not mapped: %+v", b)
 	}
-	if old := snapshotToBackup(snap("snap-2", "l", "", "t")); old.InstanceType != "" || old.Kind != "" {
+	if old := snapshotToBackup(snap("snap-2", "l", "", "t")); old.InstanceType != "" || old.Kind != "" || old.CloudFront {
 		t.Errorf("a backup without source tags must map to empty fields: %+v", old)
 	}
 }

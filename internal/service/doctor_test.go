@@ -10,11 +10,14 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 
 	"github.com/ukaji3/nakama/internal/awsx"
 	"github.com/ukaji3/nakama/internal/cliproxy"
+	"github.com/ukaji3/nakama/internal/tagging"
 	"github.com/ukaji3/nakama/internal/version"
 )
 
@@ -264,6 +267,80 @@ func TestDiagnoseWAFUnknownPublicIP(t *testing.T) {
 	if c.Status != CheckWarn || !strings.Contains(c.Detail, "could not determine") {
 		t.Errorf("check = %+v, want a warn about the unknown IP", c)
 	}
+}
+
+// TestDiagnoseWAFOnlyMattersWithCloudFront: CloudFront is opt-in (ADR
+// 0028). With no instance that has it, the allowlist is not in use and
+// the check is skipped, even when this machine is not in it; with some,
+// the detail names them; when they cannot be listed, the allowlist is
+// checked as before.
+func TestDiagnoseWAFOnlyMattersWithCloudFront(t *testing.T) {
+	notListed := []ACLEntry{{CIDR: "198.51.100.1/32"}}
+
+	opts := doctorAWSOpts(t, notListed, "203.0.113.77", nil, &fakeDoctorIAM{})
+	opts.cloudFrontInstances = func(context.Context) ([]string, error) { return nil, nil }
+	listed := false
+	opts.aclEntries = func(context.Context) ([]ACLEntry, error) { listed = true; return notListed, nil }
+	rep := Diagnose(context.Background(), opts)
+	c := checkByName(t, rep, "waf-allowlist")
+	if c.Status != CheckSkip || !strings.Contains(c.Detail, "no instance has CloudFront") {
+		t.Errorf("without CloudFront: check = %+v, want skip", c)
+	}
+	if listed {
+		t.Error("without CloudFront the allowlist need not be read")
+	}
+	if rep.Warns != 0 {
+		t.Errorf("Warns = %d, want 0 without CloudFront", rep.Warns)
+	}
+
+	opts = doctorAWSOpts(t, []ACLEntry{{CIDR: "203.0.113.0/24"}}, "203.0.113.77", nil, &fakeDoctorIAM{})
+	opts.cloudFrontInstances = func(context.Context) ([]string, error) { return []string{"dev01", "web01"}, nil }
+	c = checkByName(t, Diagnose(context.Background(), opts), "waf-allowlist")
+	if c.Status != CheckOK || !strings.Contains(c.Detail, "CloudFront on dev01, web01") {
+		t.Errorf("with CloudFront: check = %+v, want ok naming the instances", c)
+	}
+
+	opts = doctorAWSOpts(t, notListed, "203.0.113.77", nil, &fakeDoctorIAM{})
+	opts.cloudFrontInstances = func(context.Context) ([]string, error) { return nil, errors.New("AccessDenied") }
+	c = checkByName(t, Diagnose(context.Background(), opts), "waf-allowlist")
+	if c.Status != CheckWarn || strings.Contains(c.Detail, "CloudFront on") {
+		t.Errorf("lookup failed: check = %+v, want the plain allowlist verdict", c)
+	}
+}
+
+// TestCloudFrontInstanceNames counts the instances whose distribution
+// domain is recorded.
+func TestCloudFrontInstanceNames(t *testing.T) {
+	t.Parallel()
+	svc, _ := cfService(newCFAccount(ec2types.InstanceStateNameRunning), nil)
+	svc.clients.EC2 = listEC2{names: []string{"web01", "dev01", "box01"}}
+	sm := svc.clients.SSM.(*fakeKirocrewSSM)
+	sm.params[ssmDistributionDomainPath("web01")] = "dweb.cloudfront.net"
+	sm.params[ssmDistributionDomainPath("dev01")] = "ddev.cloudfront.net"
+	names, err := svc.cloudFrontInstanceNames(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(names, ",") != "dev01,web01" {
+		t.Errorf("names = %v, want dev01,web01 (sorted, box01 has none)", names)
+	}
+}
+
+// listEC2 answers the instance listing with one instance per name.
+type listEC2 struct {
+	awsx.EC2API
+	names []string
+}
+
+func (f listEC2) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	out := &ec2.DescribeInstancesOutput{}
+	for i, n := range f.names {
+		out.Reservations = append(out.Reservations, ec2types.Reservation{Instances: []ec2types.Instance{{
+			InstanceId: aws.String(fmt.Sprintf("i-%d", i)), State: &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning},
+			Tags: []ec2types.Tag{{Key: aws.String(tagging.KeyName), Value: aws.String(n)}},
+		}}})
+	}
+	return out, nil
 }
 
 func TestDiagnoseCredentialsReportsIdentityAndProfile(t *testing.T) {
