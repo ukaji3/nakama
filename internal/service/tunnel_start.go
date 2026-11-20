@@ -28,10 +28,15 @@ type tunnelHooks struct {
 	query func(ctx context.Context, st *TunnelState, timeout time.Duration) (*TunnelStatus, error)
 	// requestStop asks a daemon to shut down gracefully.
 	requestStop func(ctx context.Context, st *TunnelState, timeout time.Duration) error
+	// addForward asks a running daemon to start one more forward.
+	addForward func(ctx context.Context, st *TunnelState, f ForwardSpec, timeout time.Duration) (*ForwardStatus, error)
 	// listenLocal probes that a local port is free (preflight).
 	listenLocal func(port string) error
-	sleep       func(ctx context.Context, d time.Duration) error
-	now         func() time.Time
+	// probeHTTP sends one HTTP request through a browser forward's
+	// local port (EnsureBrowserForward's readiness check).
+	probeHTTP func(ctx context.Context, port, path string) error
+	sleep     func(ctx context.Context, d time.Duration) error
+	now       func() time.Time
 }
 
 func defaultTunnelHooks() *tunnelHooks {
@@ -39,7 +44,9 @@ func defaultTunnelHooks() *tunnelHooks {
 		spawn:       spawnTunnelDaemon,
 		query:       queryTunnelStatus,
 		requestStop: requestTunnelStop,
+		addForward:  requestTunnelAddForward,
 		listenLocal: probeLocalPort,
+		probeHTTP:   probeBrowserForward,
 		sleep:       sleepCtx,
 		now:         time.Now,
 	}
@@ -54,15 +61,66 @@ func (s *Service) tunnelHooksOrDefault() *tunnelHooks {
 	return defaultTunnelHooks()
 }
 
-// probeLocalPort checks that the forward's local listener port is
-// still free. The plugin binds "localhost:<port>"; probing the same
-// name catches both v4 and v6 conflicts without connecting anywhere.
+// probeLocalPort checks that a forward's local port is free: the daemon
+// binds it on 127.0.0.1 and ::1 (listenLoopback), so the probe does the
+// same.
 func probeLocalPort(port string) error {
-	l, err := net.Listen("tcp", "localhost:"+port)
+	ls, err := listenLoopback(port)
 	if err != nil {
-		return fmt.Errorf("local port %s is not available: %w", port, err)
+		return err
 	}
-	return l.Close()
+	for _, l := range ls {
+		_ = l.Close()
+	}
+	return nil
+}
+
+// probeBrowserForward sends one HTTP request through a forward's local
+// port the way a browser will (Host localhost:<port>). Any HTTP answer
+// counts: it proves that the whole path, down to the far end, answers.
+func probeBrowserForward(ctx context.Context, port, path string) error {
+	host := net.JoinHostPort("localhost", port)
+	return httpHealthCheck(ctx, host, host, path)
+}
+
+// tunnelHoldingPort returns the instance whose recorded tunnel forwards
+// the local port, or "" (read from the state files; no daemon is
+// asked).
+func tunnelHoldingPort(port string) string {
+	names, err := listTunnelStateNames()
+	if err != nil {
+		return ""
+	}
+	for _, name := range names {
+		st, err := readTunnelState(name)
+		if err != nil {
+			continue
+		}
+		for _, raw := range st.Forwards {
+			if f, err := ParseStoredForwardSpec(raw); err == nil && f.LocalPort == port {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// checkLocalPortFree is the preflight of every new forward: the port
+// must be bindable, and when it is not, the error names the nakama
+// tunnel that holds it, if one does.
+func checkLocalPortFree(hooks *tunnelHooks, port string) error {
+	err := hooks.listenLocal(port)
+	if err == nil {
+		return nil
+	}
+	if holder := tunnelHoldingPort(port); holder != "" {
+		return &LocalPortInUseError{Port: port, Holder: holder, Err: err}
+	}
+	var inUse *LocalPortInUseError
+	if errors.As(err, &inUse) {
+		return err
+	}
+	return &LocalPortInUseError{Port: port, Err: err}
 }
 
 // tunnelControlTimeout is the per-request budget for control-channel
@@ -109,7 +167,7 @@ func (s *Service) StartTunnel(ctx context.Context, name string, forwards []Forwa
 		return nil, fmt.Errorf("nakama instance %q not found", name)
 	}
 	for _, f := range forwards {
-		if err := hooks.listenLocal(f.LocalPort); err != nil {
+		if err := checkLocalPortFree(hooks, f.LocalPort); err != nil {
 			return nil, err
 		}
 	}
@@ -204,7 +262,7 @@ func (s *Service) RestartTunnel(ctx context.Context, name string) (*TunnelStatus
 	// Re-validate the recorded specs before tearing anything down: the
 	// state file is user-writable, and a spec that no longer parses
 	// must fail while the old daemon (if alive) keeps forwarding.
-	forwards, err := ParseForwardSpecs(st.Forwards)
+	forwards, err := ParseStoredForwardSpecs(st.Forwards)
 	if err != nil {
 		return nil, fmt.Errorf("tunnel state for %q contains invalid forwards: %w", name, err)
 	}
@@ -252,7 +310,7 @@ func spawnTunnelDaemon(name string, forwards []ForwardSpec) (int, error) {
 	}
 	args := append(append([]string{}, tunnelDaemonArgs...), "--name", name)
 	for _, f := range forwards {
-		args = append(args, "--forward", f.String())
+		args = append(args, "--forward", f.Stored())
 	}
 	cmd := exec.Command(exe, args...) // #nosec G204 -- argv is the re-exec'd nakama binary plus validated specs
 	cmd.SysProcAttr = tunnelDaemonSysProcAttr()

@@ -172,8 +172,25 @@ func (s *Service) DeleteInstance(ctx context.Context, in DeleteInstanceInput) er
 	if err := s.reconcileNATInstancePowerStateExcluding(ctx, instanceID); err != nil {
 		slog.Warn("delete: NAT instance reconcile failed", "error", err)
 	}
+	// A tunnel daemon on this machine would keep retrying a forward to
+	// an instance that no longer exists, holding its local ports (Issue
+	// #118). Best-effort: the delete already succeeded.
+	s.stopLocalTunnel(ctx, in.Name)
 	slog.Info("delete: completed", "name", in.Name)
 	return nil
+}
+
+// stopLocalTunnel stops this machine's tunnel daemon of the instance,
+// if one runs. Failures only warn.
+func (s *Service) stopLocalTunnel(ctx context.Context, name string) {
+	outcome, err := s.StopTunnel(ctx, name)
+	switch {
+	case isNoTunnel(err):
+	case err != nil:
+		slog.Warn("delete: could not stop the local tunnel; stop it with `nakama aws tunnel stop`", "name", name, "error", err)
+	case outcome.WasRunning:
+		slog.Info("delete: stopped the local tunnel", "name", name)
+	}
 }
 
 // --- resources without a record --------------------------------------------

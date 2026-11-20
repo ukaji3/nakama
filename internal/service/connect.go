@@ -81,33 +81,17 @@ func connectSessionMode(in ConnectInput) sessionMode {
 	return sessionModeTerminal
 }
 
-// sessionObserver receives lifecycle notifications from
-// superviseSession. Implementations must be safe for use from the
-// supervising goroutine only (no concurrency is introduced by the
-// supervisor itself). The terminal outcome is superviseSession's
-// return value, not an observer callback.
-type sessionObserver interface {
-	// SessionStarted fires after a successful StartSession, right
-	// before the session-runner child is spawned.
-	SessionStarted(sessionID string)
-	// SessionRetrying fires when the supervisor decides to retry
-	// (retryable StartSession error or permanent disconnect), before
-	// the backoff sleep. attempt is 1-based and counts against
-	// maxRetries.
-	SessionRetrying(attempt, maxRetries int, reason error)
-}
-
 // superviseSessionInput parameterizes one supervised Session Manager
-// session (ADR 0014). It is shared by `connect` (shell / command) and
-// by each `tunnel` port forward (ADR 0017).
+// session of `connect` (shell / command, ADR 0014). Tunnel forwards
+// have their own supervisor (forwardRunner, ADR 0027).
 type superviseSessionInput struct {
 	InstanceID   string
 	DocumentName *string
 	Parameters   map[string][]string
 
-	// Mode tells the session-runner child how to drive the plugin
-	// (sessionModeRaw for tunnel forwards). In command mode the outcome
-	// is the remote command's exit status (ADR 0021).
+	// Mode tells the session-runner child how to drive the plugin. In
+	// command mode the outcome is the remote command's exit status
+	// (ADR 0021).
 	Mode sessionMode
 	// Marker is command mode's frame marker, the one the remote wrapper
 	// in Parameters was built with.
@@ -120,26 +104,10 @@ type superviseSessionInput struct {
 	// ShellReconnectNote prints the "new session, shell state lost"
 	// advisory on reconnect (interactive shell mode only).
 	ShellReconnectNote bool
-
-	// RetryChildFailures also consumes reconnect attempts for generic
-	// session-runner failures (any non-zero exit other than
-	// DisconnectExitCode). Tunnel forwards enable this: a port-forward
-	// child has no user shell whose exit code must be preserved, and a
-	// failure to (re-)establish the data channel — e.g. the websocket
-	// dial right after a laptop wake, before the network is back —
-	// surfaces as a generic exit 1, not as the DisconnectExitCode gate
-	// (which only fires after the channel was established). connect
-	// keeps this off: a failed command must not be re-run behind the
-	// user's back, and its outcome is reported as is (ADR 0014,
-	// ADR 0021).
-	RetryChildFailures bool
-
-	// Observer, when non-nil, receives lifecycle notifications.
-	Observer sessionObserver
 }
 
-// errConnectionLost is the reason passed to SessionRetrying when the
-// session-runner child reports a permanent disconnect.
+// errConnectionLost describes a session-runner child that reported a
+// permanent disconnect.
 var errConnectionLost = errors.New("connection lost")
 
 // superviseSession runs the StartSession → session-runner child loop
@@ -148,15 +116,11 @@ var errConnectionLost = errors.New("connection lost")
 // attempt from the MaxRetries budget with exponential backoff; a
 // session that stayed alive for at least hooks.stableAfter replenishes
 // the budget (autossh-style); authentication errors abort immediately
-// with an `aws login` advisory.
+// with an `aws login` advisory. Any other child failure is returned as
+// is: a failed command must not be re-run behind the user's back
+// (ADR 0014, ADR 0021).
 func (s *Service) superviseSession(ctx context.Context, in superviseSessionInput) error {
-	return s.superviseSessionWithHooks(ctx, in, s.connectHooksOrDefault())
-}
-
-// superviseSessionWithHooks is superviseSession with explicit
-// supervision hooks; the tunnel daemon injects hooks that wire child
-// stdio into the OS log instead of a terminal (ADR 0017).
-func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSessionInput, hooks *connectHooks) error {
+	hooks := s.connectHooksOrDefault()
 	if in.MaxRetries < 0 {
 		return fmt.Errorf("invalid retry count %d: must be >= 0", in.MaxRetries)
 	}
@@ -188,9 +152,6 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 					return s.targetNotConnectedHint(ctx, fmt.Errorf("StartSession: %w", err))
 				}
 				attempt++
-				if in.Observer != nil {
-					in.Observer.SessionRetrying(attempt, in.MaxRetries, err)
-				}
 				_, _ = fmt.Fprintf(hooks.notify, "target not connected; retrying (attempt %d/%d)...\n",
 					attempt, in.MaxRetries)
 				if err := hooks.sleep(ctx, backoffDelay(attempt)); err != nil {
@@ -216,9 +177,6 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 			return fmt.Errorf("encode session payload: %w", err)
 		}
 
-		if in.Observer != nil {
-			in.Observer.SessionStarted(aws.ToString(out.SessionId))
-		}
 		startedAt := hooks.now()
 		res, err := hooks.runSession(ctx, sessionRunRequest{
 			payload:        payload,
@@ -253,9 +211,6 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 				return fmt.Errorf("connection lost and %d reconnect attempt(s) exhausted", in.MaxRetries)
 			}
 			attempt++
-			if in.Observer != nil {
-				in.Observer.SessionRetrying(attempt, in.MaxRetries, errConnectionLost)
-			}
 			_, _ = fmt.Fprintf(hooks.notify, "connection lost; reconnecting (attempt %d/%d)...\n",
 				attempt, in.MaxRetries)
 			if in.ShellReconnectNote {
@@ -272,33 +227,11 @@ func (s *Service) superviseSessionWithHooks(ctx context.Context, in superviseSes
 			// printed it), never the remote command's status, which the
 			// plugin does not propagate (ADR 0021). connect returns it;
 			// in command mode as 255, ssh-style, so a script can tell it
-			// from a status the remote command chose. Tunnel forwards
-			// instead consume a reconnect attempt (RetryChildFailures),
-			// because a failed data-channel establishment exits with a
-			// generic code and never reaches the DisconnectExitCode gate.
-			exitErr := &ExitCodeError{Code: code}
+			// from a status the remote command chose.
 			if in.Mode == sessionModeCommand {
-				exitErr = &ExitCodeError{Code: localFailureExitCode, Message: fmt.Sprintf("session runner exited with code %d", code)}
+				return &ExitCodeError{Code: localFailureExitCode, Message: fmt.Sprintf("session runner exited with code %d", code)}
 			}
-			if !in.RetryChildFailures || disconnectCode == 0 {
-				return exitErr
-			}
-			if alive >= hooks.stableAfter {
-				attempt = 0
-			}
-			if attempt >= in.MaxRetries {
-				return fmt.Errorf("%w and %d reconnect attempt(s) exhausted", exitErr, in.MaxRetries)
-			}
-			attempt++
-			if in.Observer != nil {
-				in.Observer.SessionRetrying(attempt, in.MaxRetries, exitErr)
-			}
-			_, _ = fmt.Fprintf(hooks.notify, "session runner failed (exit code %d); reconnecting (attempt %d/%d)...\n",
-				code, attempt, in.MaxRetries)
-			if err := hooks.sleep(ctx, backoffDelay(attempt)); err != nil {
-				return err
-			}
-			continue
+			return &ExitCodeError{Code: code}
 		}
 	}
 }
