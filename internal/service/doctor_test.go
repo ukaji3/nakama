@@ -213,6 +213,8 @@ func doctorAWSOpts(t *testing.T, acl []ACLEntry, ip string, ipErr error, iamFake
 		},
 		activeProfile: func() (string, bool) { return "prod", true },
 		aclEntries:    func(context.Context) ([]ACLEntry, error) { return acl, nil },
+		// One instance has CloudFront, so the allowlist is in use.
+		cloudFrontInstances: func(context.Context) ([]string, error) { return []string{"dev01"}, nil },
 		publicIP: func(context.Context) (string, error) {
 			if ipErr != nil {
 				return "", ipErr

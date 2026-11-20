@@ -121,8 +121,10 @@ func runningBackend() *fakeOpenBackend {
 			Name:               "dev01",
 			InstanceID:         "i-0123456789abcdef0",
 			State:              "running",
+			DistributionID:     "E111ABCDEF",
 			DistributionDomain: "d111abcdef.cloudfront.net",
 			URL:                "https://d111abcdef.cloudfront.net",
+			CloudFront:         true,
 		},
 		password: "s3cret-pw",
 		acl:      []service.ACLEntry{{CIDR: "203.0.113.10/32"}},
@@ -458,8 +460,32 @@ func TestOpen_Preflight_NoDistributionDomain(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when the distribution domain is missing")
 	}
-	if !strings.Contains(err.Error(), "distribution") {
-		t.Errorf("error should mention the distribution: %v", err)
+	// A distribution without its domain is an add that stopped part
+	// way; re-running it finishes it.
+	if !strings.Contains(err.Error(), "distribution") || !strings.Contains(err.Error(), "nakama aws cloudfront add dev01") {
+		t.Errorf("error should mention the distribution and how to finish it: %v", err)
+	}
+}
+
+// TestOpen_Preflight_NoCloudFront: CloudFront is opt-in (ADR 0028), so
+// --internet on an instance without it says how to add it, and that
+// the default SSM path works without it.
+func TestOpen_Preflight_NoCloudFront(t *testing.T) {
+	backend := runningBackend()
+	backend.info.CloudFront = false
+	backend.info.DistributionID, backend.info.DistributionDomain, backend.info.URL = "", "", ""
+	launcher := &fakeLauncher{}
+	_, _, err := runOpenCommand(t, newTestOpenDeps(backend, launcher), "--internet", "dev01")
+	if err == nil {
+		t.Fatal("expected an error for --internet without CloudFront")
+	}
+	for _, want := range []string{"no CloudFront", "nakama aws cloudfront add dev01", "without --internet"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+	if len(launcher.opened()) != 0 {
+		t.Error("no browser may be opened when the preflight fails")
 	}
 }
 

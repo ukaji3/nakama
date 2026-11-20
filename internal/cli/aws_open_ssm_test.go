@@ -140,7 +140,7 @@ func TestOpenSSM_Preflight(t *testing.T) {
 	}
 	// Over SSM no CloudFront distribution is needed.
 	noCF := runningBackend()
-	noCF.info.DistributionDomain, noCF.info.URL = "", ""
+	noCF.info.DistributionID, noCF.info.DistributionDomain, noCF.info.URL, noCF.info.CloudFront = "", "", "", false
 	if _, _, err := runOpenCommand(t, newTestOpenDeps(noCF, &fakeLauncher{}), "dev01", "--no-auth"); err != nil {
 		t.Errorf("an instance without a distribution must open over SSM: %v", err)
 	}

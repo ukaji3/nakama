@@ -187,8 +187,10 @@ errors, network changes and sleep. Nothing on the instance is reachable
 from the internet for this. See it with ` + "`nakama aws tunnel status <name>`" + `
 and stop it with ` + "`nakama aws tunnel stop <name>`" + `.
 
---internet opens the CloudFront URL instead (ADR 0012); it needs your
-public IP in the WAF allowlist (` + "`nakama aws acl add`" + `).
+--internet opens the CloudFront URL instead (ADR 0012). It needs a
+CloudFront distribution, which instances get only on request
+(` + "`nakama aws cloudfront add <name>`" + `, ADR 0028), and your public IP in
+the WAF allowlist (` + "`nakama aws acl add`" + `).
 
 The password is fetched from SSM Parameter Store, kept in memory only,
 and handed to the browser through a one-shot page served on 127.0.0.1
@@ -222,7 +224,7 @@ func addOpenFlags(cmd *cobra.Command, f *openFlags, help openFlagHelp) {
 	cmd.Flags().DurationVar(&f.timeout, "timeout", 30*time.Second,
 		"How long to wait for the browser to fetch the one-shot login page")
 	cmd.Flags().BoolVar(&f.internet, "internet", false,
-		"Use the CloudFront distribution (needs your IP in the WAF allowlist) instead of an SSM port forward")
+		"Use the CloudFront distribution (`nakama aws cloudfront add`; needs your IP in the WAF allowlist) instead of an SSM port forward")
 	cmd.Flags().IntVar(&f.localPort, "local-port", 0,
 		"Local port of the SSM port forward (default: the instance's port, i.e. 8080 for code-server and 5476 for Kiro Crew)")
 }
@@ -337,9 +339,13 @@ func runAWSOpenInternet(ctx context.Context, cmd *cobra.Command, name string, f 
 	if err != nil {
 		return err
 	}
+	if info.Kind != "bare" && !info.CloudFront {
+		return fmt.Errorf("instance %q has no CloudFront; add it with `nakama aws cloudfront add %s` "+
+			"(takes ~15-20 minutes), or open it over SSM without --internet", name, name)
+	}
 	if info.Kind != "bare" && (info.DistributionDomain == "" || info.URL == "") {
-		return fmt.Errorf("instance %q has no CloudFront distribution domain yet; "+
-			"the distribution may still be provisioning — check with `nakama aws info %s`", name, name)
+		return fmt.Errorf("instance %q has a CloudFront distribution but no domain recorded yet; "+
+			"run `nakama aws cloudfront add %s` again to finish it", name, name)
 	}
 	if err := requireCodeServer(info, name); err != nil {
 		return err

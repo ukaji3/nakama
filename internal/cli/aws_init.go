@@ -41,7 +41,8 @@ func newAWSInitCommand() *cobra.Command {
     deleted and its Elastic IP released, or the NAT instance terminated
     and its security group deleted (its IAM role is kept)
   - WAFv2 IP set (` + "`nakama-allowed-ips`" + `, empty)
-  - WAFv2 web ACL (` + "`nakama-waf`" + `, default-block + IP-set allow rule)
+  - WAFv2 web ACL (` + "`nakama-waf`" + `, default-block + IP-set allow rule),
+    used by the instances given CloudFront (` + "`nakama aws cloudfront add`" + `)
   - SSM markers under /nakama/_meta/* (including the NAT mode)
 
 Without --nat, init keeps the mode it recorded. An environment set up

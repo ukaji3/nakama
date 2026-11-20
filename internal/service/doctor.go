@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -87,6 +88,9 @@ type DoctorOptions struct {
 	aclEntries func(ctx context.Context) ([]ACLEntry, error)
 	// publicIP overrides this machine's public IP lookup in tests.
 	publicIP func(ctx context.Context) (string, error)
+	// cloudFrontInstances overrides the lookup of the instances with
+	// CloudFront in tests.
+	cloudFrontInstances func(ctx context.Context) ([]string, error)
 	// tunnelNames overrides the tunnel state listing in tests.
 	tunnelNames func() ([]string, error)
 	// tunnelStatus overrides the per-tunnel status probe in tests.
@@ -224,7 +228,9 @@ func activeProfileName() (string, bool) {
 }
 
 // diagnoseWAF reports whether this machine's public IP can reach
-// code-server through the WAF allowlist.
+// code-server through the WAF allowlist. The allowlist matters only for
+// instances with CloudFront (ADR 0028): without any, the check is
+// skipped instead of warning about an allowlist nothing uses.
 func diagnoseWAF(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 	listACL := opts.aclEntries
 	if listACL == nil {
@@ -234,6 +240,30 @@ func diagnoseWAF(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 	if publicIP == nil {
 		publicIP = opts.Clients.IPDiscoverer.PublicIPv4
 	}
+	cloudFrontInstances := opts.cloudFrontInstances
+	if cloudFrontInstances == nil {
+		cloudFrontInstances = NewService(opts.Clients).cloudFrontInstanceNames
+	}
+
+	// "" when the lookup failed: the allowlist is checked as before,
+	// since it may be in use.
+	using := ""
+	names, err := cloudFrontInstances(ctx)
+	switch {
+	case err != nil:
+		slog.Debug("doctor: could not list the instances with CloudFront", "error", err)
+	case len(names) == 0:
+		rep.add(DoctorCheck{
+			Name:   "waf-allowlist",
+			Status: CheckSkip,
+			Detail: "no instance has CloudFront, so the allowlist is not used " +
+				"(open/kirocrew over SSM, connect, tunnel and ssh do not need it)",
+		})
+		return
+	default:
+		using = "; CloudFront on " + strings.Join(names, ", ")
+	}
+
 	entries, err := listACL(ctx)
 	if err != nil {
 		rep.add(DoctorCheck{
@@ -250,7 +280,7 @@ func diagnoseWAF(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 			Name:   "waf-allowlist",
 			Status: CheckWarn,
 			Detail: fmt.Sprintf("%d entr%s in the IP set; could not determine this machine's public IP: %v",
-				len(entries), plural(len(entries)), err),
+				len(entries), plural(len(entries)), err) + using,
 		})
 		return
 	}
@@ -259,7 +289,7 @@ func diagnoseWAF(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 			rep.add(DoctorCheck{
 				Name:   "waf-allowlist",
 				Status: CheckOK,
-				Detail: fmt.Sprintf("this machine (%s) is allowed by %s", ip, e.CIDR),
+				Detail: fmt.Sprintf("this machine (%s) is allowed by %s", ip, e.CIDR) + using,
 			})
 			return
 		}
@@ -267,10 +297,26 @@ func diagnoseWAF(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 	rep.add(DoctorCheck{
 		Name:   "waf-allowlist",
 		Status: CheckWarn,
-		Detail: fmt.Sprintf("this machine (%s) is not in the allowlist (%d entr%s)", ip, len(entries), plural(len(entries))),
+		Detail: fmt.Sprintf("this machine (%s) is not in the allowlist (%d entr%s)", ip, len(entries), plural(len(entries))) + using,
 		Advice: "run `nakama aws acl add` to allow it if you open code-server or Kiro Crew with --internet (CloudFront); " +
 			"open/kirocrew over SSM (the default) and connect/tunnel/ssh do not use the allowlist",
 	})
+}
+
+// cloudFrontInstanceNames returns the names of the instances that have
+// a CloudFront distribution, sorted.
+func (s *Service) cloudFrontInstanceNames(ctx context.Context) ([]string, error) {
+	rows, err := s.ListInstances(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, r := range rows {
+		if r.DistributionDomain != "" {
+			names = append(names, r.Name)
+		}
+	}
+	return names, nil
 }
 
 // aclEntryCoversIP reports whether the allowlist entry covers ip. Only
