@@ -25,6 +25,10 @@ const (
 	KeyArchitecture = "nakama:architecture"
 	KeyKind         = "nakama:kind"
 	KeyIAMRole      = "nakama:iam-role"
+	// KeyCloudFront marks, with ValueTrue, a backup of an instance that
+	// had a CloudFront distribution. Restore does not add CloudFront on
+	// its own and warns from this tag instead (ADR 0028).
+	KeyCloudFront = "nakama:cloudfront"
 	// NameTag is the standard AWS Name tag, kept separate from KeyName.
 	NameTag = "Name"
 )
@@ -32,6 +36,8 @@ const (
 // Common tag values.
 const (
 	ValueManagedTrue = "true"
+	// ValueTrue is the value of boolean tags such as KeyCloudFront.
+	ValueTrue = "true"
 )
 
 // Component values (used as tag value for KeyComponent).
@@ -89,6 +95,7 @@ type BackupSource struct {
 	Architecture string // "x86_64" or "arm64"
 	Kind         string // "vscode" or "bare"
 	IAMRole      string // set only with create --with-admin / --with-role
+	CloudFront   bool   // the instance had a CloudFront distribution (ADR 0028)
 }
 
 // ForBackup returns the tag set for a backup (EBS snapshot).
@@ -112,6 +119,9 @@ func ForBackup(instanceName, label, nameTag, createdAt, note string, src BackupS
 		if v != "" {
 			m[k] = v
 		}
+	}
+	if src.CloudFront {
+		m[KeyCloudFront] = ValueTrue
 	}
 	return m
 }

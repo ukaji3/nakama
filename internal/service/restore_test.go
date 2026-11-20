@@ -475,7 +475,7 @@ func TestRestore_NewInstanceFlow(t *testing.T) {
 	f.state["i-nat"] = ec2types.InstanceStateNameStopped
 	svc, ssmf, ami := restoreService(f, nil)
 
-	p, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01"})
+	p, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01", CloudFront: true})
 	if err != nil {
 		t.Fatalf("PlanRestore: %v", err)
 	}
@@ -544,7 +544,8 @@ func TestRestore_NewInstanceFlow(t *testing.T) {
 	if indexOf(f.log, "StartInstances i-new") >= 0 || f.state["i-new"] != ec2types.InstanceStateNameStopped {
 		t.Errorf("the instance must be left stopped; state %s, log %v", f.state["i-new"], f.log)
 	}
-	if res.Mode != RestoreModeNewInstance || res.InstanceID != "i-new" || res.URL != "https://dnew.cloudfront.net" || res.Label != "l1" {
+	if res.Mode != RestoreModeNewInstance || res.InstanceID != "i-new" || res.URL != "https://dnew.cloudfront.net" || res.Label != "l1" ||
+		!res.CloudFront {
 		t.Errorf("result = %+v", res)
 	}
 }

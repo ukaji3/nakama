@@ -178,7 +178,10 @@ func (f *createEC2) DescribeSecurityGroups(_ context.Context, in *ec2.DescribeSe
 	return out, nil
 }
 
-func (f *createEC2) DescribeNetworkInterfaces(_ context.Context, in *ec2.DescribeNetworkInterfacesInput, _ ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
+func (f *createEC2) DescribeNetworkInterfaces(ctx context.Context, in *ec2.DescribeNetworkInterfacesInput, _ ...func(*ec2.Options)) (*ec2.DescribeNetworkInterfacesOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.lookups++
 	if err := f.failed("eni"); err != nil {
 		return nil, err
@@ -191,6 +194,9 @@ func (f *createEC2) DescribeNetworkInterfaces(_ context.Context, in *ec2.Describ
 }
 
 func (f *createEC2) CreateNetworkInterface(ctx context.Context, in *ec2.CreateNetworkInterfaceInput, opts ...func(*ec2.Options)) (*ec2.CreateNetworkInterfaceOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := f.inj.hit(ctx, stageENI); err != nil {
 		return nil, err
 	}
@@ -436,25 +442,30 @@ func TestCreateInstance_RecordsEachResourceBeforeWaiting(t *testing.T) {
 	ec2Gone := []string{"TerminateInstances i-new", "DeleteNetworkInterface eni-new", "DeleteSecurityGroup sg-new"}
 
 	cases := []struct {
-		stage   string
-		bare    bool
-		want    map[string]string
-		deleted []string
+		stage      string
+		bare       bool
+		cloudfront bool
+		want       map[string]string
+		deleted    []string
 	}{
 		{stage: stageENI, want: sg, deleted: []string{"DeleteSecurityGroup sg-new"}},
 		{stage: stageRun, want: network, deleted: []string{"DeleteNetworkInterface eni-new", "DeleteSecurityGroup sg-new"}},
 		{stage: stageRunning, want: instance, deleted: ec2Gone},
 		{stage: stageRunning, bare: true, want: bareInstance, deleted: ec2Gone},
-		{stage: stageDNS, want: instance, deleted: ec2Gone},
-		{stage: stageVPCOrigin, want: origin, deleted: append([]string{"DeleteVpcOrigin vo-1"}, ec2Gone...)},
-		{stage: stageDistribution, want: origin, deleted: append([]string{"DeleteVpcOrigin vo-1"}, ec2Gone...)},
-		{stage: stageDistDeployed, want: dist, deleted: append([]string{"DeleteDistribution E1", "DeleteVpcOrigin vo-1"}, ec2Gone...)},
+		{stage: stageRunning, cloudfront: true, want: instance, deleted: ec2Gone},
+		{stage: stageDNS, cloudfront: true, want: instance, deleted: ec2Gone},
+		{stage: stageVPCOrigin, cloudfront: true, want: origin, deleted: append([]string{"DeleteVpcOrigin vo-1"}, ec2Gone...)},
+		{stage: stageDistribution, cloudfront: true, want: origin, deleted: append([]string{"DeleteVpcOrigin vo-1"}, ec2Gone...)},
+		{stage: stageDistDeployed, cloudfront: true, want: dist, deleted: append([]string{"DeleteDistribution E1", "DeleteVpcOrigin vo-1"}, ec2Gone...)},
 	}
 	for _, c := range cases {
 		for _, cancel := range []bool{false, true} {
 			name := c.stage
 			if c.bare {
 				name += "/bare"
+			}
+			if c.cloudfront {
+				name += "/cloudfront"
 			}
 			if cancel {
 				name += "/cancel"
@@ -469,7 +480,7 @@ func TestCreateInstance_RecordsEachResourceBeforeWaiting(t *testing.T) {
 				}
 				svc, ec2f, ssmf := newCreateAccount(inj)
 
-				_, err := svc.CreateInstance(ctx, CreateInstanceInput{Name: "dev01", InstanceType: "t4g.medium", Bare: c.bare})
+				_, err := svc.CreateInstance(ctx, CreateInstanceInput{Name: "dev01", InstanceType: "t4g.medium", Bare: c.bare, CloudFront: c.cloudfront})
 				if cancel && !errors.Is(err, context.Canceled) {
 					t.Fatalf("CreateInstance error = %v, want the cancellation at %s", err, c.stage)
 				}
@@ -712,40 +723,51 @@ func TestDeleteInstance_TagLookupErrors(t *testing.T) {
 }
 
 // TestCreateInstance_FinalMetadata pins what a successful create leaves
-// in SSM, for a code-server and a bare instance.
+// in SSM, for a code-server instance with and without CloudFront and a
+// bare instance.
 func TestCreateInstance_FinalMetadata(t *testing.T) {
 	t.Parallel()
-	for _, bare := range []bool{false, true} {
-		t.Run(fmt.Sprintf("bare=%v", bare), func(t *testing.T) {
+	for _, c := range []struct {
+		name             string
+		bare, cloudfront bool
+	}{
+		{name: "code-server"},
+		{name: "code-server/cloudfront", cloudfront: true},
+		{name: "bare", bare: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			svc, ec2f, ssmf := newCreateAccount(&injector{})
-			out, err := svc.CreateInstance(context.Background(), CreateInstanceInput{Name: "dev01", InstanceType: "t4g.medium", Bare: bare})
+			out, err := svc.CreateInstance(context.Background(), CreateInstanceInput{
+				Name: "dev01", InstanceType: "t4g.medium", Bare: c.bare, CloudFront: c.cloudfront,
+			})
 			if err != nil {
 				t.Fatalf("CreateInstance: %v\nlog: %v", err, ec2f.log)
 			}
 			want := instanceMetaEntries("dev01", instanceMetaValues{
-				InstanceID: "i-new", ENIID: "eni-new", SecurityGroupID: "sg-new", VPCOriginID: "vo-1",
-				DistributionID: "E1", DistributionDomain: "dnew.cloudfront.net",
+				InstanceID: "i-new", ENIID: "eni-new", SecurityGroupID: "sg-new", Bare: c.bare,
 			})
-			wantURL := "https://dnew.cloudfront.net"
-			if bare {
-				want = instanceMetaEntries("dev01", instanceMetaValues{InstanceID: "i-new", ENIID: "eni-new", SecurityGroupID: "sg-new", Bare: true})
-				wantURL = ""
-				if indexOf(ec2f.log, "CreateVpcOrigin") >= 0 || indexOf(ec2f.log, "CreateDistribution") >= 0 {
-					t.Errorf("a bare create must not touch CloudFront: %v", ec2f.log)
-				}
+			wantURL := ""
+			if c.cloudfront {
+				want = instanceMetaEntries("dev01", instanceMetaValues{
+					InstanceID: "i-new", ENIID: "eni-new", SecurityGroupID: "sg-new", VPCOriginID: "vo-1",
+					DistributionID: "E1", DistributionDomain: "dnew.cloudfront.net",
+				})
+				wantURL = "https://dnew.cloudfront.net"
+			} else if indexOf(ec2f.log, "CreateVpcOrigin") >= 0 || indexOf(ec2f.log, "CreateDistribution") >= 0 {
+				t.Errorf("a create without --cloudfront must not touch CloudFront: %v", ec2f.log)
 			}
 			if got := recordedMeta(ssmf); !sameMap(got, want) {
 				t.Errorf("metadata:\n got  %v\n want %v", got, want)
 			}
 			pw := ssmf.param(ssmPasswordPath("dev01"))
-			if bare && pw != "" {
+			if c.bare && pw != "" {
 				t.Error("a bare instance has no password")
 			}
-			if !bare && len(pw) != config.PasswordLength {
+			if !c.bare && len(pw) != config.PasswordLength {
 				t.Errorf("password parameter = %d chars, want %d", len(pw), config.PasswordLength)
 			}
-			if out.InstanceID != "i-new" || out.URL != wantURL || out.Bare != bare ||
+			if out.InstanceID != "i-new" || out.URL != wantURL || out.Bare != c.bare || out.CloudFront != c.cloudfront ||
 				out.DistributionID != want[ssmDistributionIDPath("dev01")] || out.VPCOriginID != want[ssmVPCOriginIDPath("dev01")] {
 				t.Errorf("output = %+v", out)
 			}
@@ -754,13 +776,13 @@ func TestCreateInstance_FinalMetadata(t *testing.T) {
 }
 
 // TestRestore_NewInstanceRecordsTheVPCOriginBeforeWaiting: restore
-// shares the split VPC origin creation, so a failed Deployed wait there
-// also leaves the VPC origin recorded.
+// --cloudfront shares the split VPC origin creation, so a failed
+// Deployed wait there also leaves the VPC origin recorded.
 func TestRestore_NewInstanceRecordsTheVPCOriginBeforeWaiting(t *testing.T) {
 	t.Parallel()
 	svc, ec2f, ssmf := newCreateAccount(&injector{at: stageVPCOrigin})
 	ec2f.snaps = []ec2types.Snapshot{taggedSnap("snap-b", "l1", "2026-10-01T00:00:00Z", "t4g.medium", "arm64", "vscode", "")}
-	p, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01"})
+	p, err := svc.PlanRestore(context.Background(), RestoreInput{Name: "dev01", CloudFront: true})
 	if err != nil {
 		t.Fatalf("PlanRestore: %v", err)
 	}

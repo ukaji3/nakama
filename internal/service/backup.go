@@ -51,6 +51,10 @@ type Backup struct {
 	Architecture string `json:"architecture,omitempty"`
 	Kind         string `json:"kind,omitempty"`
 	IAMRole      string `json:"iam_role,omitempty"`
+	// CloudFront reports that the instance had a CloudFront
+	// distribution when the backup was taken (ADR 0028). False for
+	// backups taken before nakama recorded it.
+	CloudFront bool `json:"cloudfront,omitempty"`
 }
 
 func validateNote(note string) error {
@@ -121,6 +125,7 @@ func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Back
 	b := &Backup{
 		Label: in.Label, Note: in.Note, CreatedAt: createdAt, State: string(out.State),
 		InstanceType: src.InstanceType, Architecture: src.Architecture, Kind: src.Kind, IAMRole: src.IAMRole,
+		CloudFront: src.CloudFront,
 	}
 	if out.SnapshotId != nil {
 		b.SnapshotID = *out.SnapshotId
@@ -140,7 +145,8 @@ func (s *Service) CreateBackup(ctx context.Context, in CreateBackupInput) (*Back
 
 // backupSource reads what restore needs to rebuild the instance once it
 // is deleted (Issue #96): the instance type and architecture from EC2,
-// and the kind and attached IAM role from the instance metadata.
+// and the kind, the attached IAM role and whether it has CloudFront
+// (ADR 0028) from the instance metadata.
 func (s *Service) backupSource(ctx context.Context, name, instanceID string) (tagging.BackupSource, error) {
 	var src tagging.BackupSource
 	out, err := s.clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
@@ -164,6 +170,11 @@ func (s *Service) backupSource(ctx context.Context, name, instanceID string) (ta
 	if src.IAMRole, err = s.ssmGetOptional(ctx, ssmIAMRolePath(name)); err != nil {
 		return src, err
 	}
+	distID, err := s.ssmGetOptional(ctx, ssmDistributionIDPath(name))
+	if err != nil {
+		return src, err
+	}
+	src.CloudFront = distID != ""
 	return src, nil
 }
 
@@ -232,6 +243,7 @@ func snapshotToBackup(sn ec2types.Snapshot) Backup {
 		Architecture: t[tagging.KeyArchitecture],
 		Kind:         t[tagging.KeyKind],
 		IAMRole:      t[tagging.KeyIAMRole],
+		CloudFront:   t[tagging.KeyCloudFront] == tagging.ValueTrue,
 	}
 	if b.CreatedAt == "" && sn.StartTime != nil {
 		b.CreatedAt = sn.StartTime.UTC().Format(time.RFC3339)
