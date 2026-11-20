@@ -395,7 +395,11 @@ func (s *Service) DeleteCloudFront(ctx context.Context, p *DeleteCloudFrontPlan)
 		}
 	}
 
-	// 4. The records, now that nothing they point at is left.
+	// 4. The records, now that nothing they point at is left. This runs
+	// even when the plan found no CloudFront: it also clears what a
+	// record-only leftover would otherwise keep, such as a marker without
+	// the IDs it guarded, which would make `cloudfront add` refuse
+	// forever. Names that do not exist are not an error.
 	if _, err := s.clients.SSM.DeleteParameters(ctx, &ssm.DeleteParametersInput{Names: cloudFrontMetaKeys(m.name)}); err != nil {
 		return nil, fmt.Errorf("DeleteParameters(cloudfront meta): %w", err)
 	}

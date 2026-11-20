@@ -16,6 +16,7 @@ type fakeCloudFrontBackend struct {
 	addOut  *service.AddCloudFrontOutput
 	addErr  error
 	plan    *service.DeleteCloudFrontPlan
+	planErr error
 	delOut  *service.DeleteCloudFrontOutput
 	added   []string
 	deleted []*service.DeleteCloudFrontPlan
@@ -30,7 +31,7 @@ func (f *fakeCloudFrontBackend) AddCloudFront(_ context.Context, name string) (*
 }
 
 func (f *fakeCloudFrontBackend) PlanDeleteCloudFront(context.Context, string) (*service.DeleteCloudFrontPlan, error) {
-	return f.plan, nil
+	return f.plan, f.planErr
 }
 
 func (f *fakeCloudFrontBackend) DeleteCloudFront(_ context.Context, p *service.DeleteCloudFrontPlan) (*service.DeleteCloudFrontOutput, error) {
@@ -53,6 +54,9 @@ func runCloudFront(t *testing.T, b *fakeCloudFrontBackend, answer bool, args ...
 		confirm: func() (bool, error) { asked = true; return answer, nil },
 	}
 	cmd := newAWSCloudFrontCommandWithDeps(deps)
+	// The root command silences the usage text on errors; so does this
+	// stand-alone tree.
+	cmd.SilenceUsage = true
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
@@ -137,6 +141,20 @@ func TestCloudFrontDelete_AsksFirst(t *testing.T) {
 	_, _, asked, err = runCloudFront(t, b, false, "delete", "dev01", "--yes")
 	if asked || err != nil || len(b.deleted) != 2 {
 		t.Errorf("--yes: asked %v, err %v, deleted %d", asked, err, len(b.deleted))
+	}
+}
+
+// TestCloudFrontDelete_PlanErrorStopsEverything: a failed plan (an
+// unknown instance, a denied read) surfaces as is, without a prompt and
+// without a delete (Amazon Q on PR #121).
+func TestCloudFrontDelete_PlanErrorStopsEverything(t *testing.T) {
+	b := &fakeCloudFrontBackend{planErr: errors.New(`nakama instance "nope" not found`)}
+	out, _, asked, err := runCloudFront(t, b, true, "delete", "nope")
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("err = %v, want the plan error", err)
+	}
+	if asked || len(b.deleted) != 0 || out != "" {
+		t.Errorf("asked %v, deleted %d, stdout %q; want nothing after a failed plan", asked, len(b.deleted), out)
 	}
 }
 

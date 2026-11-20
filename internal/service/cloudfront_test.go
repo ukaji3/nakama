@@ -982,6 +982,35 @@ func TestDeleteCloudFront_WaitsForTheDisableAStoppedRunLeft(t *testing.T) {
 	}
 }
 
+// TestDeleteCloudFront_ClearsAStrayMarker: a marker left without the IDs
+// it guarded (the records were removed some other way) would make add
+// refuse for good. delete has nothing to take apart then, but still
+// clears the records, so add works afterwards (Amazon Q on PR #121).
+func TestDeleteCloudFront_ClearsAStrayMarker(t *testing.T) {
+	t.Parallel()
+	a := newCFAccount(ec2types.InstanceStateNameRunning)
+	svc, sm := cfService(a, map[string]string{ssmCloudFrontDeletingPath("dev01"): "true"})
+	if _, err := svc.AddCloudFront(context.Background(), "dev01"); err == nil || !strings.Contains(err.Error(), "stopped part way") {
+		t.Fatalf("add with a stray marker: err = %v, want the refusal", err)
+	}
+	p, err := svc.PlanDeleteCloudFront(context.Background(), "dev01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.HasCloudFront() {
+		t.Fatalf("plan = %+v, want nothing to take apart", p)
+	}
+	if _, err := svc.DeleteCloudFront(context.Background(), p); err != nil {
+		t.Fatalf("DeleteCloudFront: %v", err)
+	}
+	if sm.param(ssmCloudFrontDeletingPath("dev01")) != "" {
+		t.Fatal("delete must clear the stray marker")
+	}
+	if _, err := svc.AddCloudFront(context.Background(), "dev01"); err != nil {
+		t.Errorf("add after delete cleared the marker: %v", err)
+	}
+}
+
 // TestRevokeSGIngress_AnswersForAMissingRuleOrGroup pins which answers
 // mean "nothing to remove" and which are failures.
 func TestRevokeSGIngress_AnswersForAMissingRuleOrGroup(t *testing.T) {
