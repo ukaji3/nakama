@@ -105,24 +105,52 @@ var (
 		"ec2:DescribeNatGateways",
 	}
 
-	// createInstanceActions: what building an instance needs beyond
-	// the NAT lifecycle (instance_create*.go): the base-infra lookups,
-	// the security group and ENI, and the CloudFront entry path. Shared
-	// by create and by restore of a deleted instance (Issue #96).
-	createInstanceActions = []string{
+	// buildInstanceActions: what building an instance needs beyond the
+	// NAT lifecycle (instance_create*.go): the base-infra lookups, the
+	// security group and the ENI. Shared by create and by restore of a
+	// deleted instance (Issue #96).
+	buildInstanceActions = []string{
+		"ec2:CreateNetworkInterface",
+		"ec2:DescribeInstanceTypes",
+		"ec2:DescribeNetworkInterfaces",
+		"ec2:DescribeSubnets",
+		"ec2:DescribeVpcs", // discoverBaseInfra -> findVPCByTags
+		"ssm:PutParameter",
+	}
+
+	// cloudFrontBuildActions: the CloudFront entry path of an instance
+	// (ADR 0028): the SG rule from the CloudFront prefix list, the VPC
+	// origin and the distribution behind the shared WAF web ACL. Used by
+	// cloudfront add and by create / restore with --cloudfront.
+	cloudFrontBuildActions = []string{
 		"cloudfront:CreateDistribution",
 		"cloudfront:CreateVpcOrigin",
 		"cloudfront:GetDistribution",
 		"cloudfront:GetVpcOrigin",
 		"cloudfront:TagResource",
-		"ec2:CreateNetworkInterface",
-		"ec2:DescribeInstanceTypes",
+		"ec2:AuthorizeSecurityGroupIngress",
+		"ec2:DescribeInstances", // privateDNSNameForInstance
 		"ec2:DescribeManagedPrefixLists",
-		"ec2:DescribeNetworkInterfaces",
-		"ec2:DescribeSubnets",
-		"ec2:DescribeVpcs", // discoverBaseInfra -> findVPCByTags
 		"ssm:PutParameter",
-		"wafv2:ListWebACLs", // discoverBaseInfra -> findWAFWebACLARN
+		"wafv2:ListWebACLs", // resolveCloudFrontPrereqs -> findWAFWebACLARN
+	}
+
+	// cloudFrontTeardownActions: removing the entry path again
+	// (cloudfront delete; delete removes it with the instance): the SG
+	// rule first, then the distributions, the Kiro Crew redirect function
+	// and the VPC origin, and the records.
+	cloudFrontTeardownActions = []string{
+		"cloudfront:DeleteDistribution",
+		"cloudfront:DeleteFunction",
+		"cloudfront:DeleteVpcOrigin",
+		"cloudfront:DescribeFunction",
+		"cloudfront:GetDistribution",
+		"cloudfront:GetDistributionConfig",
+		"cloudfront:GetVpcOrigin",
+		"cloudfront:UpdateDistribution",
+		"ec2:DescribeManagedPrefixLists",
+		"ec2:RevokeSecurityGroupIngress",
+		"ssm:DeleteParameters",
 	}
 
 	// backupActions: snapshot create/list/tag plus the root-volume
@@ -240,7 +268,8 @@ func featurePermissionMatrix() []FeaturePermission {
 				resolveInstanceActions,
 				egressActions,
 				remoteScriptActions, // --setup / --dotfiles / --preset
-				createInstanceActions,
+				buildInstanceActions,
+				cloudFrontBuildActions,
 			),
 			Note: "--bare は cloudfront:* を使わない。NAT インスタンスの初回作成を含む。" +
 				"NAT Gateway の方式 (ADR 0026) では ec2:DescribeNatGateways で NAT Gateway が使えるかを確かめる",
@@ -303,6 +332,20 @@ func featurePermissionMatrix() []FeaturePermission {
 			Note: "トークンは RSA-OAEP で暗号化して Run Command で受け取る (ADR 0020)。" +
 				"既定の SSM 経由では Kiro Crew へポート転送する (ADR 0027)。cloudfront:GetDistribution と " +
 				"code-server のパスワード読み取りは --internet のときだけ使う",
+			Simulate: true,
+		},
+		{
+			Feature:  "cloudfront",
+			Commands: "nakama aws cloudfront add / delete",
+			Actions: mergeActions(
+				resolveInstanceActions,
+				remoteScriptActions, // delete: Kiro Crew's instance side
+				cloudFrontBuildActions,
+				cloudFrontTeardownActions,
+			),
+			Note: "add は running のインスタンスに SG の受信ルール・VPC origin・distribution を作って Deployed まで待つ (ADR 0028)。" +
+				"delete は SG の受信ルールを最初に外し、Kiro Crew の distribution と CloudFront Function があればそれも消す " +
+				"(cloudfront:*Function と Run Command はそのときだけ)",
 			Simulate: true,
 		},
 		{
@@ -415,7 +458,8 @@ func featurePermissionMatrix() []FeaturePermission {
 			Actions: mergeActions(
 				resolveInstanceActions,
 				egressActions,
-				createInstanceActions, // a deleted instance is rebuilt (Issue #96)
+				buildInstanceActions, // a deleted instance is rebuilt (Issue #96)
+				cloudFrontBuildActions,
 				[]string{
 					"ec2:AttachVolume",
 					"ec2:CreateTags",
