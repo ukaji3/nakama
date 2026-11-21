@@ -155,7 +155,7 @@ resource when the permissions are insufficient.`,
 	cmd.Flags().BoolVar(&f.noKiro, "no-kiro", false,
 		"Skip the Kiro CLI / Kiro Crew install that is performed by default")
 	cmd.Flags().BoolVar(&f.cloudFront, "cloudfront", false,
-		"Also build the CloudFront entry path (VPC origin, distribution, WAF) used by `open --internet`")
+		"Also build the CloudFront entry path (VPC origin, distribution, WAF) used by open --internet")
 	cmd.Flags().StringVar(&f.preset, "preset", "",
 		"Bundled provisioning recipe to apply ("+strings.Join(service.ProvisionPresetNames(), ", ")+")")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")

@@ -83,7 +83,7 @@ Either way the instance is left stopped; start it with "nakama aws start".`,
 	cmd.Flags().StringVar(&in.WithRole, "with-role", "",
 		"Deleted instance only: attach an existing IAM role (by name)")
 	cmd.Flags().BoolVar(&in.CloudFront, "cloudfront", false,
-		"Deleted instance only: also build the CloudFront entry path, as `create --cloudfront` does")
+		"Deleted instance only: also build the CloudFront entry path, as create --cloudfront does")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")
 	cmd.MarkFlagsMutuallyExclusive("bare", "cloudfront")
 	return cmd

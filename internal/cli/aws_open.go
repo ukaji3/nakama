@@ -224,7 +224,7 @@ func addOpenFlags(cmd *cobra.Command, f *openFlags, help openFlagHelp) {
 	cmd.Flags().DurationVar(&f.timeout, "timeout", 30*time.Second,
 		"How long to wait for the browser to fetch the one-shot login page")
 	cmd.Flags().BoolVar(&f.internet, "internet", false,
-		"Use the CloudFront distribution (`nakama aws cloudfront add`; needs your IP in the WAF allowlist) instead of an SSM port forward")
+		"Use the CloudFront distribution (added with nakama aws cloudfront add; needs your IP in the WAF allowlist) instead of an SSM port forward")
 	cmd.Flags().IntVar(&f.localPort, "local-port", 0,
 		"Local port of the SSM port forward (default: the instance's port, i.e. 8080 for code-server and 5476 for Kiro Crew)")
 }
