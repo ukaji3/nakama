@@ -29,9 +29,10 @@ import (
 // automatically.
 //
 // By default the browser reaches code-server over an SSM port forward
-// that the instance's tunnel daemon keeps up in the background
-// (http://localhost:<port>); --internet uses the CloudFront
-// distribution instead, as before Issue #118.
+// that the instance's tunnel daemon keeps up in the background, through
+// the nakama router (http://code-server.<name>.nakama.localhost:<port>,
+// Issue #124; http://localhost:<port> with --local-port); --internet
+// uses the CloudFront distribution instead, as before Issue #118.
 //
 // code-server authenticates with a session cookie only (there is no
 // URL-token login), and a CLI cannot write cookies into a browser's
@@ -180,12 +181,22 @@ func newAWSOpenCommandWithDeps(deps openDeps) *cobra.Command {
 automatically.
 
 By default the browser reaches code-server through an SSM Session
-Manager port forward (ADR 0027): http://localhost:8080, or the port
-given with --local-port. The forward runs in the instance's tunnel
-daemon in the background and reconnects by itself after network
-errors, network changes and sleep. Nothing on the instance is reachable
-from the internet for this. See it with ` + "`nakama aws tunnel status <name>`" + `
-and stop it with ` + "`nakama aws tunnel stop <name>`" + `.
+Manager port forward (ADR 0027) and the nakama router on this machine
+(ADR 0029), at http://code-server.<name>.nakama.localhost:18888. The
+router is one background process for all instances: it picks the
+instance's forward by the host name, so instances open side by side
+without choosing local ports, and each one keeps its own sign-in.
+Browsers resolve *.localhost to this machine by themselves (Safari from
+macOS 26 on). Set NAKAMA_ROUTER_PORT to move the router to another
+port. With --local-port the forward also listens on that local port and
+the browser opens http://localhost:<port> instead.
+
+The forward runs in the instance's tunnel daemon in the background and
+reconnects by itself after network errors, network changes and sleep.
+Nothing on the instance is reachable from the internet for this. See it
+with ` + "`nakama aws tunnel status <name>`" + ` and stop it with
+` + "`nakama aws tunnel stop <name>`" + `; the router ends by itself a
+minute after the last tunnel.
 
 --internet opens the CloudFront URL instead (ADR 0012). It needs a
 CloudFront distribution, which instances get only on request
@@ -226,7 +237,7 @@ func addOpenFlags(cmd *cobra.Command, f *openFlags, help openFlagHelp) {
 	cmd.Flags().BoolVar(&f.internet, "internet", false,
 		"Use the CloudFront distribution (added with nakama aws cloudfront add; needs your IP in the WAF allowlist) instead of an SSM port forward")
 	cmd.Flags().IntVar(&f.localPort, "local-port", 0,
-		"Local port of the SSM port forward (default: the instance's port, i.e. 8080 for code-server and 5476 for Kiro Crew)")
+		"Also serve the SSM port forward on this local port, and open localhost:<port> in the browser instead of the nakama router address")
 }
 
 // validateOpenFlags checks the flags `open` and `kirocrew` share.
@@ -370,27 +381,28 @@ func runAWSOpenInternet(ctx context.Context, cmd *cobra.Command, name string, f 
 
 // ensureBrowserForward makes the SSM forward ready and explains what is
 // going on, since it can take a while (StartSession, and right after a
-// start the SSM agent needs a minute). A busy local port gets the
-// --local-port advice.
+// start the SSM agent needs a minute). A busy --local-port gets the
+// --local-port advice; a busy router port explains NAKAMA_ROUTER_PORT
+// itself.
 func ensureBrowserForward(ctx context.Context, cmd *cobra.Command,
 	ensure func(context.Context, service.BrowserForwardInput) (*service.BrowserForward, error),
 	name string, purpose service.ForwardPurpose, localPort int, label string) (*service.BrowserForward, error) {
 	stderr := cmd.ErrOrStderr()
-	port := localPort
-	if port == 0 {
-		port = service.DefaultLocalPort(purpose)
+	if localPort != 0 {
+		_, _ = fmt.Fprintf(stderr, "forwarding localhost:%d to %s on %s over SSM...\n", localPort, label, name)
+	} else {
+		_, _ = fmt.Fprintf(stderr, "forwarding %s on %s over SSM through the nakama router...\n", label, name)
 	}
-	_, _ = fmt.Fprintf(stderr, "forwarding localhost:%d to %s on %s over SSM...\n", port, label, name)
 	bf, err := ensure(ctx, service.BrowserForwardInput{Name: name, Purpose: purpose, LocalPort: localPort})
 	if err != nil {
 		var inUse *service.LocalPortInUseError
-		if errors.As(err, &inUse) {
-			return nil, fmt.Errorf("%w\nchoose another local port with --local-port <port>", err)
+		if errors.As(err, &inUse) && localPort != 0 {
+			return nil, fmt.Errorf("%w\nchoose another local port with --local-port <port>, or omit it to use the nakama router", err)
 		}
 		return nil, err
 	}
 	if bf.Reused {
-		_, _ = fmt.Fprintf(stderr, "using the running forward on localhost:%d\n", bf.LocalPort)
+		_, _ = fmt.Fprintf(stderr, "using the running forward of %s\n", name)
 	}
 	_, _ = fmt.Fprintf(stderr, "the forward keeps running in the background and reconnects by itself; "+
 		"stop it with `nakama aws tunnel stop %s`\n", name)
@@ -699,8 +711,8 @@ func newOneShotLoginServer(lis net.Listener, token, domain, password string) (*o
 // loginTarget says where the one-shot page signs in. Every target is a
 // code-server login endpoint (the Kiro Crew distribution is fronted by
 // code-server too, ADR 0020): a CloudFront origin
-// (https://<distribution>) or the SSM forward (http://localhost:<port>,
-// ADR 0027). extra carries query parameters that code-server preserves
+// (https://<distribution>) or the SSM forward (the router address, or
+// http://localhost:<port> with --local-port; ADR 0027, ADR 0029). extra carries query parameters that code-server preserves
 // across its post-login redirect; the Kiro Crew dashboard token rides on
 // that.
 type loginTarget struct {

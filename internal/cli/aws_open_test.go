@@ -32,8 +32,8 @@ type fakeOpenBackend struct {
 	ip          string
 	ipErr       error
 	showPwdArgs []bool
-	// forward is what EnsureBrowserForward returns (an SSM forward on
-	// localhost:8080 unless set); forwardErr fails it.
+	// forward is what EnsureBrowserForward returns (fakeBrowserForward
+	// unless set); forwardErr fails it.
 	forward     *service.BrowserForward
 	forwardErr  error
 	forwardArgs []service.BrowserForwardInput
@@ -50,12 +50,23 @@ func (b *fakeOpenBackend) EnsureBrowserForward(_ context.Context, in service.Bro
 		bf := *b.forward
 		return &bf, nil
 	}
-	port := in.LocalPort
-	if port == 0 {
-		port = service.DefaultLocalPort(in.Purpose)
+	return fakeBrowserForward(in), nil
+}
+
+// testForwardPort is the local port the fakes report for a router-only
+// browser forward (the real one is picked by the system).
+const testForwardPort = 41234
+
+// fakeBrowserForward is what EnsureBrowserForward returns for in: the
+// router address without --local-port, http://localhost:<port> with it.
+func fakeBrowserForward(in service.BrowserForwardInput) *service.BrowserForward {
+	if in.LocalPort != 0 {
+		return &service.BrowserForward{Name: in.Name, Purpose: in.Purpose, LocalPort: in.LocalPort,
+			Origin: fmt.Sprintf("http://localhost:%d", in.LocalPort)}
 	}
-	return &service.BrowserForward{Name: in.Name, Purpose: in.Purpose, LocalPort: port,
-		Origin: fmt.Sprintf("http://localhost:%d", port)}, nil
+	return &service.BrowserForward{Name: in.Name, Purpose: in.Purpose, LocalPort: testForwardPort,
+		Origin:     service.RouterOrigin(in.Purpose, in.Name, service.DefaultRouterPort),
+		RouterPort: service.DefaultRouterPort}
 }
 
 func (b *fakeOpenBackend) GetInstanceInfo(_ context.Context, _ string, showPassword bool) (*service.InstanceInfo, error) {

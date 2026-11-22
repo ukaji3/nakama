@@ -70,13 +70,17 @@ func newAWSKirocrewCommandWithDeps(deps kirocrewDeps) *cobra.Command {
 in.
 
 By default the browser reaches Kiro Crew through an SSM Session Manager
-port forward to the Kiro Crew gateway on the instance (ADR 0027):
-http://localhost:5476, or the port given with --local-port. No
-` + "`kirocrew enable`" + ` is needed for this, and it works on --bare instances
-too. The forward runs in the instance's tunnel daemon in the background
-and reconnects by itself; stop it with ` + "`nakama aws tunnel stop <name>`" + `.
-Kiro Crew sees these requests as local ones, so the dashboard also
-allows changing settings and showing secrets.
+port forward to the Kiro Crew gateway on the instance (ADR 0027) and the
+nakama router on this machine (ADR 0029), at
+http://kirocrew.<name>.nakama.localhost:18888 (NAKAMA_ROUTER_PORT moves
+the router; with --local-port the browser opens http://localhost:<port>
+instead). A Kiro Crew of your own on this machine keeps its port 5476.
+No ` + "`kirocrew enable`" + ` is needed for this, and it works on --bare
+instances too. The forward runs in the instance's tunnel daemon in the
+background and reconnects by itself; stop it with
+` + "`nakama aws tunnel stop <name>`" + `. Kiro Crew sees these requests as
+local ones, so the dashboard also allows changing settings and showing
+secrets.
 
 --internet opens the dashboard through its own CloudFront distribution
 instead (ADR 0020). Kiro Crew is never exposed directly there: the

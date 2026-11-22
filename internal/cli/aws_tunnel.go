@@ -37,7 +37,8 @@ used for 5 minutes does not reconnect until the next connection
 arrives (state "idle"). After a credential error the daemon retries
 every minute, so ` + "`nakama aws login`" + ` is enough to bring it back.
 ` + "`nakama aws open`" + ` and ` + "`nakama aws kirocrew`" + ` add their forwards to the
-same daemon.
+same daemon, on a free local port, and reach them through the nakama
+router (ADR 0029).
 
 -L specs take <local>:<remote> (to the instance itself) or
 <local>:<host>:<remote> (through the instance to another host).
@@ -120,7 +121,9 @@ change the forwards instead, use stop and start.`,
 		Use:   "status [name]",
 		Short: "Show the state of each port forward (all instances when name is omitted)",
 		Long: `Show every port forward and its state (connecting / active /
-reconnecting / idle / dead).
+reconnecting / idle / dead), and the nakama router with the addresses
+of the code-server and Kiro Crew forwards
+(http://<code-server|kirocrew>.<name>.nakama.localhost:<port>/).
 
 With no name, list the tunnels of all instances recorded on this machine
 (same convention as ` + "`nakama aws backup list`" + `), adding a NAME column.
@@ -134,19 +137,32 @@ leftover state file is cleaned up.`,
 			// channel. That matters exactly when credentials have
 			// expired and the user wants to see which forwards died.
 			svc := service.NewService(nil)
+			// The router section is best-effort: a router that cannot be
+			// read is shown as not running.
+			router, err := svc.GetRouterStatus(ctx)
+			if err != nil {
+				router = nil
+			}
 			if len(args) == 0 {
 				items, err := svc.ListTunnelStatus(ctx)
 				if err != nil {
 					return err
 				}
+				var statuses []*service.TunnelStatus
+				for _, it := range items {
+					if it.Status != nil {
+						statuses = append(statuses, it.Status)
+					}
+				}
 				return renderOutput(cmd.OutOrStdout(), global.Output, items,
-					formatTunnelOverview(items, time.Now()))
+					formatTunnelOverview(items, time.Now())+formatRouterSection(router, statuses, true))
 			}
 			st, err := svc.GetTunnelStatus(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprint(cmd.OutOrStdout(), formatTunnelStatus(st, time.Now()))
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), formatTunnelStatus(st, time.Now())+
+				formatRouterSection(router, []*service.TunnelStatus{st}, false))
 			return nil
 		},
 	}
@@ -290,6 +306,45 @@ func formatTunnelSuggestion(s *service.TunnelSuggestion) string {
 	}
 	if s.Command != "" {
 		fmt.Fprintf(&b, "\nForward all of them:\n    %s\n", s.Command)
+	}
+	return b.String()
+}
+
+// formatRouterSection renders the router line of `tunnel status` and
+// the browser addresses of the forwards the router serves. It is empty
+// when none of the forwards is a browser forward and the router does
+// not run. withName adds the instance name to each address line.
+func formatRouterSection(router *service.RouterStatus, statuses []*service.TunnelStatus, withName bool) string {
+	type entry struct{ name, url string }
+	var urls []entry
+	browser := false
+	for _, st := range statuses {
+		for _, f := range st.Forwards {
+			if f.Purpose != service.ForwardPurposeNone {
+				browser = true
+			}
+			if f.URL != "" {
+				urls = append(urls, entry{st.Name, f.URL})
+			}
+		}
+	}
+	if router == nil {
+		if !browser {
+			return ""
+		}
+		return "\nrouter: not running; `nakama aws open <name>` and `nakama aws kirocrew <name>` start it\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nrouter: running on localhost:%d (pid %d)\n", router.Port, router.PID)
+	if len(urls) > 0 {
+		b.WriteString("open in a browser:\n")
+		for _, u := range urls {
+			if withName {
+				fmt.Fprintf(&b, "  %-16s  %s\n", u.name, u.url)
+			} else {
+				fmt.Fprintf(&b, "  %s\n", u.url)
+			}
+		}
 	}
 	return b.String()
 }
