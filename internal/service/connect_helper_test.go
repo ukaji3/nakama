@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -35,15 +36,17 @@ func TestMain(m *testing.M) {
 	case helperShellEscape:
 		os.Exit(runShellEscapeHelper())
 	}
-	// No test may read or signal the tunnels of the person running the
-	// tests (DeleteInstance stops the local tunnel of the name it
-	// deletes): point the state directory at a scratch directory.
+	// No test may read or signal the tunnels or the router of the person
+	// running the tests (DeleteInstance stops the local tunnel of the
+	// name it deletes): point the state directory at a scratch
+	// directory. The router's state file sits next to the tunnel
+	// directory, so that one is a subdirectory of the scratch directory.
 	dir, err := os.MkdirTemp("", "nakama-service-test-tunnels-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tunnel state dir:", err)
 		os.Exit(1)
 	}
-	tunnelStateDirOverride = dir
+	tunnelStateDirOverride = filepath.Join(dir, "tunnels")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

@@ -111,10 +111,15 @@ func TestPortForwardDocument(t *testing.T) {
 }
 
 // withTunnelStateDir points the state directory at a temp dir for the
-// duration of the test. Tests using it must not run in parallel.
+// duration of the test, and with it the router's state file, which
+// sits in the parent directory. Tests using it must not run in
+// parallel.
 func withTunnelStateDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "tunnels")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	prev := tunnelStateDirOverride
 	tunnelStateDirOverride = dir
 	t.Cleanup(func() { tunnelStateDirOverride = prev })

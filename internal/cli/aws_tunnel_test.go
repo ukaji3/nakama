@@ -37,3 +37,32 @@ func TestFormatTunnelStatusLabelsBrowserForwards(t *testing.T) {
 		t.Errorf("overview:\n%s", over)
 	}
 }
+
+// TestFormatRouterSection: `tunnel status` shows the router and the
+// addresses of the forwards it serves (Issue #124).
+func TestFormatRouterSection(t *testing.T) {
+	browser := &service.TunnelStatus{Name: "dev01", Forwards: []service.ForwardStatus{
+		{Spec: "41001:8080", Purpose: service.ForwardPurposeCodeServer, URL: "http://code-server.dev01.nakama.localhost:18888/"},
+		{Spec: "5432:5432"},
+	}}
+	plain := &service.TunnelStatus{Name: "dev02", Forwards: []service.ForwardStatus{{Spec: "5432:5432"}}}
+	router := &service.RouterStatus{PID: 77, Port: 18888}
+
+	if got := formatRouterSection(nil, []*service.TunnelStatus{plain}, false); got != "" {
+		t.Errorf("plain -L forwards without a router need no section: %q", got)
+	}
+	notRunning := formatRouterSection(nil, []*service.TunnelStatus{browser}, false)
+	if !strings.Contains(notRunning, "router: not running") || !strings.Contains(notRunning, "nakama aws open <name>") {
+		t.Errorf("not running:\n%s", notRunning)
+	}
+	one := formatRouterSection(router, []*service.TunnelStatus{browser}, false)
+	for _, want := range []string{"router: running on localhost:18888 (pid 77)", "open in a browser:", "  http://code-server.dev01.nakama.localhost:18888/"} {
+		if !strings.Contains(one, want) {
+			t.Errorf("one instance lacks %q:\n%s", want, one)
+		}
+	}
+	all := formatRouterSection(router, []*service.TunnelStatus{browser, plain}, true)
+	if !strings.Contains(all, "dev01") || !strings.Contains(all, "http://code-server.dev01.nakama.localhost:18888/") || strings.Contains(all, "dev02") {
+		t.Errorf("overview:\n%s", all)
+	}
+}
