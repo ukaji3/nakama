@@ -54,7 +54,8 @@
 <p class="cmd-caption">PowerShell で実行</p>
 <pre><code>nakama aws open dev01</code></pre>
 <p>ブラウザが開き、パスワードの入力も自動で通過して、VS Code の画面が表示されます。あとは普段の VS Code と同じように使えます。</p>
-<p>ブラウザのアドレスは <code>http://localhost:8080</code> です。nakama が手元のパソコンに入口を用意し、そこから SSM (AWS の権限で守られた通り道) を通って開発環境の code-server につなぎます。開発環境にはインターネットからの入口が無く、IP の許可も要りません。</p>
+<p>ブラウザのアドレスは <code>http://code-server.dev01.nakama.localhost:18888</code> です。nakama が手元のパソコンに入口を用意し、そこから SSM (AWS の権限で守られた通り道) を通って開発環境の code-server につなぎます。開発環境にはインターネットからの入口が無く、IP の許可も要りません。</p>
+<p>アドレスには開発環境の名前が入るので、いくつ開いても番号を選んだり覚えたりする必要はありません。手元の入口 (ポート 18888) は 1 つで、nakama がアドレスの名前を見て行き先を選びます。ログインの状態も、開発環境ごとに分かれて残ります。</p>
 
 <div class="callout tip" role="note">
   <span class="title">つなぎっぱなしで構いません</span>
@@ -63,10 +64,16 @@
 </div>
 
 <div class="callout warn" role="note">
-  <span class="title">ポート 8080 がふさがっているとき</span>
-  <p>手元で別のプログラムが 8080 番を使っているとエラーになります。<code>--local-port</code> で別の番号を指定してください。nakama の別の開発環境の入口が使っている場合は、その名前が表示されます。</p>
-  <pre><code>nakama aws open --local-port 18080 dev02</code></pre>
-  <p>2 つの開発環境を別々の番号で同時に開いても、それぞれのログインは混ざりません。</p>
+  <span class="title">ポート 18888 がふさがっているとき</span>
+  <p>手元で別のプログラムが 18888 番を使っているとエラーになります。環境変数 <code>NAKAMA_ROUTER_PORT</code> で別の番号を指定してください (アドレスの番号もその番号になります)。</p>
+  <pre><code>$env:NAKAMA_ROUTER_PORT = "18889"
+nakama aws open dev01</code></pre>
+</div>
+
+<div class="callout note" role="note">
+  <span class="title"><code>*.nakama.localhost</code> を開けないとき</span>
+  <p>このアドレスは、Chrome・Edge・Firefox と、macOS 26 以降の Safari で開けます。それより前の macOS の Safari などで開けないときは、<code>--local-port</code> で番号を指定すると、<code>http://localhost:&lt;番号&gt;</code> で開きます。</p>
+  <pre><code>nakama aws open --local-port 18080 dev01</code></pre>
 </div>
 
 <div class="callout note" role="note">
@@ -79,7 +86,7 @@
 <table>
   <thead><tr><th scope="col">オプション</th><th scope="col">用途</th></tr></thead>
   <tbody>
-    <tr><td><code>--local-port &lt;番号&gt;</code></td><td>手元の入口のポート番号を変えます (既定 8080)</td></tr>
+    <tr><td><code>--local-port &lt;番号&gt;</code></td><td><code>*.nakama.localhost</code> のアドレスを使わず、<code>http://localhost:&lt;番号&gt;</code> で開きます</td></tr>
     <tr><td><code>--internet</code></td><td>SSM ではなく、インターネット (CloudFront) 経由で開きます。CloudFront を足した環境だけで使え (<a href="04-create.html#cloudfront">第 4 章</a>)、IP の許可が要ります (<a href="03-init.html#acl">第 3 章</a>)</td></tr>
     <tr><td><code>--print-url</code></td><td>ブラウザを開かず URL だけ表示します</td></tr>
     <tr><td><code>--no-auth</code></td><td>自動ログインをせず、URL を開くだけにします (パスワードは手で入力)</td></tr>
@@ -262,15 +269,15 @@ FORWARD                   STATE         SINCE       DETAIL
 
 <div class="callout note" role="note">
   <span class="title">常駐プログラムのログと状態ファイル</span>
-  <p>ログは OS の標準的な場所に出ます (Windows はイベントログ、macOS / Linux は syslog)。転送の状態は <code>~/.config/nakama/tunnels/&lt;名前&gt;.json</code> に保存され、<code>tunnel stop</code> で削除されます。</p>
+  <p>ログは OS の標準的な場所に出ます (Windows はイベントログ、macOS / Linux は syslog)。転送の状態は <code>~/.config/nakama/tunnels/&lt;名前&gt;.json</code> に保存され、<code>tunnel stop</code> で削除されます。アドレスで行き先を選ぶ入口 (ルーター) は別のプログラムで、状態は <code>~/.config/nakama/router.json</code> にあり、開発環境の転送が 1 つも無くなると 1 分後に自分で終わります。</p>
 </div>
 
 <h2 id="kirocrew">6. Kiro Crew の画面を開く (kirocrew)</h2>
-<p>環境に入っている Kiro Crew には Web の画面があります。この画面は環境の中の <code>localhost:5476</code> でだけ待ち受けています。<code>kirocrew</code> は、<code>open</code> と同じく SSM 経由で、この画面を手元の <code>http://localhost:5476</code> に持ってきて開きます。</p>
+<p>環境に入っている Kiro Crew には Web の画面があります。この画面は環境の中の <code>localhost:5476</code> でだけ待ち受けています。<code>kirocrew</code> は、<code>open</code> と同じく SSM 経由で、この画面を手元の <code>http://kirocrew.dev01.nakama.localhost:18888</code> に持ってきて開きます。</p>
 
 <p class="cmd-caption">PowerShell で実行</p>
 <pre><code>nakama aws kirocrew dev01</code></pre>
-<p>ブラウザが開き、Kiro Crew へのサインインが自動で済んで、画面が表示されます。準備の操作 (<code>enable</code>) は要りません。<code>--bare</code> で作った環境でも使えます。手元の 5476 番がふさがっているときは、<code>--local-port</code> で別の番号を指定します。</p>
+<p>ブラウザが開き、Kiro Crew へのサインインが自動で済んで、画面が表示されます。準備の操作 (<code>enable</code>) は要りません。<code>--bare</code> で作った環境でも使えます。手元のパソコンでも Kiro Crew を動かしていて 5476 番を使っていても、そのまま開けます。</p>
 
 <div class="callout note" role="note">
   <span class="title">どうやって安全に開いているのか</span>
@@ -279,8 +286,8 @@ FORWARD                   STATE         SINCE       DETAIL
 </div>
 
 <div class="callout tip" role="note">
-  <span class="title">ターミナルのリンクもそのまま開けます</span>
-  <p>開発環境のターミナルで <code>kirocrew token</code> が出す <code>http://localhost:5476?token=…</code> は、<code>kirocrew dev01</code> の入口 (手元の 5476 番) にそのまま届きます。</p>
+  <span class="title">ターミナルのリンクを開くとき</span>
+  <p>開発環境のターミナルで <code>kirocrew token</code> が出す <code>http://localhost:5476?token=…</code> は、手元の 5476 番に向いています。<code>nakama aws kirocrew --local-port 5476 dev01</code> で開いているときは、そのまま届きます。それ以外のときは、リンクをクリックせずに文字をコピーし、<code>http://localhost:5476</code> の部分を <code>http://kirocrew.dev01.nakama.localhost:18888</code> に書き換えて開いてください。</p>
 </div>
 
 <h3 id="kirocrew-internet">CloudFront 経由で開く (<code>--internet</code>)</h3>
