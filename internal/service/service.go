@@ -28,6 +28,11 @@ type Service struct {
 	// defaults; tests inject fakes. See tunnel_start.go.
 	tunnel *tunnelHooks
 
+	// router holds the process hooks of the local router (Issue #124,
+	// ADR 0029). nil selects the production defaults. See
+	// router_start.go.
+	router *routerHooks
+
 	// ssh holds the session hook used by SSHProxy (ADR 0019). nil runs
 	// the relay session in this process; tests inject fakes.
 	ssh *sshHooks

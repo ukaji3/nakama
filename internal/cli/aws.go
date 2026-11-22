@@ -31,6 +31,7 @@ func newAWSCommand() *cobra.Command {
 		newAWSSetupCommand(),
 		newAWSSessionRunnerCommand(),
 		newAWSTunnelDaemonCommand(),
+		newAWSRouterDaemonCommand(),
 		newAWSUpdateCommand(),
 		newAWSProfileCommand(),
 	)

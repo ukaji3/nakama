@@ -128,7 +128,14 @@ func (e *tunnelControlError) Error() string {
 // answer into out (when non-nil). Injected into Service via tunnelHooks
 // so orchestration tests need no real daemon.
 func tunnelControlRequest(ctx context.Context, st *TunnelState, method, path string, in, out any) error {
-	url := fmt.Sprintf("http://127.0.0.1:%d%s", st.ControlPort, path)
+	return controlRequest(ctx, st.ControlPort, st.Token, method, path, in, out)
+}
+
+// controlRequest is the request side of every nakama daemon's control
+// channel (the tunnel daemons and the local router): a 127.0.0.1 HTTP
+// endpoint guarded by a bearer token from the daemon's state file.
+func controlRequest(ctx context.Context, controlPort int, token, method, path string, in, out any) error {
+	url := fmt.Sprintf("http://127.0.0.1:%d%s", controlPort, path)
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -137,11 +144,13 @@ func tunnelControlRequest(ctx context.Context, st *TunnelState, method, path str
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	// The host is always 127.0.0.1; only the port comes from the daemon's
+	// own state file.
+	req, err := http.NewRequestWithContext(ctx, method, url, body) // #nosec G704 -- loopback control channel, see above
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+st.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -155,7 +164,7 @@ func tunnelControlRequest(ctx context.Context, st *TunnelState, method, path str
 			}).DialContext,
 		},
 	}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- loopback control channel (127.0.0.1)
 	if err != nil {
 		return err
 	}
