@@ -577,3 +577,37 @@ func fileExists(t *testing.T, name string) bool {
 	_, err := readTunnelState(name)
 	return err == nil
 }
+
+// TestRouterKeepsOneProxyPerRoute: a forward that comes back on another
+// local port gets the new port, and the proxy of the old port is
+// dropped, so the router does not grow with every new forward port
+// (review of #125).
+func TestRouterKeepsOneProxyPerRoute(t *testing.T) {
+	first := newRecordingBackend(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "first") })
+	second := newRecordingBackend(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "second") })
+	routes := newFakeRoutes()
+	routes.ports["dev01/code-server"] = first.port()
+	routes.ports["dev01/kirocrew"] = first.port()
+	h := newRouterHandler(18888, routes, newRouterTransport(), t.Logf)
+	router := httptest.NewServer(h)
+	t.Cleanup(router.Close)
+
+	for _, want := range []string{"first", "first", "second", "second", "first"} {
+		port := first.port()
+		if want == "second" {
+			port = second.port()
+		}
+		routes.mu.Lock()
+		routes.ports["dev01/code-server"] = port
+		routes.mu.Unlock()
+		if got := routerGet(t, router, http.MethodGet, "code-server.dev01.nakama.localhost:18888", "/", nil); got.Body != want {
+			t.Fatalf("body %q, want %q (the request must reach the current forward port)", got.Body, want)
+		}
+	}
+	routerGet(t, router, http.MethodGet, "kirocrew.dev01.nakama.localhost:18888", "/", nil)
+	n := 0
+	h.proxies.Range(func(_, _ any) bool { n++; return true })
+	if n != 2 {
+		t.Errorf("the router holds %d proxies, want 2 (one per instance and purpose)", n)
+	}
+}
