@@ -18,20 +18,23 @@ type tunnelLogger interface {
 	Close() error
 }
 
+// openTunnelLogger opens the tunnel daemon's log (tag nakama-tunnel).
+func openTunnelLogger() tunnelLogger { return openDaemonLogger("nakama-tunnel") }
+
 // stderrTunnelLogger is the fallback when the OS log is unavailable
 // (e.g. a container without /dev/log). For a detached daemon stderr is
 // discarded, but a daemon run in the foreground for debugging still
-// gets readable output.
-type stderrTunnelLogger struct{}
+// gets readable output. prefix is the daemon's log tag.
+type stderrTunnelLogger struct{ prefix string }
 
 // Infof writes an info line to stderr.
-func (stderrTunnelLogger) Infof(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "nakama-tunnel: "+format+"\n", args...)
+func (l stderrTunnelLogger) Infof(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, l.prefix+": "+format+"\n", args...)
 }
 
 // Errorf writes an error line to stderr.
-func (stderrTunnelLogger) Errorf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "nakama-tunnel: error: "+format+"\n", args...)
+func (l stderrTunnelLogger) Errorf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, l.prefix+": error: "+format+"\n", args...)
 }
 
 // Close is a no-op for the stderr fallback.

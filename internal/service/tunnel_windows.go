@@ -17,13 +17,15 @@ import (
 // fully readable (ADR 0017).
 const tunnelEventID = 1
 
-// openTunnelLogger opens the Windows Application event log. Rotation
-// and retention are governed by the OS's event log policy. Falls back
-// to stderr when the event log is unavailable.
-func openTunnelLogger() tunnelLogger {
+// openDaemonLogger opens the Windows Application event log. Every nakama
+// daemon writes under the one "nakama" source; tag only names the
+// stderr fallback (the messages themselves say which daemon wrote
+// them). Rotation and retention are governed by the OS's event log
+// policy. Falls back to stderr when the event log is unavailable.
+func openDaemonLogger(tag string) tunnelLogger {
 	l, err := eventlog.Open("nakama")
 	if err != nil {
-		return stderrTunnelLogger{}
+		return stderrTunnelLogger{prefix: tag}
 	}
 	return &eventTunnelLogger{l: l}
 }

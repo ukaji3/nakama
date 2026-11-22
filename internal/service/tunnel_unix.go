@@ -10,15 +10,16 @@ import (
 	"syscall"
 )
 
-// openTunnelLogger connects to the local syslog daemon (facility
-// LOG_USER, tag nakama-tunnel). journald / rsyslog / macOS unified
-// logging handle rotation and retention (ADR 0017). When syslog is
-// unavailable (e.g. a minimal container), fall back to stderr so a
+// openDaemonLogger connects to the local syslog daemon (facility
+// LOG_USER) with the given tag (nakama-tunnel for the tunnel daemon,
+// nakama-router for the local router). journald / rsyslog / macOS
+// unified logging handle rotation and retention (ADR 0017). When syslog
+// is unavailable (e.g. a minimal container), fall back to stderr so a
 // foreground debug run still produces output.
-func openTunnelLogger() tunnelLogger {
-	w, err := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, "nakama-tunnel")
+func openDaemonLogger(tag string) tunnelLogger {
+	w, err := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, tag)
 	if err != nil {
-		return stderrTunnelLogger{}
+		return stderrTunnelLogger{prefix: tag}
 	}
 	return &syslogTunnelLogger{w: w}
 }
