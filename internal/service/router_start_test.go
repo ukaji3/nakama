@@ -26,6 +26,8 @@ type routerEnv struct {
 	// makes spawn start a router that never comes up.
 	spawnVersion  string
 	spawnsNothing bool
+	// stopErr fails the stop request of a live router.
+	stopErr error
 }
 
 func newRouterEnv(t *testing.T) *routerEnv {
@@ -58,6 +60,9 @@ func newRouterEnv(t *testing.T) *routerEnv {
 			s, ok := env.live[st.Token]
 			if !ok {
 				return errors.New("connection refused")
+			}
+			if env.stopErr != nil {
+				return env.stopErr
 			}
 			env.stopped = append(env.stopped, s.Port)
 			delete(env.live, st.Token)
@@ -150,6 +155,32 @@ func TestEnsureRouterKeepsTheRunningOneWhenTheNewPortIsTaken(t *testing.T) {
 	}
 	if len(env.stopped) != 0 || len(env.spawned) != 0 {
 		t.Errorf("the running router must stay: stopped %v, spawned %v", env.stopped, env.spawned)
+	}
+}
+
+// TestEnsureRouterKeepsARouterThatDidNotStop: a router of another
+// version that answers /status but not the stop request still runs, so
+// its state file stays and nothing is started in its place (review of
+// #125).
+func TestEnsureRouterKeepsARouterThatDidNotStop(t *testing.T) {
+	env := newRouterEnv(t)
+	env.run(t, DefaultRouterPort, "v1", "tok-v1")
+	env.stopErr = errors.New("context deadline exceeded")
+	_, err := env.svc.EnsureRouter(context.Background())
+	if err == nil {
+		t.Fatal("EnsureRouter must fail")
+	}
+	for _, want := range []string{"pid 4242", "port 18888", "v1", "did not take the stop request", "context deadline exceeded", "end that process"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	st, rerr := readRouterState()
+	if rerr != nil || st.Token != "tok-v1" {
+		t.Errorf("the running router's state must stay: %+v, %v", st, rerr)
+	}
+	if len(env.spawned) != 0 {
+		t.Errorf("no router may be started: %v", env.spawned)
 	}
 }
 

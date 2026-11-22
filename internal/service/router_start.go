@@ -148,10 +148,14 @@ func (s *Service) EnsureRouter(ctx context.Context) (*RouterStatus, error) {
 }
 
 // stopRouter asks a running router to stop and waits until it has
-// removed its state file (and with it released its port).
+// removed its state file (and with it released its port). The router
+// answered /status just before, so a failed stop request does not mean
+// it is gone: its state file stays, because it is the only way to reach
+// that router again.
 func stopRouter(ctx context.Context, h *routerHooks, st *RouterState) error {
 	if err := h.requestStop(ctx, st, tunnelControlTimeout); err != nil {
-		return removeRouterStateOwned(st.Token)
+		return fmt.Errorf("the running nakama router (pid %d, port %d, %s) did not take the stop request: %w\n"+
+			"end that process and try again", st.PID, st.Port, st.Version, err)
 	}
 	deadline := h.now().Add(routerReadyTimeout)
 	for {
