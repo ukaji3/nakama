@@ -201,19 +201,20 @@ func newTunnelRoutes() *tunnelRoutes {
 
 func routeKey(name string, p ForwardPurpose) string { return name + "/" + string(p) }
 
-// lookup reads the instance's daemon status. Only answers from the
-// daemon count as routes; nothing here changes any state.
-func (t *tunnelRoutes) lookup(ctx context.Context, name string) (*TunnelStatus, error) {
+// lookup reads the instance's daemon status for a route to p. Only
+// answers from the daemon count as routes; nothing here changes any
+// state.
+func (t *tunnelRoutes) lookup(ctx context.Context, name string, p ForwardPurpose) (*TunnelStatus, error) {
 	st, err := readTunnelState(name)
 	if err != nil {
 		if isNoTunnel(err) {
-			return nil, &routeError{kind: routeNoTunnel, name: name}
+			return nil, &routeError{kind: routeNoTunnel, name: name, purpose: p}
 		}
 		return nil, err
 	}
 	status, err := t.query(ctx, st, tunnelControlTimeout)
 	if err != nil {
-		return nil, &routeError{kind: routeDaemonGone, name: name}
+		return nil, &routeError{kind: routeDaemonGone, name: name, purpose: p}
 	}
 	return status, nil
 }
@@ -227,7 +228,7 @@ func (t *tunnelRoutes) resolve(ctx context.Context, name string, p ForwardPurpos
 	}
 	t.mu.Unlock()
 
-	status, err := t.lookup(ctx, name)
+	status, err := t.lookup(ctx, name, p)
 	if err != nil {
 		return "", err
 	}
@@ -255,7 +256,7 @@ func (t *tunnelRoutes) forget(name string, p ForwardPurpose) {
 }
 
 func (t *tunnelRoutes) status(ctx context.Context, name string, p ForwardPurpose) (ForwardStatus, bool) {
-	status, err := t.lookup(ctx, name)
+	status, err := t.lookup(ctx, name, p)
 	if err != nil {
 		return ForwardStatus{}, false
 	}
