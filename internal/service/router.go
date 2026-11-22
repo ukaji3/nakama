@@ -306,7 +306,15 @@ type routerHandler struct {
 	transport http.RoundTripper
 	logf      func(format string, args ...any)
 
-	proxies sync.Map // routeKey + "/" + backend port -> *httputil.ReverseProxy
+	// proxies holds one routeProxy per instance and purpose (routeKey).
+	proxies sync.Map
+}
+
+// routeProxy is the reverse proxy of one route and the forward port it
+// targets.
+type routeProxy struct {
+	backend string
+	rp      *httputil.ReverseProxy
 }
 
 func newRouterHandler(port int, routes routeTable, transport http.RoundTripper, logf func(string, ...any)) *routerHandler {
@@ -341,12 +349,17 @@ func (h *routerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.proxy(name, p, backend).ServeHTTP(w, r)
 }
 
-// proxy returns the reverse proxy for one instance, purpose and forward
-// port.
+// proxy returns the reverse proxy for one instance and purpose, aimed
+// at the forward port backend. The forward port changes whenever the
+// daemon or the forward is started again (it is a free port), so the
+// proxy of the old port is replaced, not kept beside the new one: the
+// router holds at most one proxy per instance and purpose.
 func (h *routerHandler) proxy(name string, p ForwardPurpose, backend string) *httputil.ReverseProxy {
-	key := routeKey(name, p) + "/" + backend
+	key := routeKey(name, p)
 	if v, ok := h.proxies.Load(key); ok {
-		return v.(*httputil.ReverseProxy)
+		if e := v.(routeProxy); e.backend == backend {
+			return e.rp
+		}
 	}
 	target := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", backend)}
 	rp := &httputil.ReverseProxy{
@@ -370,8 +383,8 @@ func (h *routerHandler) proxy(name string, p ForwardPurpose, backend string) *ht
 			writeRouterPage(w, http.StatusBadGateway, upstreamErrorPage(name, p, fs))
 		},
 	}
-	actual, _ := h.proxies.LoadOrStore(key, rp)
-	return actual.(*httputil.ReverseProxy)
+	h.proxies.Store(key, routeProxy{backend: backend, rp: rp})
+	return rp
 }
 
 // rewriteRouterRequest prepares the request to a forward.
