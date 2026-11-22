@@ -88,7 +88,7 @@ ADR 0027 で、`nakama aws open` は `http://localhost:8080` を、`nakama aws k
   - 2 回目の open は転送を使い回した。転送がある状態で `--local-port` に別のポートを指定するとエラーになった。nakama の別の転送が使っているポートを `NAKAMA_ROUTER_PORT` に指定すると、そのインスタンス名と案内を出してエラーになり、動いているルーターはそのまま残った。別の版の nakama で open すると、ルーターが入れ替わった。
   - 以前の版のデーモンが持つ固定ポートの転送にも、ルーターから届いた。`tunnel status` にルーターと URL が出た。インスタンスを消した後は、転送が無いことを示すページになった。
   - このとき、tunnel が無いインスタンスのエラーのページで、題名から用途が抜けていた (「No  forward for …」)。直して、テストを足した。
-- Safari (macOS 26) での確認は、このブランチを Mac でビルドして行う。
+- Safari (macOS 26) と Linux での動作は、このブランチのビルドで利用者が確かめた。
 
 ## Alternatives considered
 
