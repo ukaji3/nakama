@@ -40,12 +40,7 @@ func (b *fakeKirocrewBackend) EnsureBrowserForward(_ context.Context, in service
 	if b.forwardErr != nil {
 		return nil, b.forwardErr
 	}
-	port := in.LocalPort
-	if port == 0 {
-		port = service.DefaultLocalPort(in.Purpose)
-	}
-	return &service.BrowserForward{Name: in.Name, Purpose: in.Purpose, LocalPort: port,
-		Origin: fmt.Sprintf("http://localhost:%d", port)}, nil
+	return fakeBrowserForward(in), nil
 }
 
 func (b *fakeKirocrewBackend) GetKiroCrewWeb(context.Context, string) (*service.KiroCrewWeb, error) {

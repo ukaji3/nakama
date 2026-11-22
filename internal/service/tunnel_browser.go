@@ -16,20 +16,11 @@ import (
 // This file is the service side of `nakama aws open` and
 // `nakama aws kirocrew` over SSM (Issue #118, ADR 0027): it makes sure
 // the instance's tunnel daemon forwards code-server or Kiro Crew to a
-// local port, and waits until a browser can use it.
-
-// DefaultLocalPort is the local port of a browser forward when
-// --local-port is not given: the instance-side port itself, so
-// `localhost:5476` links printed on the instance (`kirocrew token`)
-// work in the local browser too.
-func DefaultLocalPort(p ForwardPurpose) int {
-	switch p {
-	case ForwardPurposeKiroCrew:
-		return kirocrewGatewayPort
-	default:
-		return config.CodeServerPort
-	}
-}
+// local port, and waits until a browser can use it. Without
+// --local-port the forward listens on a free port of the system's
+// choosing and the browser reaches it through the nakama router at
+// http://<purpose>.<name>.nakama.localhost:<port>/ (Issue #124, ADR
+// 0029).
 
 // remotePortFor is the instance-side port a browser forward targets:
 // code-server's port, or the Kiro Crew gateway on the instance's
@@ -51,11 +42,17 @@ var browserForwardReadyTimeout = 60 * time.Second
 // browserForwardProbeTimeout bounds one readiness request.
 var browserForwardProbeTimeout = 5 * time.Second
 
+// randomPortAttempts bounds how often a free local port is picked for a
+// router-only forward when another program takes the chosen one first.
+const randomPortAttempts = 5
+
 // BrowserForwardInput selects a browser forward.
 type BrowserForwardInput struct {
 	Name    string
 	Purpose ForwardPurpose
-	// LocalPort is --local-port; 0 picks DefaultLocalPort.
+	// LocalPort is --local-port: the forward also listens on this port
+	// and the browser opens http://localhost:<port>. 0 uses the router
+	// and a free port.
 	LocalPort int
 }
 
@@ -64,8 +61,12 @@ type BrowserForward struct {
 	Name      string         `json:"name"`
 	Purpose   ForwardPurpose `json:"purpose"`
 	LocalPort int            `json:"local_port"`
-	// Origin is http://localhost:<port>, what the browser opens.
+	// Origin is what the browser opens: the router address
+	// http://<purpose>.<name>.nakama.localhost:<router port>, or
+	// http://localhost:<port> with --local-port.
 	Origin string `json:"origin"`
+	// RouterPort is the router's port when Origin is the router's.
+	RouterPort int `json:"router_port,omitempty"`
 	// Reused is true when the daemon already had this forward.
 	Reused bool `json:"reused"`
 }
@@ -81,13 +82,15 @@ type ErrLocalPortMismatch struct {
 }
 
 func (e *ErrLocalPortMismatch) Error() string {
-	return fmt.Sprintf("the %s of %s is already forwarded on localhost:%s; open that one (without --local-port), "+
+	return fmt.Sprintf("the %s of %s is already forwarded (local port %s); open it without --local-port, "+
 		"or run `nakama aws tunnel stop %s` first to use localhost:%d", e.Purpose, e.Name, e.Existing, e.Name, e.Wanted)
 }
 
 // EnsureBrowserForward makes the instance's tunnel daemon forward
 // code-server or Kiro Crew to a local port and waits until the far end
 // answers through it:
+//   - without --local-port the router is started first (EnsureRouter),
+//     and the browser address is the router's;
 //   - a forward to the same instance port that is not dead is reused;
 //   - otherwise the forward is added to the running daemon, or a new
 //     daemon is started with it.
@@ -104,13 +107,19 @@ func (s *Service) EnsureBrowserForward(ctx context.Context, in BrowserForwardInp
 		return nil, fmt.Errorf("invalid --local-port %d: must be 1-65535", in.LocalPort)
 	}
 	explicit := in.LocalPort != 0
-	local := in.LocalPort
-	if !explicit {
-		local = DefaultLocalPort(in.Purpose)
-	}
-	remote := strconv.Itoa(remotePortFor(in.Purpose))
-	want := ForwardSpec{LocalPort: strconv.Itoa(local), RemotePort: remote, Purpose: in.Purpose}
 	hooks := s.tunnelHooksOrDefault()
+	var router *RouterStatus
+	if !explicit {
+		r, err := hooks.ensureRouter(ctx)
+		if err != nil {
+			return nil, err
+		}
+		router = r
+	}
+	want := ForwardSpec{RemotePort: strconv.Itoa(remotePortFor(in.Purpose)), Purpose: in.Purpose}
+	if explicit {
+		want.LocalPort = strconv.Itoa(in.LocalPort)
+	}
 
 	port, reused, err := s.ensureForward(ctx, hooks, in, want, explicit)
 	if err != nil {
@@ -123,14 +132,19 @@ func (s *Service) EnsureBrowserForward(ctx context.Context, in BrowserForwardInp
 		Origin:    "http://" + net.JoinHostPort("localhost", strconv.Itoa(port)),
 		Reused:    reused,
 	}
+	if router != nil {
+		bf.Origin = RouterOrigin(in.Purpose, in.Name, router.Port)
+		bf.RouterPort = router.Port
+	}
 	if err := s.waitBrowserForward(ctx, hooks, bf); err != nil {
 		return nil, err
 	}
 	return bf, nil
 }
 
-// ensureForward returns the local port that forwards want's remote
-// port, adding the forward or starting the daemon as needed.
+// ensureForward returns the local port of the forward to want's remote
+// port, adding the forward or starting the daemon as needed. want has
+// no local port unless explicit; then a free one is picked.
 func (s *Service) ensureForward(ctx context.Context, hooks *tunnelHooks, in BrowserForwardInput, want ForwardSpec, explicit bool) (int, bool, error) {
 	st, err := readTunnelState(in.Name)
 	if err != nil && !isNoTunnel(err) {
@@ -145,17 +159,43 @@ func (s *Service) ensureForward(ctx context.Context, hooks *tunnelHooks, in Brow
 				return 0, false, rmErr
 			}
 		} else {
-			for _, fs := range status.Forwards {
-				f, perr := ParseForwardSpec(fs.Spec)
-				if perr != nil || f.RemoteHost != "" || f.RemotePort != want.RemotePort || fs.State == ForwardStateDead {
-					continue
-				}
+			if live, _ := findBrowserForward(status, want.RemotePort); live >= 0 {
+				f, _ := ParseForwardSpec(status.Forwards[live].Spec)
 				if explicit && f.LocalPort != want.LocalPort {
 					return 0, false, &ErrLocalPortMismatch{Name: in.Name, Purpose: in.Purpose, Existing: f.LocalPort, Wanted: in.LocalPort}
 				}
 				port, _ := strconv.Atoi(f.LocalPort)
 				return port, true, nil
 			}
+			return s.addBrowserForward(ctx, hooks, in, st, status, want, explicit)
+		}
+	}
+	if !explicit {
+		p, err := pickFreeLocalPort(hooks)
+		if err != nil {
+			return 0, false, err
+		}
+		want.LocalPort = p
+	}
+	if _, err := s.StartTunnel(ctx, in.Name, []ForwardSpec{want}); err != nil {
+		return 0, false, err
+	}
+	port, _ := strconv.Atoi(want.LocalPort)
+	return port, false, nil
+}
+
+// addBrowserForward adds want to the running daemon. A free port picked
+// for a router-only forward can be taken by another program before the
+// daemon binds it; the daemon then answers 409 and another port is
+// tried.
+func (s *Service) addBrowserForward(ctx context.Context, hooks *tunnelHooks, in BrowserForwardInput, st *TunnelState, status *TunnelStatus, want ForwardSpec, explicit bool) (int, bool, error) {
+	attempts := 1
+	if !explicit {
+		attempts = randomPortAttempts
+	}
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if explicit {
 			if holdsLocalPort(status, want.LocalPort) {
 				// A live forward to some other port uses ours.
 				return 0, false, &LocalPortInUseError{Port: want.LocalPort, Holder: in.Name,
@@ -166,22 +206,47 @@ func (s *Service) ensureForward(ctx context.Context, hooks *tunnelHooks, in Brow
 			if err := checkLocalPortFree(hooks, want.LocalPort); err != nil {
 				return 0, false, err
 			}
-			if _, err := hooks.addForward(ctx, st, want, tunnelControlTimeout); err != nil {
-				if errors.Is(err, ErrTunnelDaemonTooOld) {
-					return 0, false, fmt.Errorf("%w; run `nakama aws tunnel restart %s` (it keeps the current forwards) and try again",
-						err, in.Name)
-				}
+		} else {
+			p, err := pickFreeLocalPort(hooks)
+			if err != nil {
 				return 0, false, err
 			}
+			want.LocalPort = p
+		}
+		_, err := hooks.addForward(ctx, st, want, tunnelControlTimeout)
+		if err == nil {
 			port, _ := strconv.Atoi(want.LocalPort)
 			return port, false, nil
 		}
+		if errors.Is(err, ErrTunnelDaemonTooOld) {
+			return 0, false, fmt.Errorf("%w; run `nakama aws tunnel restart %s` (it keeps the current forwards) and try again",
+				err, in.Name)
+		}
+		var inUse *LocalPortInUseError
+		if explicit || !errors.As(err, &inUse) {
+			return 0, false, err
+		}
+		lastErr = err
 	}
-	if _, err := s.StartTunnel(ctx, in.Name, []ForwardSpec{want}); err != nil {
-		return 0, false, err
+	return 0, false, fmt.Errorf("could not find a free local port for the forward: %w", lastErr)
+}
+
+// pickFreeLocalPort asks the system for a free loopback port that is
+// also free on ::1 (the daemon binds both, listenLoopback).
+func pickFreeLocalPort(hooks *tunnelHooks) (string, error) {
+	var lastErr error
+	for i := 0; i < randomPortAttempts; i++ {
+		p, err := hooks.pickPort()
+		if err != nil {
+			return "", err
+		}
+		if err := hooks.listenLocal(p); err != nil {
+			lastErr = err
+			continue
+		}
+		return p, nil
 	}
-	port, _ := strconv.Atoi(want.LocalPort)
-	return port, false, nil
+	return "", fmt.Errorf("could not find a free local port for the forward: %w", lastErr)
 }
 
 // holdsLocalPort reports whether a forward of the daemon that is not
@@ -201,12 +266,18 @@ func holdsLocalPort(status *TunnelStatus, port string) bool {
 // TargetNotConnected advice when that was the cause.
 func (s *Service) waitBrowserForward(ctx context.Context, hooks *tunnelHooks, bf *BrowserForward) error {
 	port := strconv.Itoa(bf.LocalPort)
+	// Through the router when the browser uses it: that checks the
+	// router's route to the forward as well.
+	dialPort, host := port, net.JoinHostPort("localhost", port)
+	if bf.RouterPort != 0 {
+		dialPort, host = strconv.Itoa(bf.RouterPort), RouterHost(bf.Purpose, bf.Name, bf.RouterPort)
+	}
 	path := bf.Purpose.healthPath()
 	deadline := hooks.now().Add(browserForwardReadyTimeout)
 	var last ForwardStatus
 	for {
 		pctx, cancel := context.WithTimeout(ctx, browserForwardProbeTimeout)
-		err := hooks.probeHTTP(pctx, port, path)
+		err := hooks.probeHTTP(pctx, dialPort, host, path)
 		cancel()
 		if err == nil {
 			return nil

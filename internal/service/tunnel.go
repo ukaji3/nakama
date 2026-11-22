@@ -456,6 +456,10 @@ type ForwardStatus struct {
 	// (e.g. TargetNotConnected), so a caller can add the matching
 	// advice without parsing Detail.
 	LastErrorCode string `json:"lastErrorCode,omitempty"`
+	// URL is the router address of the forward, when it is the browser
+	// forward of code-server or Kiro Crew and the router runs (Issue
+	// #124). The CLI process fills it in; the daemon never sends it.
+	URL string `json:"url,omitempty"`
 }
 
 // TunnelStatus is the full daemon status.

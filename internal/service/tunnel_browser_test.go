@@ -3,13 +3,14 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-// browserEnv extends the tunnel orchestration fakes with the add and
-// HTTP-probe hooks EnsureBrowserForward uses.
+// browserEnv extends the tunnel orchestration fakes with the add,
+// router, port-picking and HTTP-probe hooks EnsureBrowserForward uses.
 type browserEnv struct {
 	*tunnelTestEnv
 	added      []ForwardSpec
@@ -17,7 +18,15 @@ type browserEnv struct {
 	spawnedFwd [][]ForwardSpec
 	probeErrs  []error // per probe; beyond the slice => success
 	probes     []string
+	// routerErr fails ensureRouter; routerCalls counts the calls.
+	routerErr   error
+	routerCalls int
+	// nextPort is the next port pickPort hands out.
+	nextPort int
 }
+
+// testRouterPort is the router port the fake ensureRouter reports.
+const testRouterPort = 18888
 
 func newBrowserEnv(t *testing.T) *browserEnv {
 	t.Helper()
@@ -38,8 +47,21 @@ func newBrowserEnv(t *testing.T) *browserEnv {
 		env.added = append(env.added, f)
 		return &ForwardStatus{Spec: f.String(), Purpose: f.Purpose, State: ForwardStateConnecting}, nil
 	}
-	h.probeHTTP = func(_ context.Context, port, path string) error {
-		env.probes = append(env.probes, port+path)
+	env.nextPort = 41001
+	h.pickPort = func() (string, error) {
+		p := env.nextPort
+		env.nextPort++
+		return strconv.Itoa(p), nil
+	}
+	h.ensureRouter = func(context.Context) (*RouterStatus, error) {
+		env.routerCalls++
+		if env.routerErr != nil {
+			return nil, env.routerErr
+		}
+		return &RouterStatus{PID: 77, Port: testRouterPort}, nil
+	}
+	h.probeHTTP = func(_ context.Context, port, host, path string) error {
+		env.probes = append(env.probes, port+" "+host+path)
 		i := len(env.probes) - 1
 		if i < len(env.probeErrs) {
 			return env.probeErrs[i]
@@ -63,6 +85,8 @@ func (e *browserEnv) liveDaemon(t *testing.T, forwards ...ForwardStatus) {
 }
 
 func TestEnsureBrowserForwardStartsADaemon(t *testing.T) {
+	// Without --local-port the forward gets a free port and is reached
+	// (and probed) through the router; with it, on that port directly.
 	for _, tc := range []struct {
 		purpose  ForwardPurpose
 		want     string
@@ -70,9 +94,9 @@ func TestEnsureBrowserForwardStartsADaemon(t *testing.T) {
 		origin   string
 		explicit int
 	}{
-		{ForwardPurposeCodeServer, "code-server=8080:8080", "8080/healthz", "http://localhost:8080", 0},
-		{ForwardPurposeKiroCrew, "kirocrew=5476:5476", "5476/api/health", "http://localhost:5476", 0},
-		{ForwardPurposeCodeServer, "code-server=18080:8080", "18080/healthz", "http://localhost:18080", 18080},
+		{ForwardPurposeCodeServer, "code-server=41001:8080", "18888 code-server.dev01.nakama.localhost:18888/healthz", "http://code-server.dev01.nakama.localhost:18888", 0},
+		{ForwardPurposeKiroCrew, "kirocrew=41001:5476", "18888 kirocrew.dev01.nakama.localhost:18888/api/health", "http://kirocrew.dev01.nakama.localhost:18888", 0},
+		{ForwardPurposeCodeServer, "code-server=18080:8080", "18080 localhost:18080/healthz", "http://localhost:18080", 18080},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
 			env := newBrowserEnv(t)
@@ -91,6 +115,9 @@ func TestEnsureBrowserForwardStartsADaemon(t *testing.T) {
 			if len(env.probes) != 1 || env.probes[0] != tc.probe {
 				t.Errorf("probes = %v, want [%s]", env.probes, tc.probe)
 			}
+			if wantRouter := tc.explicit == 0; (env.routerCalls == 1) != wantRouter || (bf.RouterPort == testRouterPort) != wantRouter {
+				t.Errorf("router calls = %d, router port = %d (explicit %d)", env.routerCalls, bf.RouterPort, tc.explicit)
+			}
 		})
 	}
 }
@@ -103,7 +130,7 @@ func TestEnsureBrowserForwardReusesAMatchingForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureBrowserForward: %v", err)
 	}
-	if !bf.Reused || bf.LocalPort != 28080 || bf.Origin != "http://localhost:28080" {
+	if !bf.Reused || bf.LocalPort != 28080 || bf.Origin != "http://code-server.dev01.nakama.localhost:18888" {
 		t.Errorf("forward = %+v", bf)
 	}
 	if len(env.added) != 0 || len(env.spawned) != 0 {
@@ -135,10 +162,10 @@ func TestEnsureBrowserForwardAddsToTheRunningDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureBrowserForward: %v", err)
 	}
-	if len(env.added) != 1 || env.added[0].Stored() != "kirocrew=5476:5476" {
+	if len(env.added) != 1 || env.added[0].Stored() != "kirocrew=41001:5476" {
 		t.Errorf("added = %v", env.added)
 	}
-	if bf.Reused || bf.LocalPort != 5476 {
+	if bf.Reused || bf.LocalPort != 41001 {
 		t.Errorf("forward = %+v", bf)
 	}
 	if len(env.spawned) != 0 {
@@ -164,7 +191,7 @@ func TestEnsureBrowserForwardPortHeldByAnotherTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.portBusy["8080"] = true
-	_, err := env.svc.EnsureBrowserForward(context.Background(), BrowserForwardInput{Name: "dev01", Purpose: ForwardPurposeCodeServer})
+	_, err := env.svc.EnsureBrowserForward(context.Background(), BrowserForwardInput{Name: "dev01", Purpose: ForwardPurposeCodeServer, LocalPort: 8080})
 	var inUse *LocalPortInUseError
 	if !errors.As(err, &inUse) || inUse.Holder != "dev02" {
 		t.Fatalf("err = %v, want the port named as dev02's", err)
@@ -180,7 +207,7 @@ func TestEnsureBrowserForwardPortHeldByAnotherTunnel(t *testing.T) {
 func TestEnsureBrowserForwardPortHeldBySomethingElse(t *testing.T) {
 	env := newBrowserEnv(t)
 	env.portBusy["8080"] = true
-	_, err := env.svc.EnsureBrowserForward(context.Background(), BrowserForwardInput{Name: "dev01", Purpose: ForwardPurposeCodeServer})
+	_, err := env.svc.EnsureBrowserForward(context.Background(), BrowserForwardInput{Name: "dev01", Purpose: ForwardPurposeCodeServer, LocalPort: 8080})
 	var inUse *LocalPortInUseError
 	if !errors.As(err, &inUse) || inUse.Holder != "" || inUse.Port != "8080" {
 		t.Fatalf("err = %v", err)
@@ -230,7 +257,7 @@ func TestEnsureBrowserForwardStopsOnADeadForward(t *testing.T) {
 	env.svc.tunnel.query = func(context.Context, *TunnelState, time.Duration) (*TunnelStatus, error) {
 		fs := []ForwardStatus{{Spec: "5432:5432", State: ForwardStateActive}}
 		if added {
-			fs = append(fs, ForwardStatus{Spec: "8080:8080", State: ForwardStateDead, Detail: errInstanceGone.Error()})
+			fs = append(fs, ForwardStatus{Spec: "41001:8080", State: ForwardStateDead, Detail: errInstanceGone.Error()})
 		}
 		return &TunnelStatus{Name: "dev01", Forwards: fs}, nil
 	}
@@ -251,8 +278,5 @@ func TestEnsureBrowserForwardValidatesInput(t *testing.T) {
 		if _, err := env.svc.EnsureBrowserForward(context.Background(), in); err == nil {
 			t.Errorf("EnsureBrowserForward(%+v) must fail", in)
 		}
-	}
-	if DefaultLocalPort(ForwardPurposeCodeServer) != 8080 || DefaultLocalPort(ForwardPurposeKiroCrew) != 5476 {
-		t.Error("default local ports must be 8080 (code-server) and 5476 (Kiro Crew)")
 	}
 }

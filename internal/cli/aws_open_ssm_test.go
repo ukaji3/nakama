@@ -35,10 +35,12 @@ func TestOpenSSM_AutoLoginThroughTheForward(t *testing.T) {
 	if fetchErr != nil {
 		t.Fatalf("fetch one-shot page: %v", fetchErr)
 	}
+	// The page signs in at the router address, so the session cookie
+	// belongs to this instance's own host name.
 	for _, want := range []string{
-		`action="http://localhost:8080/login?to=/"`,
+		`action="http://code-server.dev01.nakama.localhost:18888/login?to=/"`,
 		`name="password" value="s3cret-pw"`,
-		`name="href" value="http://localhost:8080/login"`,
+		`name="href" value="http://code-server.dev01.nakama.localhost:18888/login"`,
 		`method="post"`,
 	} {
 		if !strings.Contains(pageBody, want) {
@@ -48,10 +50,10 @@ func TestOpenSSM_AutoLoginThroughTheForward(t *testing.T) {
 	if urls := launcher.opened(); len(urls) != 1 || !strings.HasPrefix(urls[0], "http://127.0.0.1:") {
 		t.Errorf("the browser must open the local one-shot page only, got %v", urls)
 	}
-	if !strings.Contains(out, "http://localhost:8080") || !strings.Contains(out, "over SSM") || !strings.Contains(out, "auto-login") {
+	if !strings.Contains(out, "http://code-server.dev01.nakama.localhost:18888") || !strings.Contains(out, "over SSM") || !strings.Contains(out, "auto-login") {
 		t.Errorf("stdout = %q", out)
 	}
-	if !strings.Contains(errOut, "nakama aws tunnel stop dev01") {
+	if !strings.Contains(errOut, "through the nakama router") || !strings.Contains(errOut, "nakama aws tunnel stop dev01") {
 		t.Errorf("stderr must say how to stop the forward:\n%s", errOut)
 	}
 	if strings.Contains(errOut, "WAF") || strings.Contains(out, "cloudfront") {
@@ -120,10 +122,26 @@ func TestOpenSSM_NoBrowserIsAnError(t *testing.T) {
 
 func TestOpenSSM_PortInUseAdvice(t *testing.T) {
 	backend := runningBackend()
-	backend.forwardErr = &service.LocalPortInUseError{Port: "8080", Holder: "dev02"}
-	_, _, err := runOpenCommand(t, newTestOpenDeps(backend, &fakeLauncher{}), "dev01")
+	backend.forwardErr = &service.LocalPortInUseError{Port: "18080", Holder: "dev02"}
+	_, _, err := runOpenCommand(t, newTestOpenDeps(backend, &fakeLauncher{}), "dev01", "--local-port", "18080")
 	if err == nil || !strings.Contains(err.Error(), "dev02") || !strings.Contains(err.Error(), "--local-port") {
 		t.Fatalf("err = %v, want the holder and the --local-port advice", err)
+	}
+}
+
+// TestOpenSSM_RouterPortInUse: a busy router port stops open with the
+// NAKAMA_ROUTER_PORT advice, and nothing else is offered in its place
+// (Issue #124 decision 10).
+func TestOpenSSM_RouterPortInUse(t *testing.T) {
+	backend := runningBackend()
+	backend.forwardErr = &service.RouterPortInUseError{Port: 18888, Err: errors.New("address already in use")}
+	launcher := &fakeLauncher{}
+	_, _, err := runOpenCommand(t, newTestOpenDeps(backend, launcher), "dev01")
+	if err == nil || !strings.Contains(err.Error(), "NAKAMA_ROUTER_PORT") || !strings.Contains(err.Error(), "18888") {
+		t.Fatalf("err = %v, want the router port and the NAKAMA_ROUTER_PORT advice", err)
+	}
+	if len(launcher.opened()) != 0 {
+		t.Error("no browser may be opened")
 	}
 }
 
@@ -166,7 +184,7 @@ func TestOpenSSM_JSONOutput(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, out)
 	}
-	if res.Via != "ssm" || res.LocalPort != 8080 || res.URL != "http://localhost:8080" || res.AutoLogin != "completed" {
+	if res.Via != "ssm" || res.LocalPort != testForwardPort || res.URL != "http://code-server.dev01.nakama.localhost:18888" || res.AutoLogin != "completed" {
 		t.Errorf("result = %+v", res)
 	}
 	if strings.Contains(out, "s3cret-pw") {
@@ -194,7 +212,7 @@ func TestKirocrewSSM_OpensTheDashboardWithItsToken(t *testing.T) {
 		t.Errorf("EnsureBrowserForward calls = %+v", backend.forwardArgs)
 	}
 	for _, want := range []string{
-		`action="http://localhost:5476/"`,
+		`action="http://kirocrew.dev01.nakama.localhost:18888/"`,
 		`method="get"`,
 		`name="token" value="` + testKCToken + `"`,
 		"Opening Kiro Crew",
@@ -215,7 +233,7 @@ func TestKirocrewSSM_OpensTheDashboardWithItsToken(t *testing.T) {
 	if strings.Contains(out, testKCToken) || strings.Contains(errOut, testKCToken) {
 		t.Error("the token must never appear in the command output")
 	}
-	if !strings.Contains(out, "via        : ssm") || !strings.Contains(out, "http://localhost:5476") {
+	if !strings.Contains(out, "via        : ssm") || !strings.Contains(out, "http://kirocrew.dev01.nakama.localhost:18888") {
 		t.Errorf("stdout = %q", out)
 	}
 }
@@ -248,7 +266,7 @@ func TestKirocrewSSM_PageNotFetchedOpensTheTokenURL(t *testing.T) {
 		t.Fatalf("kirocrew: %v (stderr %s)", err, errOut)
 	}
 	urls := launcher.opened()
-	want := "http://localhost:5476/?token=" + url.QueryEscape(testKCToken)
+	want := "http://kirocrew.dev01.nakama.localhost:18888/?token=" + url.QueryEscape(testKCToken)
 	if len(urls) != 2 || urls[1] != want {
 		t.Errorf("opened %v, want the one-shot page, then %s", urls, want)
 	}

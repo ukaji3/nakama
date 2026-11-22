@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 )
 
@@ -32,9 +33,15 @@ type tunnelHooks struct {
 	addForward func(ctx context.Context, st *TunnelState, f ForwardSpec, timeout time.Duration) (*ForwardStatus, error)
 	// listenLocal probes that a local port is free (preflight).
 	listenLocal func(port string) error
-	// probeHTTP sends one HTTP request through a browser forward's
-	// local port (EnsureBrowserForward's readiness check).
-	probeHTTP func(ctx context.Context, port, path string) error
+	// pickPort returns a free loopback port for a router-only browser
+	// forward (Issue #124).
+	pickPort func() (string, error)
+	// ensureRouter starts the router, or confirms it runs (Issue #124).
+	ensureRouter func(ctx context.Context) (*RouterStatus, error)
+	// probeHTTP sends one HTTP request for path to the local port with
+	// the given Host header (EnsureBrowserForward's readiness check:
+	// through the router, or straight to a --local-port forward).
+	probeHTTP func(ctx context.Context, port, host, path string) error
 	sleep     func(ctx context.Context, d time.Duration) error
 	now       func() time.Time
 }
@@ -46,6 +53,7 @@ func defaultTunnelHooks() *tunnelHooks {
 		requestStop: requestTunnelStop,
 		addForward:  requestTunnelAddForward,
 		listenLocal: probeLocalPort,
+		pickPort:    pickLoopbackPort,
 		probeHTTP:   probeBrowserForward,
 		sleep:       sleepCtx,
 		now:         time.Now,
@@ -58,7 +66,9 @@ func (s *Service) tunnelHooksOrDefault() *tunnelHooks {
 	if s.tunnel != nil {
 		return s.tunnel
 	}
-	return defaultTunnelHooks()
+	h := defaultTunnelHooks()
+	h.ensureRouter = s.EnsureRouter
+	return h
 }
 
 // probeLocalPort checks that a forward's local port is free: the daemon
@@ -75,12 +85,11 @@ func probeLocalPort(port string) error {
 	return nil
 }
 
-// probeBrowserForward sends one HTTP request through a forward's local
-// port the way a browser will (Host localhost:<port>). Any HTTP answer
-// counts: it proves that the whole path, down to the far end, answers.
-func probeBrowserForward(ctx context.Context, port, path string) error {
-	host := net.JoinHostPort("localhost", port)
-	return httpHealthCheck(ctx, host, host, path)
+// probeBrowserForward sends one HTTP request to a local port the way a
+// browser will (with its Host). Any HTTP answer of the far end counts:
+// it proves that the whole path, down to the far end, answers.
+func probeBrowserForward(ctx context.Context, port, host, path string) error {
+	return httpHealthCheck(ctx, net.JoinHostPort("localhost", port), host, path)
 }
 
 // tunnelHoldingPort returns the instance whose recorded tunnel forwards
@@ -294,7 +303,21 @@ func (s *Service) GetTunnelStatus(ctx context.Context, name string) (*TunnelStat
 		}
 		return nil, &NoTunnelError{Name: name}
 	}
+	if router, err := s.GetRouterStatus(ctx); err == nil && router != nil {
+		addRouterURLs(status, name, router.Port)
+	}
 	return status, nil
+}
+
+// addRouterURLs sets the router address on the forwards the router
+// serves: for each purpose, the forward a browser uses
+// (findBrowserForward), whatever opened it.
+func addRouterURLs(status *TunnelStatus, name string, routerPort int) {
+	for _, p := range routerPurposes {
+		if live, _ := findBrowserForward(status, strconv.Itoa(remotePortFor(p))); live >= 0 {
+			status.Forwards[live].URL = RouterOrigin(p, name, routerPort) + "/"
+		}
+	}
 }
 
 // spawnTunnelDaemon re-executes the current nakama binary as the

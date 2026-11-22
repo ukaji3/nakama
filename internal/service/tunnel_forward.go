@@ -202,7 +202,15 @@ func httpHealthCheck(ctx context.Context, addr, host, path string) error {
 		return err
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	return resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		return err
+	}
+	// The router's own error pages (no route yet, the forward did not
+	// answer) are not answers of the far end.
+	if reason := resp.Header.Get(routerErrorHeader); reason != "" {
+		return fmt.Errorf("the nakama router answered %d: %s", resp.StatusCode, reason)
+	}
+	return nil
 }
 
 // LocalPortInUseError reports that the local port of a forward cannot
