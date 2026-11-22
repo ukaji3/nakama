@@ -1,18 +1,18 @@
 # nakama 設計書 (v1)
 
-> Status: v0.27.0 時点の実装と、CloudFront のインスタンスごとの任意化 (ADR 0028、§8.30) に合わせて改訂
-> Last updated: 2026-11-20
+> Status: v0.28.1 時点の実装と、ブラウザ用の転送のルーター (ADR 0029、§8.31) に合わせて改訂
+> Last updated: 2026-11-22
 
 要件定義書: [requirements.md](requirements.md)
 
 ## 1. アーキテクチャ概要
 
-既定では、インスタンスへの受信の規則は無く、ブラウザも端末も SSM を通って届く (§8.29、ADR 0027)。
+既定では、インスタンスへの受信の規則は無く、ブラウザも端末も SSM を通って届く (§8.29、ADR 0027)。ブラウザは手元のルーター (§8.31、ADR 0029) に `http://<code-server|kirocrew>.<名前>.nakama.localhost:18888` でつなぎ、ルーターが Host でインスタンスの転送を選ぶ。
 
 ```
-[User Browser] ──HTTP──> [localhost:8080 / :5476 (tunnel デーモン)] ──SSM (HTTPS)──> [SSM エージェント]
-                                                                                 ├── code-server:8080
-                                                                                 └── Kiro Crew 127.0.0.1:5476
+[User Browser] ──HTTP──> [nakama ルーター :18888] ──> [tunnel デーモン 127.0.0.1:<空きポート>] ──SSM (HTTPS)──> [SSM エージェント]
+                (*.nakama.localhost)                   (インスタンスごと)                                       ├── code-server:8080
+                                                                                                                └── Kiro Crew 127.0.0.1:5476
 ```
 
 CloudFront の経路は、`create --cloudfront` か `cloudfront add` で足したインスタンスだけが持つ (§8.30、ADR 0028)。`open --internet` / `kirocrew --internet` はこの経路を使う。
@@ -72,7 +72,7 @@ github.com/ukaji3/nakama
 ├── cmd/nakama/                  // エントリーポイント (Windows のダブルクリック起動の判定を含む。ADR 0022)
 ├── internal/
 │   ├── cli/                     // cobra コマンド木 (aws_<command>.go)
-│   ├── service/                 // ユースケース層 (init, instance, acl, backup/restore, connect, tunnel, ssh, kirocrew, doctor など)
+│   ├── service/                 // ユースケース層 (init, instance, acl, backup/restore, connect, tunnel, router, ssh, kirocrew, doctor など)
 │   ├── awsx/                    // AWS SDK v2 ラッパー interface (mockable) と資格情報解決 (§13)
 │   ├── awshelper/               // サービス横断の補助 (タグ型の変換、ポーリング、エラー判定)
 │   ├── signin/                  // `aws login` プロトコルのネイティブ実装 (OAuth 2.0 + PKCE + DPoP。ADR 0016、§13.3)
@@ -419,9 +419,11 @@ code-server をブラウザで開き、パスワードログインを自動通�
 URL トークン認証が存在せず、CLI はブラウザの cookie store に書き込めない
 ため、「ブラウザ自身に `/login` へ top-level form POST させる」方式を取る。
 
-既定の送信先は SSM のポート転送 (`http://localhost:<ポート>`) で、CloudFront
-(`https://<domain>`) は `--internet` のときだけ使う (ADR 0027、§8.29)。以下の
-手順は両方に共通で、違いは §8.29 に書く。
+既定の送信先は SSM のポート転送で、ブラウザはルーターの URL
+(`http://code-server.<名前>.nakama.localhost:<ポート>`、§8.31) を開く。`--local-port`
+を付けたときは `http://localhost:<ポート>`。CloudFront (`https://<domain>`) は
+`--internet` のときだけ使う (ADR 0027、§8.29)。以下の手順はどれにも共通で、違いは
+§8.29 と §8.31 に書く。
 
 1. **preflight**: `GetInstanceInfo(ctx, name, showPassword)` で情報取得
    (`--no-auth` 時は showPassword=false)。パスワード読取のみが失敗した
@@ -441,7 +443,7 @@ URL トークン認証が存在せず、CLI はブラウザの cookie store に�
    `/<token>` だけが自動 submit フォーム
    (`POST <origin>/login?to=/`、hidden の `password` / `base=.` /
    `href=<origin>/login` は code-server の対話ログインフォームと
-   同一構成。`<origin>` は `http://localhost:<ポート>` か `https://<domain>`) を **1 回だけ**返す (他パスは 404、再取得は 410 Gone)。
+   同一構成。`<origin>` はルーターの URL、`http://localhost:<ポート>` (`--local-port`) か `https://<domain>`) を **1 回だけ**返す (他パスは 404、再取得は 410 Gone)。
    `Cache-Control: no-store` / `Referrer-Policy: no-referrer` 付与、
    html/template でエスケープ、外部リソース無し。ブラウザを one-shot URL
    で起動し、ページ配信を待つ (上限 `--timeout`, 既定 30s)。配信後は
@@ -456,7 +458,7 @@ URL トークン認証が存在せず、CLI はブラウザの cookie store に�
    timeout までサーバ維持)、`--browser <cmd>`
    (起動コマンド上書き。優先度 `--browser` > `$BROWSER` > OS 既定
    (darwin=`open`, linux=`xdg-open`, windows=`rundll32` best effort))、
-   `--timeout <duration>`、`--internet`、`--local-port <port>` (SSM のときだけ)
+   `--timeout <duration>`、`--internet`、`--local-port <port>` (SSM のときだけ。ルーターを使わず、そのポートで開く)
 7. **出力**: `-o json|yaml` は name / url / via (`ssm`|`internet`) / local_port / method (`auto-login`|`plain`) /
    opened / auto_login (`completed`|`skipped`|`timeout`) / note の
    構造体。**パスワードはいかなる出力にも含めない**
@@ -729,16 +731,18 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
 
 ### 8.29 ブラウザからの接続を SSM で — `open` / `kirocrew` と転送の監督 (ADR 0027 / Issue #118)
 
-`open` と `kirocrew` は、既定でインスタンスの tunnel デーモン (§8.12) に転送を足し、`http://localhost:<ポート>` をブラウザで開く。CloudFront の経路 (§8.10、§8.19) は `--internet` のときだけ。
+`open` と `kirocrew` は、既定でインスタンスの tunnel デーモン (§8.12) に転送を足し、ルーター (§8.31) の URL をブラウザで開く。`--local-port` のときは `http://localhost:<ポート>`。CloudFront の経路 (§8.10、§8.19) は `--internet` のときだけ。
 
 ```
-ブラウザ ─ http://localhost:8080 (127.0.0.1 / ::1)
+ブラウザ ─ http://code-server.<名前>.nakama.localhost:18888 (127.0.0.1 / ::1)
+  → nakama ルーター (§8.31。Host で転送を選ぶ)
+  → 127.0.0.1:<空きポート> (`--local-port` ならそのポート)
   → tunnel デーモン (forwardRunner。ポートを持ち続け、接続を中継する)
   → 127.0.0.1:<空きポート> (session-runner 子の plugin。セッションごとに選び直す)
   → SSM (AWS-StartPortForwardingSession) → インスタンスの code-server:8080 / Kiro Crew 127.0.0.1:5476
 ```
 
-- **転送の追加** (`EnsureBrowserForward`、`tunnel_browser.go`): 状態ファイルのデーモンが応答すれば、同じリモートポート (ホスト指定なし) の dead でない転送を再利用する (`--local-port` の明示と食い違えば `ErrLocalPortMismatch`)。無ければ `POST /forwards` で `code-server=8080:8080` / `kirocrew=5476:5476` の形の転送を足す (404 は古いデーモン → `tunnel restart` を案内)。デーモンが無ければ `StartTunnel` で起動する。足す前に、ポートが空いているかを 127.0.0.1 と ::1 で確かめ、ふさがっていれば状態ファイルからその転送のインスタンスを探して示す (`LocalPortInUseError`)。その後、ローカルポート経由の HTTP (`/healthz` / `/api/health`) が応答するまで最大 60 秒待つ。dead になれば理由を返し、時間切れでは最後の理由と、`LastErrorCode` が TargetNotConnected なら NAT の案内を返す
+- **転送の追加** (`EnsureBrowserForward`、`tunnel_browser.go`): `--local-port` が無ければ、まずルーターを起動するか確かめる (`EnsureRouter`、§8.31。失敗すれば何も始めない)。状態ファイルのデーモンが応答すれば、同じリモートポート (ホスト指定なし) の dead でない転送を再利用する (`findBrowserForward`。ルーターが選ぶのと同じ転送。`--local-port` の明示と食い違えば `ErrLocalPortMismatch`)。無ければ `POST /forwards` で転送を足す (404 は古いデーモン → `tunnel restart` を案内)。デーモンが無ければ `StartTunnel` で起動する。ローカルポートは、`--local-port` があればそのポート (`code-server=18080:8080`)。無ければ、システムが選んだ 127.0.0.1 の空きポートのうち ::1 でも空いているもの (`pickFreeLocalPort`。`code-server=<空きポート>:8080`)。デーモンが bind する前に取られて 409 が返れば、別のポートで足し直す (5 回まで)。`--local-port` のポートがふさがっていれば、状態ファイルからその転送のインスタンスを探して示す (`LocalPortInUseError`)。その後、HTTP (`/healthz` / `/api/health`) が応答するまで最大 60 秒待つ。ルーターを使うときはルーターを通して送り (Host はルーターの名前)、ルーター自身のエラーのページ (`X-Nakama-Router-Error`) は応答とみなさない。dead になれば理由を返し、時間切れでは最後の理由と、`LastErrorCode` が TargetNotConnected なら NAT の案内を返す
 - **デーモン** (`tunnel_daemon.go`): 転送ごとに `startForward` がローカルポートを bind し (`listenLoopback`。::1 が使える機械で ::1 がふさがっていれば使用中)、`forwardRunner` を動かす。同じローカルポートの dead の転送は置き換え、生きている転送とは衝突 (409)。足した転送は状態ファイルに書き直す (`rewriteTunnelState`。トークンが一致するときだけ、一時ファイル + rename)。起動時の転送の bind に失敗したら、その転送を dead にして続ける。子の出力は転送ごとの `lineWriter` で OS のログへ
 - **forwardRunner** (`tunnel_forward.go`): 
   - セッション 1 回: instance ID を読む → 空きポートを選ぶ → StartSession → 子を起動 (`SSM_PLUGIN_DISCONNECT_EXIT_CODE` 付き) → 空きポートに接続できるまで待つ (30 秒、200 ms ごと) → 接続を中継する → 子が終わるか検知が失敗するまで
@@ -747,11 +751,11 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
   - 必要なときだけ: ローカルの接続が開いているか、5 分以内に見たときだけ張り直す。そうでなければ `idle` で次の接続を待つ
   - 検知: 用途 (`ForwardPurpose`) のある転送で、接続が開いているあいだ 15 秒ごとに HTTP (Host `localhost:<ポート>`) を送り、10 秒で失敗、3 回続いたら子を止め、TerminateSession してから張り直す。確立の時間切れと確立前の子の失敗、子の一般的な失敗のあとも TerminateSession する
   - 時間の値はパッケージ変数で、テストが短くする
-- **open の SSM 経路** (`runAWSOpenSSM`): `GetInstanceInfo` (bare と停止中は拒否。distribution は要らない) → `EnsureBrowserForward` → 1 回限りのページの送信先を `http://localhost:<ポート>/login` にした METHOD A → METHOD C。ブラウザを起動できなければ (`browserLaunchError`) URL を出さずにエラー。WAF の確認はしない
-- **kirocrew の SSM 経路** (`runKirocrewOpenSSM`): `GetInstanceInfo` (停止中は拒否。bare も可) → `EnsureBrowserForward` → `MintKiroCrewToken` (`readKirocrewInstance` は bare を拒否しない) → 1 回限りのページ (`tokenPageTemplate`、`GET http://localhost:<ポート>/` に hidden の `token`)。期限内に読まれなければ `http://localhost:<ポート>/?token=…` を直接開く。`--no-auth` はトークン無しで開く。`kirocrew enable` / `GetKiroCrewWeb` は使わない
-- **Cookie**: user data と update の `nakama_set_cookie_suffix` (`internal/userdata/cookie_suffix.sh`) が、code-server 4.107.0 以降の config.yaml に `cookie-suffix: <名前>` を足す (既にあれば触らない)。restore は config.yaml のパスワードの行だけを替えるので、そのまま残る
+- **open の SSM 経路** (`runAWSOpenSSM`): `GetInstanceInfo` (bare と停止中は拒否。distribution は要らない) → `EnsureBrowserForward` → 1 回限りのページの送信先を `<オリジン>/login` (ルーターの URL か `http://localhost:<ポート>`) にした METHOD A → METHOD C。ブラウザを起動できなければ (`browserLaunchError`) URL を出さずにエラー。WAF の確認はしない。ルーターのポートが使用中なら `RouterPortInUseError` (`NAKAMA_ROUTER_PORT` の案内) をそのまま返す
+- **kirocrew の SSM 経路** (`runKirocrewOpenSSM`): `GetInstanceInfo` (停止中は拒否。bare も可) → `EnsureBrowserForward` → `MintKiroCrewToken` (`readKirocrewInstance` は bare を拒否しない) → 1 回限りのページ (`tokenPageTemplate`、`GET <オリジン>/` に hidden の `token`)。期限内に読まれなければ `<オリジン>/?token=…` を直接開く。`--no-auth` はトークン無しで開く。`kirocrew enable` / `GetKiroCrewWeb` は使わない
+- **Cookie**: user data と update の `nakama_set_cookie_suffix` (`internal/userdata/cookie_suffix.sh`) が、code-server 4.107.0 以降の config.yaml に `cookie-suffix: <名前>` を足す (既にあれば触らない)。restore は config.yaml のパスワードの行だけを替えるので、そのまま残る。ルーターの URL ではホスト名がインスタンスごとに違うので、Cookie はそれだけで分かれる (`--local-port` で `localhost` のポートを並べたときのために残す)
 - **delete**: 最後に `stopLocalTunnel` でこの機械の同名のデーモンを止める (失敗は警告)
-- **テスト**: `tunnel_forward_test.go` (本物のソケットで plugin を模し、再接続・待ち・検知・idle を確かめる)、`tunnel_browser_test.go`、`tunnel_daemon_test.go`、`aws_open_ssm_test.go`、`instance_update_run_test.go` の cookie-suffix。パッケージの `TestMain` は tunnel の状態ディレクトリを一時ディレクトリに向け、テストが利用者のデーモンに触れないようにする
+- **テスト**: `tunnel_forward_test.go` (本物のソケットで plugin を模し、再接続・待ち・検知・idle を確かめる)、`tunnel_browser_test.go`、`tunnel_browser_router_test.go`、`tunnel_daemon_test.go`、`aws_open_ssm_test.go`、`instance_update_run_test.go` の cookie-suffix。パッケージの `TestMain` は tunnel の状態ディレクトリを一時ディレクトリに向け、テストが利用者のデーモンに触れないようにする
 
 ### 8.30 CloudFront はインスタンスごとの任意 — `create --cloudfront` と `cloudfront add` / `delete` (ADR 0028 / Issue #120)
 
@@ -778,6 +782,32 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
 - **表示**: `info` は CloudFront が無ければ `cloudfront : none` と開き方を出し、JSON に `cloudfront` (bool) を入れる。`open --internet` / `kirocrew --internet` / `kirocrew enable` は、CloudFront が無いとき `cloudfront add` を案内する。`list` は変えない (DISTRIBUTION_DOMAIN が空)
 - **権限**: 権限表の `create` / `restore` の行は CloudFront の操作を含まない。`cloudfront` の行が add / delete と `--cloudfront` の分 (`cloudFrontBuildActions` と `cloudFrontTeardownActions`。`ec2:RevokeSecurityGroupIngress` を含む) を持つ
 - **テスト**: `cloudfront_test.go` (順序、各段階での失敗と Ctrl-C からの再開、無くなった部品の作り直し、前提の拒否、delete の順序・Kiro Crew の有無・停止中・再開・反映待ち、bare の残りの規則、add → delete の往復、`nakama aws delete` との共通化)、`instance_create_record_test.go` (`--cloudfront` の有無ごとの記録)、`restore_test.go`、`backup_test.go`、`doctor_test.go`、`aws_cloudfront_test.go`
+
+### 8.31 ブラウザ用の転送のルーター — `*.nakama.localhost` (ADR 0029 / Issue #124)
+
+ブラウザは、インスタンスの転送のローカルポートではなく、利用者ごとに 1 つのルーターにつなぐ。ルーターは Host の名前からインスタンスと用途を読み、その転送へ中継する。ポートを選ぶ必要も覚える必要も無く、インスタンスごとにオリジンが分かれる。実装は `internal/service/router.go` (中継)、`router_daemon.go` (プロセス)、`router_start.go` (CLI 側)、CLI は隠しコマンド `internal/cli/aws_router_daemon.go`。
+
+```
+ブラウザ ─ http://code-server.dev01.nakama.localhost:18888/   (*.localhost はブラウザか OS がループバックに解決)
+  → nakama ルーター 127.0.0.1:18888 / [::1]:18888 (nakama aws router-daemon。利用者ごとに 1 つ)
+      Host → (code-server, dev01) → ~/.config/nakama/tunnels/dev01.json → デーモンの GET /status
+      → 8080 への dead でない転送のローカルポート (findBrowserForward)
+  → 127.0.0.1:<空きポート> (dev01 の tunnel デーモン) → SSM → インスタンス
+```
+
+- **アドレス** (`parseRouterHost`): `<code-server|kirocrew>.<名前>.nakama.localhost:<ポート>`。名前の部分はインスタンス名の正規表現そのもの (`instanceNamePattern`)。大文字と末尾のドットを受け付ける。ポートがルーターのポートでなければ、nakama の名前でも受け付けない
+- **ポート** (`RouterPort`): 既定 18888、`NAKAMA_ROUTER_PORT` (1–65535) で変える。8888 (Jupyter の既定) と 80 (特権、既定のポートでは HTTPS への自動の切り替えを受けうる) は避けた
+- **振り分け** (`tunnelRoutes`): tunnel の状態ファイル → `queryTunnelStatus` → `findBrowserForward(status, "8080" | "5476")` (ホスト指定のない、dead でない最初の転送。`EnsureBrowserForward` の使い回しと同じ関数)。答えは 2 秒 (`routerLookupTTL`) 覚え、中継が失敗したら忘れる。状態ファイルは読むだけで、消さない (残りの掃除は CLI のコマンドがする)。失敗は `routeError` (`routeNoTunnel` / `routeDaemonGone` / `routeNoForward` / `routeForwardDead`)
+- **中継** (`routerHandler`、`httputil.ReverseProxy` の `Rewrite`): `Rewrite` は `Forwarded` と `X-Forwarded-For` / `-Host` / `-Proto` を落とし、自分では足さない (`Director` は `X-Forwarded-For` を足す)。`X-Real-IP` は自分で消す。用途ごとの書き換え (`rewriteRouterRequest`)
+  - code-server: `Out.Host = In.Host` (Host をそのまま。WebSocket の `authenticateOrigin` が Origin と Host を照合する)
+  - Kiro Crew: Host を `localhost:5476` に。Origin がルーター自身のオリジンと一致すれば `http://localhost:5476` に、Referer がルーターのオリジンの URL なら同じオリジンの URL に置き換える (それ以外は変えない)。応答の `Location` が `http://localhost:5476` の URL なら、ルーターのオリジンに戻す (`rewriteKiroCrewLocation`。`http://localhost:54760` のような別のポートは対象外)。`127.0.0.1` に置き換えないのは、Kiro Crew が Cookie の無い文書の GET を `localhost` へ 302 で移すため
+  - WebSocket (101) と event stream は `ReverseProxy` がそのまま扱う (`text/event-stream` と長さの分からない応答はすぐ flush する)
+- **転送先への接続** (`newRouterTransport`): 127.0.0.1 だけ、プロキシを使わない、HTTP/1.1、keep-alive の遊休は 10 秒 (`routerUpstreamIdleTimeout`)。デーモンは開いているローカルの接続を利用中とみなす (§8.29 の「必要なときだけ」) ので、遊休の接続を持ち続けない
+- **エラーのページ** (`writeRouterPage`): `Cache-Control: no-store`、`X-Nakama-Router-Error: <題名>`、html/template。知らない Host は 421。転送が無い・デーモンが応答しない・dead は 502 で、`nakama aws open <名前>` (Kiro Crew は `kirocrew`)、dead なら理由と `tunnel status` を示す。中継が失敗したときは、デーモンの最後の理由を添え、`LastErrorCode` が TargetNotConnected なら `nakama aws start <名前>` を先に示す (`upstreamErrorPage`)。`httpHealthCheck` は `X-Nakama-Router-Error` の付いた応答を失敗として扱うので、open の待ちがルーターのページで終わることはない
+- **プロセス** (`RunRouterDaemon` → `runRouterDaemon`): `listenLoopback` でポートを取る (失敗なら状態を書かずに終わる) → 制御のチャネル (127.0.0.1:0、bearer token) → 状態ファイル `~/.config/nakama/router.json` (0600。PID・ポート・制御ポート・トークン・版・開始時刻。tunnel の状態のディレクトリの外。`router` は有効なインスタンス名なので)。O_EXCL で作れなければ、前の持ち主に問い合わせ、応答すれば (別のポートのルーター) 終わり、応答しなければ置き換える → 中継と制御を始める (`GET /status`、`POST /stop`。unix では SIGTERM / SIGINT も停止) → `watchRouterIdle` が 15 秒ごとに応答する tunnel のデーモンを数え (`countLiveTunnels`。読むだけ)、0 が 1 分続いたら止める。ログは `openDaemonLogger("nakama-router")` (syslog のタグ。Windows はイベントログのソース `nakama`)
+- **CLI 側** (`EnsureRouter`。`EnsureBrowserForward` が `--local-port` の無いときに呼ぶ): 状態ファイルのルーターが応答し、版 (`version.String()`) とポートが同じなら使う。応答しなければ状態ファイルを消す。版かポートが違えば、ポートが違うときは新しいポートが空いているかを先に確かめ (空いていなければ、動いているルーターを止めずに `RouterPortInUseError`)、`POST /stop` で止めて状態ファイルが消えるまで待つ。そのあとポートが 127.0.0.1 と ::1 で空いているかを確かめ (`RouterPortInUseError`。nakama の転送が使っていれば `tunnelHoldingPort` でそのインスタンス名も示し、`NAKAMA_ROUTER_PORT=<ポート+1>` の例を出す)、隠しコマンドを tunnel のデーモンと同じく切り離して起動し、状態ファイルと `/status` が応答するまで 15 秒待つ。2 つの CLI が同時に起動しても、ポートを取った 1 つが両方に使われる
+- **表示**: `GetTunnelStatus` は、ルーターが動いていれば、用途ごとに `findBrowserForward` の転送へ `URL` (`http://<用途>.<名前>.nakama.localhost:<ポート>/`) を入れる (デーモンは送らない。CLI 側で埋める)。`tunnel status` は表の後に `router: running on localhost:<ポート> (pid N)` と、URL の一覧 (名前を省いたときは名前付き) を出す。ブラウザ用の転送があるのにルーターが無ければ、`router: not running` と open / kirocrew での起動を案内する。`GetRouterStatus` は資格情報なしで動き、応答の無いルーターの状態ファイルを消す
+- **テスト**: `router_test.go` (名前の判定、書き換え、転送用のヘッダー、421、エラーのページ、WebSocket、event stream、遊休の接続、ルーターのページを応答とみなさないこと、`tunnelRoutes`)、`router_daemon_test.go` (本物のソケット。状態ファイル、制御、両方のループバック、停止、tunnel が無いときの終了、使用中のポート、残った状態ファイル、別のルーター、tunnel のデーモンの `/status` を通した通し)、`router_start_test.go`、`tunnel_browser_router_test.go`、`aws_tunnel_test.go`。パッケージの `TestMain` と `withTunnelStateDir` は、tunnel の状態のディレクトリを一時ディレクトリの下の `tunnels` に向け、`router.json` もその一時ディレクトリに置かれるようにする
 
 ## 9. テスト戦略
 

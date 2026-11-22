@@ -119,10 +119,10 @@
 <table>
   <thead><tr><th scope="col">コマンド</th><th scope="col">説明</th><th scope="col">主なオプション</th></tr></thead>
   <tbody>
-    <tr><td><code>nakama aws kirocrew &lt;名前&gt;</code></td><td>Kiro Crew の画面を SSM 経由で開く (自動サインイン、<code>enable</code> 不要)</td><td><code>--local-port &lt;番号&gt;</code> (既定 5476)、<code>--internet</code> (CloudFront 経由)、<code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code></td></tr>
+    <tr><td><code>nakama aws kirocrew &lt;名前&gt;</code></td><td>Kiro Crew の画面を SSM 経由で開く (自動サインイン、<code>enable</code> 不要。アドレスは <code>http://kirocrew.&lt;名前&gt;.nakama.localhost:18888</code>)</td><td><code>--local-port &lt;番号&gt;</code> (<code>http://localhost:&lt;番号&gt;</code> で開く)、<code>--internet</code> (CloudFront 経由)、<code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code></td></tr>
     <tr><td><code>nakama aws kirocrew enable &lt;名前&gt;</code></td><td>Kiro Crew の画面を CloudFront 経由 (<code>--internet</code>) で開く仕組みを用意する (最初に 1 回。<code>cloudfront add</code> が先に要る)</td><td>—</td></tr>
     <tr><td><code>nakama aws kirocrew disable &lt;名前&gt;</code></td><td>上の仕組みを取り外す</td><td>—</td></tr>
-    <tr><td><code>nakama aws open &lt;名前&gt;</code></td><td>ブラウザで開く (SSM 経由、自動ログイン)。入口は裏で動き続け、切れても自動でつなぎ直す</td><td><code>--local-port &lt;番号&gt;</code> (既定 8080)、<code>--internet</code> (CloudFront 経由)、<code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code> (既定 30s)</td></tr>
+    <tr><td><code>nakama aws open &lt;名前&gt;</code></td><td>ブラウザで開く (SSM 経由、自動ログイン。アドレスは <code>http://code-server.&lt;名前&gt;.nakama.localhost:18888</code>)。入口は裏で動き続け、切れても自動でつなぎ直す</td><td><code>--local-port &lt;番号&gt;</code> (<code>http://localhost:&lt;番号&gt;</code> で開く)、<code>--internet</code> (CloudFront 経由)、<code>--no-auth</code>、<code>--print-url</code>、<code>--browser &lt;コマンド&gt;</code>、<code>--timeout &lt;時間&gt;</code> (既定 30s)</td></tr>
     <tr><td><code>nakama aws connect &lt;名前&gt; [コマンド...]</code></td><td>ターミナルに入る / コマンド実行。<strong>フラグは名前より前</strong>に置きます (名前より後ろは環境側で実行するコマンドとして扱われます)。コマンド実行は環境側の終了コードで終わります (nakama の失敗は 255)</td><td><code>--tty</code>、<code>--retry &lt;回数&gt;</code> (対話は既定 5、コマンド実行は既定 0)</td></tr>
     <tr><td><code>nakama aws ssh setup &lt;名前&gt;</code></td><td>公開鍵の登録と ssh 設定の生成</td><td><code>--identity &lt;公開鍵&gt;</code>、<code>--no-key</code>、<code>--port &lt;番号&gt;</code> (既定 22)</td></tr>
     <tr><td><code>nakama aws ssh proxy &lt;名前&gt;</code></td><td>ssh の <code>ProxyCommand</code> 用 (手で実行するものではありません)</td><td><code>--port &lt;番号&gt;</code></td></tr>
@@ -177,6 +177,7 @@
     <tr><td><code>SSM_PLUGIN_PING_INTERVAL_SECONDS</code></td><td>接続維持の信号の間隔 (秒、既定 300)。切断が多い環境で短くします</td></tr>
     <tr><td><code>AWS_PROFILE</code> / <code>AWS_DEFAULT_PROFILE</code></td><td>AWS 標準のプロファイル指定。<code>nakama aws profile load</code> で選んだものが<strong>優先されます</strong></td></tr>
     <tr><td><code>AWS_CONFIG_FILE</code></td><td>AWS の設定ファイルの場所 (サインインセッションの読み取りに使われます)</td></tr>
+    <tr><td><code>NAKAMA_ROUTER_PORT</code></td><td><code>open</code> / <code>kirocrew</code> が開く <code>*.nakama.localhost</code> のアドレスの番号 (手元の入口のポート。既定 18888)。18888 番を別のプログラムが使っているときに変えます</td></tr>
     <tr><td><code>XDG_CONFIG_HOME</code></td><td>nakama の設定の置き場所を変えたい場合に指定します (既定はホームの <code>.config</code>)</td></tr>
     <tr><td><code>AWS_LOGIN_CACHE_DIRECTORY</code></td><td>サインイン情報のキャッシュ場所を変えたい場合 (通常は不要)</td></tr>
     <tr><td><code>NAKAMA_AWS_CLI_SHELL</code></td><td><code>cli shell</code> か、ダブルクリックで開いたウィンドウの中にいることを示す目印 (二重起動の防止に使われます。自分で設定するものではありません)</td></tr>
@@ -193,6 +194,7 @@
     <tr><td><code>~/.config/nakama/profiles.json</code></td><td>保存したアカウントの一覧 (識別子のみ)</td></tr>
     <tr><td><code>~/.config/nakama/aws_config</code></td><td>上記から生成される AWS 形式の設定 (nakama 専用)</td></tr>
     <tr><td><code>~/.config/nakama/tunnels/&lt;名前&gt;.json</code></td><td>ポート転送の状態 (<code>tunnel stop</code> で削除)</td></tr>
+    <tr><td><code>~/.config/nakama/router.json</code></td><td><code>*.nakama.localhost</code> のアドレスで行き先を選ぶ入口 (ルーター) の状態 (ルーターが終わると削除)</td></tr>
     <tr><td><code>~/.config/nakama/ssh/&lt;名前&gt;.conf</code></td><td>ssh 設定のスニペット</td></tr>
     <tr><td><code>~/.config/nakama/aws-ca-bundle.pem</code></td><td><code>cli shell</code> が作る証明書ファイル (公開証明書のみ)</td></tr>
     <tr><td><code>~/.aws/login/cache/</code></td><td>サインイン情報のキャッシュ (AWS 公式の <code>aws login</code> と共有)</td></tr>

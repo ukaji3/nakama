@@ -157,8 +157,24 @@
   <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
-      <td><code>open</code> / <code>kirocrew</code> が <code>local port 8080 is in use</code> (または <code>is not available</code>) で失敗する</td>
-      <td>手元の 8080 番 (Kiro Crew は 5476 番) を別のプログラムか、nakama の別の開発環境の入口が使っています (後者なら名前が表示されます)。<code>--local-port 18080</code> のように別の番号を指定してください</td>
+      <td><code>open</code> / <code>kirocrew</code> が <code>local port 18888 of the nakama router is not available</code> で失敗する</td>
+      <td>手元の 18888 番 (アドレスで行き先を選ぶ入口の番号) を別のプログラムか、nakama の転送が使っています (後者なら名前が表示されます)。環境変数 <code>NAKAMA_ROUTER_PORT</code> で別の番号を指定してください (例: PowerShell なら <code>$env:NAKAMA_ROUTER_PORT = "18889"</code>)</td>
+    </tr>
+    <tr>
+      <td><code>open --local-port</code> / <code>kirocrew --local-port</code> が <code>local port … is in use</code> (または <code>is not available</code>) で失敗する</td>
+      <td>指定した番号を別のプログラムか、nakama の別の開発環境の入口が使っています (後者なら名前が表示されます)。別の番号を指定するか、<code>--local-port</code> を付けずに開いてください</td>
+    </tr>
+    <tr>
+      <td>ブラウザで <code>http://code-server.&lt;名前&gt;.nakama.localhost:18888</code> が見つからない</td>
+      <td>このアドレスを引けないブラウザです (macOS 26 より前の Safari など)。Chrome・Edge・Firefox を使うか、<code>--local-port 18080</code> のように番号を指定して <code>http://localhost:&lt;番号&gt;</code> で開いてください</td>
+    </tr>
+    <tr>
+      <td>ブラウザに「No code-server forward for &lt;名前&gt;」(Kiro Crew は「No kirocrew forward」) と表示される</td>
+      <td>その開発環境の転送が動いていません (パソコンの再起動や <code>tunnel stop</code> の後など)。ページに表示されたコマンド (<code>nakama aws open &lt;名前&gt;</code> など) を実行してください</td>
+    </tr>
+    <tr>
+      <td>ブラウザに「The code-server forward of &lt;名前&gt; did not answer」と表示される</td>
+      <td>SSM のセッションがつながっていません。ページに表示された理由を確かめてください。開発環境が止まっていれば <code>nakama aws start &lt;名前&gt;</code> で起動します</td>
     </tr>
     <tr>
       <td><code>open</code> / <code>kirocrew</code> が <code>could not launch a browser</code> で失敗する</td>
