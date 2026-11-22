@@ -789,3 +789,15 @@ func TestListenLoopbackRejectsAPortTakenOnIPv6(t *testing.T) {
 		t.Fatal("listenLoopback must fail when ::1 is taken")
 	}
 }
+
+// TestDaemonSessionRunnerIO pins how the daemon runs its session
+// runners: no stdin, output into the daemon log, no signal guard, and
+// no console (Issue #126; the Windows effect is checked by
+// TestDaemonSessionRunnerHasNoConsole).
+func TestDaemonSessionRunnerIO(t *testing.T) {
+	var out strings.Builder
+	opts := daemonSessionRunnerIO(&out)
+	if opts.stdin != nil || opts.stdout != &out || opts.stderr != &out || opts.guardTerminalSignals || !opts.noConsole {
+		t.Errorf("daemon session runner options = %+v", opts)
+	}
+}
