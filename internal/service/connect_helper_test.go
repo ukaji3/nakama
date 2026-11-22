@@ -29,12 +29,24 @@ const (
 	helperShellEscape       = "shell-escape"
 )
 
+// platformTestHelpers are helper modes that exist on one OS only
+// (registered by that OS's test files).
+var platformTestHelpers = map[string]func() int{}
+
+// reportConsole, when an OS's test files set it, describes the console
+// of the current process; the fake session runner prints it when
+// NAKAMA_TEST_FAKE_CONSOLE=1 (Issue #126).
+var reportConsole func() string
+
 func TestMain(m *testing.M) {
 	switch os.Getenv(testHelperEnv) {
 	case helperFakeSessionRunner:
 		os.Exit(runFakeSessionRunner())
 	case helperShellEscape:
 		os.Exit(runShellEscapeHelper())
+	}
+	if helper, ok := platformTestHelpers[os.Getenv(testHelperEnv)]; ok {
+		os.Exit(helper())
 	}
 	// No test may read or signal the tunnels or the router of the person
 	// running the tests (DeleteInstance stops the local tunnel of the
@@ -69,6 +81,9 @@ func runFakeSessionRunner() int {
 		return 90
 	}
 	fmt.Printf("payload=%s\n", payload)
+	if os.Getenv("NAKAMA_TEST_FAKE_CONSOLE") == "1" && reportConsole != nil {
+		fmt.Printf("child console: %s\n", reportConsole())
+	}
 	st, err := OpenSessionStatus()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "status:", err)

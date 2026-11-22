@@ -66,6 +66,11 @@ func OpenSessionPayload() (*os.File, error) {
 	return f, nil
 }
 
+// detachConsole has nothing to do on unix: a process has no console of
+// its own there, and the tunnel daemon already runs in a session
+// without a controlling terminal (Setsid), which its children share.
+func detachConsole(*exec.Cmd) {}
+
 // closeOnExec keeps an inherited descriptor from leaking into the
 // processes the child starts (the plugin runs stty, for example):
 // descriptors received through ExtraFiles arrive without FD_CLOEXEC.

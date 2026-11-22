@@ -101,6 +101,21 @@ func OpenSessionPayload() (*os.File, error) {
 	return f, nil
 }
 
+// detachConsole starts the child without any console
+// (DETACHED_PROCESS). nakama.exe is a console program, and a console
+// program started by a process that has no console to share (the
+// tunnel daemon runs with DETACHED_PROCESS) otherwise gets a console of
+// its own: a conhost.exe and a visible window for every SSM session
+// (Issue #126). CREATE_NO_WINDOW would hide the window but still start
+// a conhost.exe per session. A tunnel's session runner needs no console:
+// its stdout and stderr are pipes into the daemon log.
+func detachConsole(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= windows.DETACHED_PROCESS
+}
+
 // closeOnExec is a no-op on Windows: os/exec passes a child only the
 // handles listed in AdditionalInheritedHandles (plus stdio), so an
 // inherited handle cannot leak further.

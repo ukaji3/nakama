@@ -168,6 +168,10 @@ type sessionRunnerIO struct {
 	// the child's lifetime; meaningless without a controlling
 	// terminal.
 	guardTerminalSignals bool
+	// noConsole starts the child without any console (Windows:
+	// DETACHED_PROCESS; see detachConsole). For children whose stdio
+	// are not a terminal and whose parent has no console to share.
+	noConsole bool
 }
 
 // spawnSessionRunnerIO is spawnSessionRunner with explicit stdio
@@ -225,6 +229,10 @@ func spawnSessionRunnerIO(ctx context.Context, req sessionRunRequest, stdio sess
 		if err := attachSessionStatus(cmd, statusW); err != nil {
 			return failed, fmt.Errorf("attach session status: %w", err)
 		}
+	}
+
+	if stdio.noConsole {
+		detachConsole(cmd)
 	}
 
 	// While the child runs, the parent must survive terminal-generated

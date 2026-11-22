@@ -132,12 +132,7 @@ func (s *Service) newForwardDeps(name string, childOut io.Writer, logf func(stri
 			}
 		},
 		runChild: func(ctx context.Context, req sessionRunRequest) (sessionRunResult, error) {
-			return spawnSessionRunnerIO(ctx, req, sessionRunnerIO{
-				stdin:                nil,
-				stdout:               childOut,
-				stderr:               childOut,
-				guardTerminalSignals: false, // the daemon has no terminal
-			})
+			return spawnSessionRunnerIO(ctx, req, daemonSessionRunnerIO(childOut))
 		},
 		pickPort:    pickLoopbackPort,
 		dial:        dialForward,
@@ -148,6 +143,22 @@ func (s *Service) newForwardDeps(name string, childOut io.Writer, logf func(stri
 		endpoint:    fmt.Sprintf("https://ssm.%s.amazonaws.com", s.clients.Region),
 		region:      s.clients.Region,
 		logf:        logf,
+	}
+}
+
+// daemonSessionRunnerIO is how the tunnel daemon runs its
+// session-runner children: no stdin, stdout and stderr into the daemon
+// log, no terminal signals to guard (the daemon has no terminal), and
+// no console (on Windows a console program started by the console-less
+// daemon would otherwise open a console window per session, Issue
+// #126).
+func daemonSessionRunnerIO(out io.Writer) sessionRunnerIO {
+	return sessionRunnerIO{
+		stdin:                nil,
+		stdout:               out,
+		stderr:               out,
+		guardTerminalSignals: false,
+		noConsole:            true,
 	}
 }
 
