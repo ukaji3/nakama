@@ -557,11 +557,15 @@ func TestTunnelRoutesReadTheDaemons(t *testing.T) {
 		t.Errorf("no code-server forward: %v", err)
 	}
 	queryErr = errors.New("connection refused")
-	if _, err := routes.resolve(ctx, "dev01", ForwardPurposeCodeServer); !errors.As(err, &re) || re.kind != routeDaemonGone {
-		t.Errorf("daemon gone: %v", err)
+	if _, err := routes.resolve(ctx, "dev01", ForwardPurposeCodeServer); !errors.As(err, &re) || re.kind != routeDaemonGone || re.purpose != ForwardPurposeCodeServer {
+		t.Errorf("daemon gone: %v (%+v)", err, re)
 	}
-	if _, err := routes.resolve(ctx, "dev02", ForwardPurposeCodeServer); !errors.As(err, &re) || re.kind != routeNoTunnel {
-		t.Errorf("no tunnel: %v", err)
+	// Every route error names the purpose: the error page's title and
+	// its command come from it.
+	if _, err := routes.resolve(ctx, "dev02", ForwardPurposeKiroCrew); !errors.As(err, &re) || re.kind != routeNoTunnel || re.purpose != ForwardPurposeKiroCrew {
+		t.Errorf("no tunnel: %v (%+v)", err, re)
+	} else if page := routeErrorPage(re); page.Title != "No kirocrew forward for dev02" || page.Commands[0] != "nakama aws kirocrew dev02" {
+		t.Errorf("page = %+v", page)
 	}
 	if fileExists(t, "dev01") != true {
 		t.Error("the router must never remove a tunnel state file")
