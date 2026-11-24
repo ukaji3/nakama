@@ -54,3 +54,29 @@ func TestSilenceRemoteExit(t *testing.T) {
 		}
 	}
 }
+
+// TestShellTTYShorthand: -t is --tty, as in ssh, and like every flag it
+// must precede <name> (Issue #129).
+func TestShellTTYShorthand(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		args     []string
+		wantTTY  bool
+		wantArgs []string
+	}{
+		{[]string{"-t", "dev01", "top"}, true, []string{"dev01", "top"}},
+		{[]string{"--tty", "dev01", "top"}, true, []string{"dev01", "top"}},
+		{[]string{"dev01", "top", "-t"}, false, []string{"dev01", "top", "-t"}},
+	} {
+		cmd := newAWSShellCommand()
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if tty, _ := cmd.Flags().GetBool("tty"); tty != tc.wantTTY {
+			t.Errorf("%v: tty = %v, want %v", tc.args, tty, tc.wantTTY)
+		}
+		if got := cmd.Flags().Args(); fmt.Sprint(got) != fmt.Sprint(tc.wantArgs) {
+			t.Errorf("%v: args %v, want %v", tc.args, got, tc.wantArgs)
+		}
+	}
+}
