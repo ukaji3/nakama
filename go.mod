@@ -14,7 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.85.2
 	github.com/aws/session-manager-plugin v0.0.0-00010101000000-000000000000
 	github.com/aws/smithy-go v1.28.9
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/mattn/go-ieproxy v0.0.12
 	github.com/spf13/cobra v1.10.2
 	github.com/twinj/uuid v1.0.0
