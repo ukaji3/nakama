@@ -143,10 +143,10 @@ func (s *Service) EnableKiroCrewWeb(ctx context.Context, name string) (*EnableKi
 	}
 	if m.distributionID == "" {
 		return nil, fmt.Errorf("instance %q has no CloudFront distribution for code-server, which the Kiro Crew access "+
-			"builds on; add it first with `nakama aws cloudfront add %s`, then run `nakama aws kirocrew enable %s` again "+
-			"(`nakama aws kirocrew %s` without --internet needs neither)", name, name, name, name)
+			"builds on; `nakama aws cloudfront add %s --kirocrew` builds both "+
+			"(`nakama aws kirocrew %s` without --internet needs neither)", name, name, name)
 	}
-	if err := s.requireRunning(ctx, m, "`nakama aws kirocrew enable`"); err != nil {
+	if err := s.requireRunning(ctx, m, "`nakama aws cloudfront add "+name+" --kirocrew`"); err != nil {
 		return nil, err
 	}
 
@@ -472,11 +472,11 @@ func (s *Service) GetKiroCrewWeb(ctx context.Context, name string) (*KiroCrewWeb
 	}
 	if m.crewID == "" || m.crewDomain == "" {
 		if m.distributionID == "" {
-			return nil, fmt.Errorf("%w: %q has no CloudFront; add it with `nakama aws cloudfront add %s`, "+
-				"then run `nakama aws kirocrew enable %s` (or open Kiro Crew over SSM without --internet)",
-				ErrKiroCrewWebNotEnabled, name, name, name)
+			return nil, fmt.Errorf("%w: %q has no CloudFront; add it with `nakama aws cloudfront add %s --kirocrew` "+
+				"(or open Kiro Crew over SSM without --internet)",
+				ErrKiroCrewWebNotEnabled, name, name)
 		}
-		return nil, fmt.Errorf("%w: run `nakama aws kirocrew enable %s` first", ErrKiroCrewWebNotEnabled, name)
+		return nil, fmt.Errorf("%w: run `nakama aws cloudfront add %s --kirocrew` first", ErrKiroCrewWebNotEnabled, name)
 	}
 	if err := validateCloudFrontDomain(m.crewDomain); err != nil {
 		return nil, err
@@ -492,7 +492,7 @@ func (s *Service) GetKiroCrewWeb(ctx context.Context, name string) (*KiroCrewWeb
 	dist, err := s.clients.CloudFront.GetDistribution(ctx, &cloudfront.GetDistributionInput{Id: aws.String(m.crewID)})
 	if err != nil {
 		if awshelper.IsAPIError(err, "NoSuchDistribution") {
-			return nil, fmt.Errorf("%w: the recorded distribution %s no longer exists; run `nakama aws kirocrew enable %s` again",
+			return nil, fmt.Errorf("%w: the recorded distribution %s no longer exists; run `nakama aws cloudfront add %s --kirocrew` again",
 				ErrKiroCrewWebNotEnabled, m.crewID, name)
 		}
 		return nil, fmt.Errorf("GetDistribution(%s): %w", m.crewID, err)
@@ -514,7 +514,7 @@ func kirocrewSetupAdvice(name string, err error) error {
 	return fmt.Errorf("%w\n"+
 		"Kiro Crew and its gateway service must be running on the instance first. Install (or repair) them with:\n"+
 		"  nakama aws setup rerun %s --preset kiro\n"+
-		"then run `nakama aws kirocrew enable %s` again; it continues where it stopped.\n"+
+		"then run `nakama aws cloudfront add %s --kirocrew` again; it continues where it stopped.\n"+
 		"If Kiro Crew is installed but only the service is missing: nakama aws shell %s 'chmod -R go-w ~/.kiro && kirocrew service install'",
 		err, name, name, name)
 }

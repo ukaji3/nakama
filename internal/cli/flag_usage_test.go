@@ -69,7 +69,7 @@ func TestCloudFrontFlagHelp(t *testing.T) {
 		{newAWSCreateCommand(), "cloudfront", "used by code --internet"},
 		{newAWSRestoreCommand(), "cloudfront", "as create --cloudfront does"},
 		{newAWSCodeCommand(), "internet", "added with nakama aws cloudfront add"},
-		{newAWSKirocrewCommand(), "internet", "added with nakama aws cloudfront add"},
+		{newAWSKirocrewCommand(), "internet", "added with nakama aws cloudfront add --kirocrew"},
 	} {
 		var line string
 		for _, l := range strings.Split(c.cmd.Flags().FlagUsages(), "\n") {

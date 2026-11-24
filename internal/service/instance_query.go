@@ -154,7 +154,7 @@ type InstanceInfo struct {
 	// Kind is "vscode" (the default) or "bare" (Issue #52).
 	Kind string `json:"kind,omitempty"`
 	// KiroCrewURL is the Kiro Crew dashboard URL when web access was
-	// enabled with `nakama aws kirocrew enable` (Issue #71).
+	// enabled with `nakama aws cloudfront add --kirocrew` (Issue #71).
 	KiroCrewURL string `json:"kirocrew_url,omitempty"`
 	// CloudFront reports whether the instance has a CloudFront
 	// distribution (`create --cloudfront` or `cloudfront add`, ADR 0028).

@@ -44,7 +44,9 @@ var reservedInstanceNames = map[string]bool{
 	"status":  true,
 	"restart": true,
 	"suggest": true,
-	// `nakama aws kirocrew enable|disable <name>` (Issue #71).
+	// `nakama aws kirocrew enable|disable <name>` (Issue #71). Deprecated
+	// by `cloudfront add|delete --kirocrew` (Issue #129); the names stay
+	// reserved while the deprecated subcommands exist.
 	"enable":  true,
 	"disable": true,
 }

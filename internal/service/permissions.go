@@ -349,8 +349,8 @@ func featurePermissionMatrix() []FeaturePermission {
 			Simulate: true,
 		},
 		{
-			Feature:  "kirocrew enable / disable",
-			Commands: "nakama aws kirocrew enable / disable",
+			Feature:  "cloudfront --kirocrew",
+			Commands: "nakama aws cloudfront add / delete --kirocrew",
 			Actions: mergeActions(
 				resolveInstanceActions,
 				remoteScriptActions, // nginx + code-server proxy-domain on the instance
@@ -370,7 +370,8 @@ func featurePermissionMatrix() []FeaturePermission {
 					"ssm:PutParameter",
 				},
 			),
-			Note:     "Kiro Crew 専用の distribution と CloudFront Function を作成・削除する",
+			Note: "Kiro Crew 専用の distribution と CloudFront Function を作成・削除する。" +
+				"add --kirocrew は code-server の distribution が無ければ cloudfront の add の分も使う",
 			Simulate: true,
 		},
 		{
@@ -501,7 +502,7 @@ func featurePermissionMatrix() []FeaturePermission {
 				},
 			),
 			Note: "CloudFront の無いインスタンスでは cloudfront:* を使わない。" +
-				"cloudfront:*Function は kirocrew enable 済みのインスタンスでのみ使う。" +
+				"cloudfront:*Function は cloudfront add --kirocrew 済みのインスタンスでのみ使う。" +
 				"ec2:DescribeNetworkInterfaces は SSM に ENI の記録が無いときだけ使い、拒否されたら警告して続ける",
 			Simulate: true,
 		},
