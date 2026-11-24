@@ -2,7 +2,7 @@
 #
 # Shared by the cloud-init user-data (where it runs by default) and by
 # the `kiro` provisioning preset (where it runs on demand, e.g. for
-# `nakama aws setup rerun`). Both contexts execute as root, so every
+# `nakama aws provision`). Both contexts execute as root, so every
 # step drops to the ubuntu user explicitly.
 #
 # Fragment contract: no shebang, no `set` of its own, and it must not
@@ -54,5 +54,5 @@ if sudo -u ubuntu -H bash -lc '
   echo "nakama: Kiro CLI and Kiro Crew ready"
 else
   echo "nakama: WARNING Kiro CLI / Kiro Crew setup failed; the instance is still usable." >&2
-  echo "nakama: WARNING retry with \`nakama aws setup rerun <name> --preset kiro\`." >&2
+  echo "nakama: WARNING retry with \`nakama aws provision <name> --preset kiro\`." >&2
 fi

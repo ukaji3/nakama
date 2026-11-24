@@ -6,7 +6,7 @@
 //   - internal/userdata embeds them in the cloud-init user-data, where
 //     they run on every create unless `--no-kiro` is given.
 //   - internal/service exposes them as the `kiro` provisioning preset,
-//     so `nakama aws setup rerun <name> --preset kiro` can re-run them
+//     so `nakama aws provision <name> --preset kiro` can re-run them
 //     on an existing instance.
 //
 // The fragment assumes it is executed as root by a bash script that

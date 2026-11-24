@@ -90,7 +90,7 @@ type CreateInstanceOutput struct {
 	// Provision reports the post-create provisioning outcome when
 	// --setup / --dotfiles / --preset were used (Issue #54). A failed
 	// provisioning does not fail the create: the instance exists and is
-	// usable, so the CLI warns and points at the rerun command.
+	// usable, so the CLI warns and points at the provision command.
 	Provision *ProvisionResult `json:"provision,omitempty"`
 }
 

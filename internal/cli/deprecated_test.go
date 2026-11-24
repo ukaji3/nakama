@@ -15,6 +15,7 @@ import (
 var renamedCommands = []struct{ old, new string }{
 	{"open", "code"},
 	{"connect", "shell"},
+	{"setup rerun", "provision"},
 }
 
 // findCommand resolves a space-separated path below cmd, or nil.
@@ -43,24 +44,22 @@ func flagSummary(cmd *cobra.Command) []string {
 func TestRenamedCommandsKeepTheirOldNames(t *testing.T) {
 	t.Parallel()
 	aws := newAWSCommand()
-	var available []string
-	for _, c := range aws.Commands() {
-		if c.IsAvailableCommand() {
-			available = append(available, c.Name())
-		}
-	}
 	for _, r := range renamedCommands {
 		oldCmd, newCmd := findCommand(t, aws, r.old), findCommand(t, aws, r.new)
 		if oldCmd == nil || newCmd == nil {
 			t.Fatalf("%s -> %s: old %v, new %v; want both commands", r.old, r.new, oldCmd != nil, newCmd != nil)
 		}
-		if !slices.Contains(available, r.new) || slices.Contains(available, r.old) {
-			t.Errorf("help lists %v; want %q and not %q", available, r.new, r.old)
+		// Help lists a command below `nakama aws` only when it and its
+		// group are available.
+		oldTop := findCommand(t, aws, strings.Fields(r.old)[0])
+		if !newCmd.IsAvailableCommand() || oldCmd.IsAvailableCommand() || oldTop.IsAvailableCommand() {
+			t.Errorf("%s -> %s: available new %v, old %v, old group %v; want only the new one listed",
+				r.old, r.new, newCmd.IsAvailableCommand(), oldCmd.IsAvailableCommand(), oldTop.IsAvailableCommand())
 		}
 		if want := `use "nakama aws ` + r.new + `" instead`; oldCmd.Deprecated != want {
 			t.Errorf("%s: Deprecated = %q, want %q", r.old, oldCmd.Deprecated, want)
 		}
-		if got, want := strings.TrimPrefix(oldCmd.Use, r.old), strings.TrimPrefix(newCmd.Use, r.new); got != want {
+		if got, want := strings.TrimPrefix(oldCmd.Use, oldCmd.Name()), strings.TrimPrefix(newCmd.Use, newCmd.Name()); got != want {
 			t.Errorf("%s: arguments %q, want those of %s: %q", r.old, got, r.new, want)
 		}
 		if got, want := flagSummary(oldCmd), flagSummary(newCmd); !slices.Equal(got, want) {
@@ -153,4 +152,20 @@ func captureStdio(t *testing.T, fn func()) (string, string) {
 	_ = outW.Close()
 	_ = errW.Close()
 	return <-outDone, <-errDone
+}
+
+// TestDeprecatedSetupGroup: `nakama aws setup` alone (which only
+// printed its help) also names the replacement.
+func TestDeprecatedSetupGroup(t *testing.T) {
+	t.Parallel()
+	setup := findCommand(t, newAWSCommand(), "setup")
+	if setup == nil {
+		t.Fatal("no setup group")
+	}
+	if want := `use "nakama aws provision <name>" instead`; setup.Deprecated != want {
+		t.Errorf("Deprecated = %q, want %q", setup.Deprecated, want)
+	}
+	if setup.Runnable() {
+		t.Error("the setup group itself must not run anything")
+	}
 }

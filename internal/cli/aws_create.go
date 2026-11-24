@@ -145,7 +145,7 @@ resource when the permissions are insufficient.`,
 					// The instance is usable; only provisioning failed.
 					fallback += "\n  provision WARNING : " + p.Err +
 						"\n                      log: " + p.LogPath + " on the instance" +
-						"\n                      retry: nakama aws setup rerun " + out.Name + rerunFlags(f)
+						"\n                      retry: nakama aws provision " + out.Name + provisionRetryFlags(f)
 				}
 			}
 			return renderOutput(cmd.OutOrStdout(), global.Output, out, fallback)
@@ -198,9 +198,9 @@ func resolveCreateName(args []string, flagName string, flagSet bool) (string, er
 	}
 }
 
-// rerunFlags renders the provisioning flags of this invocation so the
-// warning can show a copy-pasteable rerun command.
-func rerunFlags(f *createFlags) string {
+// provisionRetryFlags renders the provisioning flags of this invocation
+// so the warning can show a copy-pasteable `provision` command.
+func provisionRetryFlags(f *createFlags) string {
 	var b strings.Builder
 	if f.preset != "" {
 		b.WriteString(" --preset " + f.preset)

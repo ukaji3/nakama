@@ -105,7 +105,7 @@ type installRun struct {
 // runInstallScript executes script (the fragment, wrapped the way the
 // user-data wraps it) with the stubs first on PATH. preinstalled
 // creates a working Kiro CLI and Kiro Crew beforehand, as on an
-// instance where the script runs a second time (`setup rerun`).
+// instance where the script runs a second time (`provision`).
 func runInstallScript(t *testing.T, script string, preinstalled bool) installRun {
 	t.Helper()
 	if runtime.GOOS == "windows" {

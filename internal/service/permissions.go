@@ -431,8 +431,8 @@ func featurePermissionMatrix() []FeaturePermission {
 			Simulate: true,
 		},
 		{
-			Feature:  "update / setup rerun",
-			Commands: "nakama aws update / setup rerun",
+			Feature:  "update / provision",
+			Commands: "nakama aws update / provision",
 			Actions: mergeActions(
 				resolveInstanceActions,
 				egressActions,
