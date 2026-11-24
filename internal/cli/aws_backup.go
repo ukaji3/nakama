@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -113,28 +115,95 @@ func newAWSBackupNoteCommand() *cobra.Command {
 	return cmd
 }
 
+// backupDeleteBackend is the slice of the service layer `backup delete`
+// uses; tests substitute a fake.
+type backupDeleteBackend interface {
+	FindBackup(ctx context.Context, name, label string) (*service.Backup, error)
+	DeleteFoundBackup(ctx context.Context, b *service.Backup) error
+}
+
+type backupDeleteDeps struct {
+	connect func(ctx context.Context) (backupDeleteBackend, error)
+	// confirm reads the y/N answer (stdin in production).
+	confirm func() (bool, error)
+}
+
+func defaultBackupDeleteDeps() backupDeleteDeps {
+	return backupDeleteDeps{
+		connect: func(ctx context.Context) (backupDeleteBackend, error) {
+			clients, err := awsx.NewClients(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return service.NewService(clients), nil
+		},
+		confirm: readYesNo,
+	}
+}
+
 func newAWSBackupDeleteCommand() *cobra.Command {
-	var label string
+	return newAWSBackupDeleteCommandWithDeps(defaultBackupDeleteDeps())
+}
+
+func newAWSBackupDeleteCommandWithDeps(deps backupDeleteDeps) *cobra.Command {
+	var (
+		label string
+		yes   bool
+	)
 	cmd := &cobra.Command{
 		Use:   "delete <name> --label <label>",
 		Short: "Delete a backup by label",
-		Args:  cobra.ExactArgs(1),
+		Long: `Deletes the snapshot of the backup with the given label. A deleted
+backup cannot be restored from. It shows the backup and asks first
+unless --yes is given; a script without a terminal must pass --yes.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
 			ctx := withCancel(cmd)
-			clients, err := awsx.NewClients(ctx)
+			backend, err := deps.connect(ctx)
 			if err != nil {
 				return err
 			}
-			if err := service.NewService(clients).DeleteBackup(ctx, args[0], label); err != nil {
+			b, err := backend.FindBackup(ctx, name, label)
+			if err != nil {
 				return err
 			}
-			res := map[string]string{"name": args[0], "label": label, "action": "deleted"}
+			if !yes {
+				if _, err := io.WriteString(cmd.OutOrStdout(), backupDeletePrompt(name, b)); err != nil {
+					return err
+				}
+				ok, err := deps.confirm()
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return errors.New("aborted")
+				}
+			}
+			if err := backend.DeleteFoundBackup(ctx, b); err != nil {
+				return err
+			}
+			res := map[string]string{"name": name, "label": label, "action": "deleted"}
 			return renderOutput(cmd.OutOrStdout(), global.Output, res, "backup deleted: "+label)
 		},
 	}
 	cmd.Flags().StringVar(&label, "label", "", "Label of the backup to delete (required)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
 	_ = cmd.MarkFlagRequired("label")
 	return cmd
+}
+
+// backupDeletePrompt shows the backup about to be deleted. Pure
+// function: unit-tested.
+func backupDeletePrompt(name string, b *service.Backup) string {
+	var s strings.Builder
+	fmt.Fprintf(&s, "Delete backup %q of %q?\n", b.Label, name)
+	fmt.Fprintf(&s, "  snapshot   : %s (%d GiB, created %s)\n", b.SnapshotID, b.SizeGiB, b.CreatedAt)
+	if b.Note != "" {
+		fmt.Fprintf(&s, "  note       : %s\n", b.Note)
+	}
+	s.WriteString("A deleted backup cannot be restored from. [y/N]: ")
+	return s.String()
 }
 
 func formatBackupTable(backups []service.Backup) string {

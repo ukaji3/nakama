@@ -315,12 +315,28 @@ func (s *Service) SetBackupNote(ctx context.Context, name, label, note string) (
 
 // DeleteBackup deletes the snapshot selected by label.
 func (s *Service) DeleteBackup(ctx context.Context, name, label string) error {
-	if label == "" {
-		return errors.New("--label is required")
-	}
-	b, err := s.findBackup(ctx, name, label)
+	b, err := s.FindBackup(ctx, name, label)
 	if err != nil {
 		return err
+	}
+	return s.DeleteFoundBackup(ctx, b)
+}
+
+// FindBackup returns the backup of name with the given label, failing
+// as DeleteBackup does when there is none. `backup delete` shows it
+// before asking (Issue #129).
+func (s *Service) FindBackup(ctx context.Context, name, label string) (*Backup, error) {
+	if label == "" {
+		return nil, errors.New("--label is required")
+	}
+	return s.findBackup(ctx, name, label)
+}
+
+// DeleteFoundBackup deletes the snapshot of a backup FindBackup
+// returned: exactly the one the user was shown.
+func (s *Service) DeleteFoundBackup(ctx context.Context, b *Backup) error {
+	if b == nil || b.SnapshotID == "" {
+		return errors.New("no backup snapshot to delete")
 	}
 	if _, err := s.clients.EC2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{
 		SnapshotId: aws.String(b.SnapshotID),
