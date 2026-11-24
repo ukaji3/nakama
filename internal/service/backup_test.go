@@ -111,6 +111,52 @@ func TestFindBackup_LatestAndNotFound(t *testing.T) {
 	}
 }
 
+// fakeDeleteSnapEC2 lists snapshots and records DeleteSnapshot calls.
+type fakeDeleteSnapEC2 struct {
+	fakeSnapEC2
+	deleted []string
+}
+
+func (f *fakeDeleteSnapEC2) DeleteSnapshot(_ context.Context, in *ec2.DeleteSnapshotInput, _ ...func(*ec2.Options)) (*ec2.DeleteSnapshotOutput, error) {
+	f.deleted = append(f.deleted, aws.ToString(in.SnapshotId))
+	return &ec2.DeleteSnapshotOutput{}, nil
+}
+
+// TestFindBackupAndDeleteFoundBackup: `backup delete` shows the backup
+// FindBackup returns and deletes exactly its snapshot (Issue #129); a
+// label is required, as for DeleteBackup.
+func TestFindBackupAndDeleteFoundBackup(t *testing.T) {
+	t.Parallel()
+	f := &fakeDeleteSnapEC2{fakeSnapEC2: fakeSnapEC2{snaps: []ec2types.Snapshot{
+		snap("snap-old", "old", "before upgrade", "2026-05-01T00:00:00Z"),
+		snap("snap-new", "new", "", "2026-05-29T00:00:00Z"),
+	}}}
+	svc := newServiceWithEC2(f)
+	ctx := context.Background()
+	if _, err := svc.FindBackup(ctx, "dev01", ""); err == nil || !strings.Contains(err.Error(), "--label is required") {
+		t.Errorf("empty label: err %v", err)
+	}
+	if _, err := svc.FindBackup(ctx, "dev01", "missing"); err == nil || !strings.Contains(err.Error(), `"missing" not found`) {
+		t.Errorf("unknown label: err %v", err)
+	}
+	b, err := svc.FindBackup(ctx, "dev01", "old")
+	if err != nil || b.SnapshotID != "snap-old" || b.Note != "before upgrade" {
+		t.Fatalf("FindBackup = %+v, %v", b, err)
+	}
+	if err := svc.DeleteFoundBackup(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteFoundBackup(ctx, &Backup{Label: "x"}); err == nil {
+		t.Error("a backup without a snapshot must not be sent to DeleteSnapshot")
+	}
+	if err := svc.DeleteBackup(ctx, "dev01", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.deleted, ","); got != "snap-old,snap-new" {
+		t.Errorf("deleted %s, want snap-old,snap-new", got)
+	}
+}
+
 // fakeParamSSM answers GetParameter from a map; a missing key is
 // ParameterNotFound, as in SSM. PutParameter records what was written.
 type fakeParamSSM struct {
