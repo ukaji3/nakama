@@ -14,7 +14,7 @@
   <text x="230" y="219" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">作成時間: 数分 (--cloudfront なら約 15 分)</text>
   <rect x="20" y="275" width="420" height="100" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2" />
   <text x="230" y="309" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">使えるもの</text>
-  <text x="230" y="329" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">open / connect / ssh / tunnel / backup /</text>
+  <text x="230" y="329" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">code / shell / ssh / tunnel / backup /</text>
   <text x="230" y="349" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">restore / edit / update / start / stop / delete</text>
   <text x="470" y="36" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">nakama aws create --bare</text>
   <rect x="470" y="50" width="410" height="210" rx="10" fill="#f3f4f6" stroke="#6b7280" stroke-width="2" />
@@ -27,7 +27,7 @@
   <text x="675" y="219" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">作成時間: 数分</text>
   <rect x="470" y="275" width="410" height="100" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="2" />
   <text x="675" y="299" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="600" fill="#111827">使えるもの</text>
-  <text x="675" y="319" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">connect / ssh / tunnel / backup / restore /</text>
+  <text x="675" y="319" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">shell / ssh / tunnel / backup / restore /</text>
   <text x="675" y="339" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">edit / update (OS のみ) / start / stop / delete</text>
-  <text x="675" y="359" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">open は使えません (案内が出ます)</text>
+  <text x="675" y="359" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#4b5563">code は使えません (案内が出ます)</text>
 </svg>

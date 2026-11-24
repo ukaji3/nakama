@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 420" role="img" aria-labelledby="access-paths-title" aria-describedby="access-paths-desc" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif">
   <title id="access-paths-title">4 つのアクセス方法の使い分け</title>
-  <desc id="access-paths-desc">ブラウザで開く open、ターミナルに入る connect、デスクトップのエディタから使う ssh、ポートを手元に持ってくる tunnel の 4 つがある。どれも既定は SSM 経由。</desc>
+  <desc id="access-paths-desc">ブラウザで開く code、ターミナルに入る shell、デスクトップのエディタから使う ssh、ポートを手元に持ってくる tunnel の 4 つがある。どれも既定は SSM 経由。</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#374151" /></marker><marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#374151" /></marker><marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b91c1c" /></marker></defs>
   <rect width="920" height="420" fill="#ffffff" />
   <text x="25" y="40" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="600" fill="#4b5563">コマンド</text>
@@ -8,7 +8,7 @@
   <text x="425" y="40" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="600" fill="#4b5563">通り道</text>
   <text x="640" y="40" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="600" fill="#4b5563">こんなときに</text>
   <rect x="25" y="55" width="155" height="60" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2" />
-  <text x="102" y="88" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="13" font-weight="600" fill="#111827">nakama aws open</text>
+  <text x="102" y="88" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="13" font-weight="600" fill="#111827">nakama aws code</text>
   <rect x="190" y="55" width="225" height="60" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2" />
   <text x="302" y="89" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">ブラウザで VS Code を開く</text>
   <rect x="425" y="55" width="205" height="60" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2" />
@@ -17,7 +17,7 @@
   <rect x="640" y="55" width="255" height="60" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2" />
   <text x="768" y="88" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="13" font-weight="400" fill="#111827">画面だけで完結したい</text>
   <rect x="25" y="127" width="155" height="60" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2" />
-  <text x="102" y="160" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="13" font-weight="600" fill="#111827">nakama aws connect</text>
+  <text x="102" y="160" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="13" font-weight="600" fill="#111827">nakama aws shell</text>
   <rect x="190" y="127" width="225" height="60" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2" />
   <text x="302" y="161" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">ターミナルに入る</text>
   <rect x="425" y="127" width="205" height="60" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2" />

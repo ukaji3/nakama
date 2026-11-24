@@ -5,8 +5,8 @@
 ```bash
 nakama aws login                       # ブラウザの AWS コンソールのセッションでサインイン
 nakama aws init                        # 共通の土台 (VPC / NAT / WAF) を作る (何度実行してもよい)
-nakama aws create --name dev01 --instance-type t3.medium
-nakama aws open dev01                  # SSM 経由でブラウザで開く (パスワードの入力も自動)
+nakama aws create dev01 --instance-type t3.medium
+nakama aws code dev01                  # SSM 経由でブラウザで開く (パスワードの入力も自動)
 ```
 
 初めての人は、[チュートリアル](docs/tutorial/index.html)から読んでください。
@@ -15,7 +15,7 @@ nakama aws open dev01                  # SSM 経由でブラウザで開く (パ
 
 - **ブラウザだけで開発**: code-server に、手元の `localhost` から Session Manager (SSM) のポート転送でつなぐ。開発環境ごとに `http://code-server.<名前>.nakama.localhost:18888` のアドレスが付くので、いくつ開いてもポートを覚えなくてよい。開発環境にはインターネットから届く入口が無く、切れても自動でつなぎ直す。必要な開発環境にだけ、CloudFront 経由の HTTPS の入口 (IP の許可リスト制) を足せる (`nakama aws cloudfront add`)。手元に入れるのは nakama だけ
 - **外向き通信の中継を選べる**: AWS が管理する NAT Gateway (新しい環境の既定。nakama が管理する OS が無い。常時課金) か、開発環境の電源に合わせて自動で止まる NAT インスタンス (止めればほぼ無料) を `init --nat` で選び、あとから切り替えられる
-- **aws CLI も SSH も不要**: サインインも、シェル (`connect`)・ポート転送 (`tunnel`)・ssh 接続 (`ssh`) も nakama だけで動く。受信ポートは開けない
+- **aws CLI も SSH も不要**: サインインも、シェル (`shell`)・ポート転送 (`tunnel`)・ssh 接続 (`ssh`) も nakama だけで動く。受信ポートは開けない
 - **会社のプロキシにそのまま対応**: Windows のプロキシ設定と OS の証明書ストアを自動で使う
 - **安全側の既定**: ブラウザは SSM 経由 (IAM で認証)。開発環境の security group は受信の規則を持たない。CloudFront は求めたときだけ作り、アクセスを IP の許可リスト制にする。パスワードは AWS 上で管理し、手元のディスクには残さない。`~/.aws/config` は書き換えない
 - **Kiro CLI と Kiro Crew を最初から導入** (`create --no-kiro` で省略)
@@ -48,21 +48,35 @@ tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 n
 | `nakama aws init` | 共通の土台を作る。外向き通信の中継 (`--nat gateway` / `--nat instance`) の選択と切り替え、NAT インスタンスの点検と修理も行う |
 | `nakama aws acl add` / `list` / `delete` / `prune` | CloudFront 経由 (`--internet`) のアクセスを許可する IP の管理 (`prune` は長く `acl add` していない IP をまとめて消す)。CloudFront を足した開発環境でだけ使う |
 | `nakama aws create` | 開発環境を作る (`--bare` で code-server なしの軽量版、`--cloudfront` で CloudFront の入口も作る) |
-| `nakama aws cloudfront add` / `delete` | 既存の開発環境に CloudFront の入口 (`open --internet` 用) を足す / 外す |
+| `nakama aws cloudfront add` / `delete` | 既存の開発環境に CloudFront の入口 (`code --internet` 用) を足す / 外す。`--kirocrew` で Kiro Crew 用の入口 (`kirocrew --internet` 用) も足す / それだけを外す |
 | `nakama aws list` / `info` | 一覧 / 詳細 |
-| `nakama aws open` | ブラウザで開く (既定は SSM 経由で、`http://code-server.<名前>.nakama.localhost:18888` を開く。`--local-port` でローカルのポート、`--internet` で CloudFront 経由 (`cloudfront add` 済みのとき)) |
-| `nakama aws connect` | シェルに入る、またはコマンドを 1 つ実行する |
+| `nakama aws code` | code-server をブラウザで開く (既定は SSM 経由で、`http://code-server.<名前>.nakama.localhost:18888` を開く。`--local-port` でローカルのポート、`--internet` で CloudFront 経由 (`cloudfront add` 済みのとき)) |
+| `nakama aws shell` | シェルに入る、またはコマンドを 1 つ実行する (`-t` で PTY を使う) |
 | `nakama aws ssh setup` | 手元の VS Code・JetBrains・ssh からつなぐ設定を作る |
-| `nakama aws tunnel` | ポート転送 (バックグラウンドで動き続け、切れてもつなぎ直す)。`open` / `kirocrew` の転送もここで確かめて止める |
-| `nakama aws kirocrew` | Kiro Crew の画面をブラウザで開く (`open` と同じく既定は SSM 経由で、`http://kirocrew.<名前>.nakama.localhost:18888` を開く) |
+| `nakama aws tunnel` | ポート転送 (バックグラウンドで動き続け、切れてもつなぎ直す)。`code` / `kirocrew` の転送もここで確かめて止める |
+| `nakama aws kirocrew` | Kiro Crew の画面をブラウザで開く (`code` と同じく既定は SSM 経由で、`http://kirocrew.<名前>.nakama.localhost:18888` を開く) |
 | `nakama aws start` / `stop` / `delete` | 起動 / 停止 / 削除 |
 | `nakama aws backup` / `restore` | バックアップ / 復元 |
 | `nakama aws update` / `edit` | OS・code-server・AWS CLI・Kiro Crew の更新 / 大きさやディスクの変更 |
-| `nakama aws setup rerun` | 初期セットアップ (スクリプト、dotfiles) のやり直し |
+| `nakama aws provision` | 初期セットアップ (preset、dotfiles、スクリプト) のやり直しや追加 |
 | `nakama aws doctor` | 環境の自己診断 (読み取り専用) |
 | `nakama aws cli shell` | aws CLI を会社のプロキシの下で使えるシェルを開く (Windows) |
 
 オプションは `nakama aws <コマンド> --help` で確かめられます。全コマンドの一覧は[チュートリアル第 8 章](docs/tutorial/08-reference.html)にあります。
+
+v0.30.0 で、次のコマンドとフラグの名前を変えました ([ADR 0030](docs/adr/0030-cli-command-and-flag-names.md))。古い名前も v0.30.x の間は動き、新しい名前を stderr に表示します。
+
+| 古い名前 | 新しい名前 |
+|---|---|
+| `nakama aws open <名前>` | `nakama aws code <名前>` |
+| `nakama aws connect <名前>` | `nakama aws shell <名前>` |
+| `nakama aws setup rerun <名前>` | `nakama aws provision <名前>` |
+| `nakama aws kirocrew enable <名前>` | `nakama aws cloudfront add <名前> --kirocrew` |
+| `nakama aws kirocrew disable <名前>` | `nakama aws cloudfront delete <名前> --kirocrew` |
+| `nakama aws create --name <名前>` | `nakama aws create <名前>` |
+| `nakama aws login --name` / `profile save --name` | `--alias` |
+
+あわせて、`backup delete` は消す前に確かめるようになりました (`--yes` で省略)。スクリプトから使うときは `--yes` を付けてください。
 
 ## 前提条件
 
@@ -74,7 +88,7 @@ tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 n
 ## 注意
 
 - **`create --with-admin`**: 開発環境に AdministratorAccess のロールを付けます。code-server にログインできる人は誰でも、AWS アカウントの管理者権限を使えるようになります。SSM の転送を張れる IAM の権限と、CloudFront を足したときは許可する IP を、最小限にしてください。
-- **WebSocket を遮断するプロキシ**: この下では、`open`・`kirocrew` (SSM 経由)・`connect`・`ssh`・`tunnel` が使えません。プロキシの管理者に、WebSocket を許可してもらう必要があります。CloudFront を足せば (`cloudfront add`)、CloudFront 経由 (`--internet`) なら開けることがあります。
+- **WebSocket を遮断するプロキシ**: この下では、`code`・`kirocrew` (SSM 経由)・`shell`・`ssh`・`tunnel` が使えません。プロキシの管理者に、WebSocket を許可してもらう必要があります。CloudFront を足せば (`cloudfront add`)、CloudFront 経由 (`--internet`) なら開けることがあります。
 - **SSM 経由の速さ**: CloudFront 経由より遅く、初めて開くときは読み込みに数秒から十数秒かかることがあります。
 - **`*.nakama.localhost` のアドレス**: Chrome・Edge・Firefox と、macOS 26 以降の Safari で開けます。それより前の macOS の Safari や、このアドレスを引けないツールでは、`--local-port <番号>` で `http://localhost:<番号>` を開いてください。手元の 18888 番が使われているときは、環境変数 `NAKAMA_ROUTER_PORT` で別の番号にできます。
 - **拡張機能**: code-server は [Open VSX](https://open-vsx.org/) から拡張機能を入れます。Microsoft の Marketplace は、利用規約で Microsoft 製品専用とされているので使えません。

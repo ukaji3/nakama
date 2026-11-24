@@ -15,7 +15,7 @@
                                                                                                                 └── Kiro Crew 127.0.0.1:5476
 ```
 
-CloudFront の経路は、`create --cloudfront` か `cloudfront add` で足したインスタンスだけが持つ (§8.30、ADR 0028)。`open --internet` / `kirocrew --internet` はこの経路を使う。
+CloudFront の経路は、`create --cloudfront` か `cloudfront add` で足したインスタンスだけが持つ (§8.30、ADR 0028)。`code --internet` / `kirocrew --internet` はこの経路を使う。
 
 ```
 [User Browser] ──HTTPS / WSS──> [CloudFront Distribution]
@@ -53,8 +53,8 @@ CloudFront の経路は、`create --cloudfront` か `cloudfront add` で足し�
   /nakama/<name>/meta/iam-role          (String, --with-admin/--with-role 時のみ)
   /nakama/<name>/meta/instance-profile  (String, --with-admin/--with-role 時のみ)
   /nakama/<name>/meta/kind              (String, "bare"。--bare 時のみ。未記録は code-server。§8.17)
-  /nakama/<name>/meta/kirocrew-distribution-id     (String, kirocrew enable 時のみ。§8.19)
-  /nakama/<name>/meta/kirocrew-distribution-domain (String, kirocrew enable 時のみ。§8.19)
+  /nakama/<name>/meta/kirocrew-distribution-id     (String, `cloudfront add --kirocrew` 時のみ。§8.19)
+  /nakama/<name>/meta/kirocrew-distribution-domain (String, `cloudfront add --kirocrew` 時のみ。§8.19)
   /nakama/_meta/initialized             (String, "true")
   /nakama/_meta/version                 (String, semver)
   /nakama/_meta/nat-mode                (String, "instance" | "gateway"。init が選んだ外向き通信の方式。未記録は instance。§8.28)
@@ -62,7 +62,7 @@ CloudFront の経路は、`create --cloudfront` か `cloudfront add` で足し�
 ```
 
 - `--bare` のインスタンスは、code-server・VPC Origin・CloudFront distribution・パスワードを持たない (§8.17)。パスワードと distribution 系のメタキーも書かない。
-- `nakama aws kirocrew enable` は、CloudFront のあるインスタンスに Kiro Crew 専用の distribution をもう 1 つ作る。オリジンは同じ VPC Origin (code-server:8080) で、WAF も共有する (§8.19、ADR 0020)。
+- `nakama aws cloudfront add --kirocrew` は、code-server の distribution (無ければ先に作る) に加えて、Kiro Crew 専用の distribution をもう 1 つ作る。オリジンは同じ VPC Origin (code-server:8080) で、WAF も共有する (§8.19、ADR 0020)。
 - 共有の WAF (IP set と web ACL) は、CloudFront を持つインスタンスが無くても `init` が作って残す (ADR 0028)。
 
 ## 2. パッケージ構成
@@ -162,7 +162,7 @@ github.com/ukaji3/nakama
 | `STSAPI` | `GetCallerIdentity` (AWS アカウント ID / 呼び出し元 ARN 解決。ARN は `--with-admin`/`--with-role` プリフライトの PolicySourceArn に使用) |
 | `IAMAPI` | Role, InstanceProfile, AttachRolePolicy, PutRolePolicy, SimulatePrincipalPolicy, ListInstanceProfilesForRole, ListAttachedRolePolicies |
 | `AMIResolver` | SSM 公式パラメータ経由で Ubuntu 26.04 AMI をアーキ別 (amd64 / arm64) に解決 (`LatestUbuntu2604(arch)`) |
-| `IPDiscoverer` | `PublicIPv4`: `https://checkip.amazonaws.com/` に 1 回 GET し、Public IPv4 を返す (`open` / `doctor`)。`DetectPublicIPv4s`: checkip と `https://ifconfig.io/ip` に 3 回ずつ問い合わせ、公開の IPv4 アドレスを重複なしで返す (`acl add` / `acl delete all --keep-mine` / `acl prune`。§8.23) |
+| `IPDiscoverer` | `PublicIPv4`: `https://checkip.amazonaws.com/` に 1 回 GET し、Public IPv4 を返す (`code` / `doctor`)。`DetectPublicIPv4s`: checkip と `https://ifconfig.io/ip` に 3 回ずつ問い合わせ、公開の IPv4 アドレスを重複なしで返す (`acl add` / `acl delete all --keep-mine` / `acl prune`。§8.23) |
 
 `Clients` 構造体が上記をすべて束ね、`NewClients(ctx)` がエントリポイント。
 
@@ -173,7 +173,8 @@ github.com/ukaji3/nakama
 - `backup` は `acl` と同様のサブコマンド群: `backup {create|list|note|delete}`。`restore` は破壊的操作のため `start`/`stop` と並ぶ独立コマンド
 - グローバルフラグ: `--verbose` (`-v`), `--output` (`-o`, `table` | `json` | `yaml`)
 - CLI 層はフラグを解析して `internal/service` の `*Input` を組み立て、表示を担う。AWS リソースへの処理は Service 層に委譲する。CLI が `awsx` / `signin` を直接呼ぶのは、`awsx.NewClients` と、`login` / `profile` の資格情報まわり (§13.1) だけ
-- `cmd/nakama` は、Service 層の `*service.ExitCodeError` を受け取ると、その終了コードで終了する (`connect <name> <command>` のリモート終了コードの伝搬。ADR 0021)
+- **コマンドとフラグの名前** (ADR 0030 / Issue #129): インスタンスを扱うコマンドは、名前を位置引数で受ける (`create <name>` も)。ブラウザで開くコマンドは、開く先の名前を持つ (`code`、`kirocrew`)。CloudFront を作る・消すのは `cloudfront add` / `delete` だけ (Kiro Crew の分は `--kirocrew`)。改名した古い名前は、`deprecatedCommand` と pflag の `MarkDeprecated` で v0.30.x の間は受け付ける (§8.32)
+- `cmd/nakama` は、Service 層の `*service.ExitCodeError` を受け取ると、その終了コードで終了する (`shell <name> <command>` のリモート終了コードの伝搬。ADR 0021)
 
 ## 7. Service 層
 
@@ -286,7 +287,7 @@ NAT インスタンスの user-data (`internal/service/nat_setup.sh`) の手順�
 8. `RunInstances` (User Data に code-server インストールスクリプト埋め込み。User Data は AWS CLI v2 を AWS 公式のインストールスクリプトで ubuntu ユーザーに導入する (§8.22、ADR 0024)。Ubuntu の apt `awscli` は v1 と古いため purge する)。IAM instance profile は手順 2 で選択したもの (フラグ省略時は共有ベースプロファイル `nakama-instance-profile`)
 9. SSM に meta 情報 (`meta/instance-id` と ENI / SG。bare なら `meta/kind`、`--with-admin` / `--with-role` 時は `meta/iam-role` / `meta/instance-profile` も) を書き込み、EC2 が `running` まで待機
 10. (`--cloudfront` のときだけ。`ensureInstanceCloudFront`、§8.30 の add と共通) private DNS を引く → CloudFront `CreateVpcOrigin` (HTTP:8080) → `meta/vpc-origin-id` を記録 → VpcOrigin が `Deployed` まで待機 → `CreateDistribution` (Cache=Disabled, OriginRequestPolicy=AllViewer, WAF=ARN) → `meta/distribution-id` / `meta/distribution-domain` を記録 → Distribution が `Deployed` まで待機
-11. 出力。`--cloudfront` のときは URL、無いときは `cloudfront: none` と `nakama aws open <name>` (SSM 経由)。パスワードと付与した IAM ロール / プロファイルも出す。JSON には `cloudfront` (bool) が入る
+11. 出力。`--cloudfront` のときは URL、無いときは `cloudfront: none` と `nakama aws code <name>` (SSM 経由)。パスワードと付与した IAM ロール / プロファイルも出す。JSON には `cloudfront` (bool) が入る
 
 CloudFront を作らない create は、EC2 が `running` になれば終わる (実機で約 20 秒。CloudFront の待ちが無いため)。
 
@@ -347,7 +348,7 @@ CloudFront を作らない create は、EC2 が `running` になれば終わる 
 5. 外向き通信を用意し (`ensureEgress`。NAT インスタンスの起動、または NAT Gateway の確認)、`runInstances` で EC2 を起動する (ルートは既定の 20 GiB。直後に差し替える)。instance-id / ENI / SG を記録してから `running` を待つ
 6. `--cloudfront` のときだけ、private DNS → VPC origin → distribution を作り、それぞれ作った直後 (VPC origin は `Deployed` を待つ前) に記録する (失敗しても `delete` で片付けられるように。`ensureInstanceCloudFront`、create と共通)。SG の CloudFront の規則も手順 3 でこのときだけ付ける
 7. インプレース復元の 3〜8 と同じ手順 (`replaceRootVolume`) でルートを差し替える。起動直後のボリュームは削除される
-8. NAT インスタンスの電源を再調整し、`--cloudfront` なら distribution の `Deployed` を待つ。停止のまま終了する。パスワードとプライベート IP は新しく、`--cloudfront` なら URL も新しい。Kiro Crew の CloudFront の画面は `kirocrew enable` のやり直しが要る
+8. NAT インスタンスの電源を再調整し、`--cloudfront` なら distribution の `Deployed` を待つ。停止のまま終了する。パスワードとプライベート IP は新しく、`--cloudfront` なら URL も新しい。Kiro Crew の CloudFront の画面は `cloudfront add --kirocrew` のやり直しが要る
 
 ### 8.6 `nakama aws backup note`
 
@@ -357,15 +358,15 @@ CloudFront を作らない create は、EC2 が `running` になれば終わる 
 
 > Description はスナップショット作成後に変更できないため、メモ編集の正は常に `nakama:note` タグ側とする。
 
-### 8.7 `nakama aws connect`
+### 8.7 `nakama aws shell`
 
 共通フロー: instance-id を `/nakama/<name>/meta/instance-id` から解決 → モードに応じた `DocumentName`/`Parameters` で `ssm:StartSession` → 返却の `SessionId`/`StreamUrl`/`TokenValue` で取り込んだ plugin の `session.Session` を構築 → `Execute()` で data-channel (WSS) を確立。セッション本体の実行は hidden な子プロセス (`session-runner`) が担い、恒久切断時は親が自動再接続する (§8.11 / ADR 0014)。
 
 | モード | 起動形 | DocumentName | Parameters | session サブタイプ |
 |---|---|---|---|---|
-| 対話シェル | `connect <n>` | `AWS-StartInteractiveCommand` | `command=exec sudo su - ubuntu` | `Standard_Stream` |
-| コマンド | `connect <n> <cmd...>` | `AWS-StartNonInteractiveCommand` | `command=sudo su - ubuntu -c '<ラッパー(cmd)>'` | nakama の `commandSession` (§8.20) |
-| コマンド (PTY) | `connect --tty <n> <cmd...>` | `AWS-StartInteractiveCommand` | `command=sudo su - ubuntu -c '<cmd>'` | `Standard_Stream` |
+| 対話シェル | `shell <n>` | `AWS-StartInteractiveCommand` | `command=exec sudo su - ubuntu` | `Standard_Stream` |
+| コマンド | `shell <n> <cmd...>` | `AWS-StartNonInteractiveCommand` | `command=sudo su - ubuntu -c '<ラッパー(cmd)>'` | nakama の `commandSession` (§8.20) |
+| コマンド (PTY) | `shell -t <n> <cmd...>` (`--tty`) | `AWS-StartInteractiveCommand` | `command=sudo su - ubuntu -c '<cmd>'` | `Standard_Stream` |
 
 ポートフォワードは `nakama aws tunnel` に一本化した (§8.12 / ADR 0017)。
 
@@ -412,7 +413,7 @@ CloudFront を作らない create は、EC2 が `running` になれば終わる 
 
 > 設計判断の根拠は ADR 0006 を参照。
 
-### 8.10 `nakama aws open`
+### 8.10 `nakama aws code`
 
 code-server をブラウザで開き、パスワードログインを自動通過する
 (根拠と代替案の比較は ADR 0012)。code-server の認証は cookie のみで
@@ -437,7 +438,7 @@ URL トークン認証が存在せず、CLI はブラウザの cookie store に�
 3. **WAF soft check** (`--internet` のときだけ): `IPDiscoverer.PublicIPv4` + `ListACL` で呼び出し元
    IP が allowlist に**CIDR containment** (net/netip) で含まれるか確認。
    未収載なら stderr に警告 (`nakama aws acl add` を案内)。チェック自体の
-   失敗は debug ログのみで続行 (絶対に open を壊さない)
+   失敗は debug ログのみで続行 (絶対に code を壊さない)
 4. **METHOD A (既定)**: crypto/rand 128 bit の URL-safe トークンを採番し、
    `127.0.0.1:0` (カーネル割当ポート) に one-shot HTTP サーバを起動。
    `/<token>` だけが自動 submit フォーム
@@ -463,7 +464,7 @@ URL トークン認証が存在せず、CLI はブラウザの cookie store に�
    opened / auto_login (`completed`|`skipped`|`timeout`) / note の
    構造体。**パスワードはいかなる出力にも含めない**
 
-実装: `internal/cli/aws_open.go` (one-shot サーバ含む)、
+実装: `internal/cli/aws_code.go` (one-shot サーバ含む)、
 `internal/browser` (detached なブラウザ起動、`Launcher` interface で注入
 可能)。テストは fake backend / fake launcher / httptest 相当のローカル
 listener で AWS・実ブラウザ・外部ネットワークに触れない。
@@ -471,12 +472,12 @@ listener で AWS・実ブラウザ・外部ネットワークに触れない。
 > CloudFront 経由で form POST が実際に cookie を確立するかの E2E は
 > 実 AWS 未検証 (ADR 0012 の UNVERIFIED 項参照)。
 
-### 8.11 `nakama aws connect` の自動再接続 (ADR 0014)
+### 8.11 `nakama aws shell` の自動再接続 (ADR 0014)
 
 vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` またはプロセス宙吊りで終える設計のため、切断検知は**親プロセス監督方式 (child re-exec)** で行う。
 
 ```
-[nakama aws connect]                     [nakama aws session-runner (hidden, 子プロセス)]
+[nakama aws shell]                       [nakama aws session-runner (hidden, 子プロセス)]
   ├ instance-id 解決
   ├ loop:
   │   ├ ssm:StartSession
@@ -535,7 +536,7 @@ vendored plugin は正常終了・恒久切断のいずれも `os.Exit(0)` ま�
 - **再接続**: 転送ごとの監督は `forwardRunner` (§8.29)。exit 0 を含む子の終了すべて、StartSession の通信エラー・5xx・スロットリングで、回数の上限なく張り直す。Issue #45 の `RetryChildFailures` はこれに含まれたので無くなった
 - **in-place resume の資格情報** (Issue #49): vendored plugin の ResumeSession 制御プレーンとデータチャネル再署名は上流では default 資格情報チェーンを使うため、nakama login のみの環境では resume が構造的に失敗する。session-runner が `NakamaAWSConfigProvider` (NAKAMA PATCH) に nakama 解決済み `aws.Config` (プロキシ対応 HTTPClient 込み) を注入し、WebSocket 断のたびにフルセッション置換へ落ちずに in-place resume が機能するようにする (詳細は third_party/session-manager-plugin/PINNED.md)
 - **stop の経路**: 制御チャネル経由のグレースフル停止が正 (Windows の外部 Kill は子を道連れにしないため)。unix ではデーモンが SIGTERM でも同じ停止経路に合流する
-- **Windows のコンソール** (Issue #126): nakama.exe はコンソールアプリケーション (PE の subsystem が `WINDOWS_CUI`) である。コンソールを持たないデーモンが、フラグ無しで子を起動すると、Windows は子ごとに新しいコンソール (conhost.exe とウィンドウ) を作る (Windows の CI で、子が `GetConsoleWindow` と `GetConsoleCP` に 0 以外を返すことを確かめた)。そのため、デーモンの session-runner の子は `DETACHED_PROCESS` で起動する (`daemonSessionRunnerIO` の `noConsole`、`detachConsole`)。子の stdout / stderr はデーモンのログへのパイプなので、コンソールは要らない。`CREATE_NO_WINDOW` はウィンドウを出さないが、conhost.exe をセッションごとに作るので使わない。`connect` の子は端末のコンソールを引き継ぐ
+- **Windows のコンソール** (Issue #126): nakama.exe はコンソールアプリケーション (PE の subsystem が `WINDOWS_CUI`) である。コンソールを持たないデーモンが、フラグ無しで子を起動すると、Windows は子ごとに新しいコンソール (conhost.exe とウィンドウ) を作る (Windows の CI で、子が `GetConsoleWindow` と `GetConsoleCP` に 0 以外を返すことを確かめた)。そのため、デーモンの session-runner の子は `DETACHED_PROCESS` で起動する (`daemonSessionRunnerIO` の `noConsole`、`detachConsole`)。子の stdout / stderr はデーモンのログへのパイプなので、コンソールは要らない。`CREATE_NO_WINDOW` はウィンドウを出さないが、conhost.exe をセッションごとに作るので使わない。`shell` の子は端末のコンソールを引き継ぐ
 - **横断一覧と提案** (Issue #55): `tunnel status` の名前省略時は状態ファイルディレクトリを走査し (`listTunnelStateNames`)、各インスタンスへ `GetTunnelStatus` を実行して NAME 列付きで一覧する。デーモン不応答は `NoTunnelError` として stale 表示 (単一指定時と同じ掃除が働く)。`tunnel suggest <n>` は `runRemoteScript` で `ss -ltnH` (無ければ `netstat -ltn`) を実行し、ポート重複の畳み込み・プロセス名付きエントリ優先・昇順ソートを経て `-L` 案を出す。22 番は `ssh` の案内に回し提案コマンドから除外。`suggest` も曖昧性回避のため予約インスタンス名に追加
 - **status**: CLI が状態ファイル → `GET /status` で転送ごとの {spec, purpose, state (connecting/active/reconnecting/idle/dead), 直近エラー, 直近の AWS のエラーコード, 開始時刻, 再接続の回数} を取得して表示。デーモン不在 (ping 不達) なら stale 掃除の上「転送なし」を表示
 - **restart**: 状態ファイルに記録された転送スペック (用途付きの形を含む) のまま stop → start を合成 (`-L` は受け付けない。変更は stop → start で)。スペックの再検証は stop の**前**に行い、壊れた状態ファイルのために生きているデーモンを止めない。新デーモンは CLI プロセスの現行資格情報チェーンと nakama の版で起動する。資格情報のエラーは動いているデーモンが 60 秒ごとに再試行するので、主な用途は古い版のデーモンの入れ替えと dead の転送の復旧。状態ファイルが無い場合はエラー (推測で張らない)
@@ -583,21 +584,21 @@ aws CLI は OS のプロキシ設定 (WinHTTP/PAC) も Windows 証明書スト�
 
 ### 8.16 プロビジョニング宣言 (`create --setup` / `--dotfiles` / `--preset`、Issue #54)
 
-- **適用点**: `CreateInstance` の最終段 (メタデータ書き込み済みの後。`--cloudfront` なら distribution が Deployed になった後)。**best-effort** — 失敗しても create は成功扱いで `CreateInstanceOutput.Provision` に結果を載せ、CLI が警告 + ログパス + `setup rerun` コマンドを表示する (インスタンスは作成済みで使用可能なため)
+- **適用点**: `CreateInstance` の最終段 (メタデータ書き込み済みの後。`--cloudfront` なら distribution が Deployed になった後)。**best-effort** — 失敗しても create は成功扱いで `CreateInstanceOutput.Provision` に結果を載せ、CLI が警告 + ログパス + `provision` コマンドを表示する (インスタンスは作成済みで使用可能なため)
 - **事前検証**: CLI が `ValidateProvisionSpec` を **AWS 呼び出し前**に実行し、未知の preset・読めないローカルスクリプト・http URL (経路上での改変を許すため拒否) を即座に弾く
 - **実行シェルの前提**: aws:runShellScript は commands を `_script.sh` に書き出し**ファイルとして** `sh` 起動する (amazon-ssm-agent の runshellscript.go で確認)。つまり shebang が解釈器を決め、shebang の無いスクリプトは /bin/sh (Ubuntu では dash) で動く。bash 構文 (process substitution・pipefail) を使うスクリプトは必ず `#!/bin/bash` で始めること (Issue #61)
 - **リモートスクリプト**: `runRemoteScript` (§8.14 と共通) で 1 本のスクリプトを実行。全出力を `/var/log/nakama-provision.log` に tee し、各ステップを `NAKAMA_STEP_BEGIN/OK/FAILED` マーカーで囲んでサブシェル実行する (1 ステップの失敗が他を隠さない・中断しない)。ステップ順は preset → dotfiles → setup (後段が前段の成果に依存できる)
 - **各ステップ**: preset = 同梱レシピ (`kiro` は `internal/kiro.InstallScript()` をそのまま使う。`sudo -u ubuntu -H` で実行) / dotfiles = `~/.dotfiles` へ clone (既存なら `pull --ff-only` で再実行可) → `install.sh`/`setup.sh`/`bootstrap.sh` があれば実行、無ければドットファイルを `$HOME` へリンク / setup = https は `curl` 取得、ローカルは**引用付き heredoc** で内容を転送 (外側シェルの展開を防止。マーカー衝突は拒否)
-- **`setup rerun`**: 同じ `Provision` を既存インスタンスに適用する復旧・再適用手段。冪等性はスクリプト作成者の責務であることを docs に明記
+- **`provision`** (Issue #129 までは `setup rerun`): 同じ `Provision` を既存インスタンスに適用する復旧・再適用手段。冪等性はスクリプト作成者の責務であることを docs に明記
 
 ### 8.17 `nakama aws create --bare` — 軽量開発ボックス (Issue #52)
 
 §8.14 の ssh 経路が入ったことで、ブラウザ IDE を使わない構成が実用になった。`--bare` は code-server 一式を作らない。
 
 - **作らないもの**: パスワード (生成も SSM 保存もしない)、code-server の user-data、private DNS 解決、VPC Origin、CloudFront distribution とその Deployed 待ち。ADR 0028 以降は code-server のインスタンスも既定で CloudFront を作らないので、bare との違いは code-server とパスワードの有無になった。ADR 0028 より前に作った bare のインスタンスの SG には CloudFront の受信の規則が残っており、`cloudfront delete <name>` で外せる (§8.30)
-- **user-data**: `internal/userdata/bare.tmpl.sh` (SSM エージェントの起動確認・sshd 有効化・aws CLI (§8.22) と基本ツールの導入のみ)。`connect` / `ssh` / `tunnel` が成立する最小構成
+- **user-data**: `internal/userdata/bare.tmpl.sh` (SSM エージェントの起動確認・sshd 有効化・aws CLI (§8.22) と基本ツールの導入のみ)。`shell` / `ssh` / `tunnel` が成立する最小構成
 - **種別の記録**: `/nakama/<name>/meta/kind = bare`。**未記録は従来の code-server インスタンス**として扱うため、既存インスタンスへの移行処理は不要。空値の PutParameter は SSM が拒否するため、bare では distribution 系のメタキー自体を書かない
-- **各コマンドの対応**: `list` は kind を読んで TYPE=BARE 表示 / `info` は Kind を返し bare ではパスワードを読まない / `open` は bare を検出して `ssh setup`・`connect` を案内するエラー / `update` は OS 更新のみのスクリプト (reboot マーカーは共通) / `delete` は空の distribution・VPC Origin メタを既にスキップする構造だったためそのまま動作 / NAT 電源連動は通常インスタンスと同一 (egress が必要)
+- **各コマンドの対応**: `list` は kind を読んで TYPE=BARE 表示 / `info` は Kind を返し bare ではパスワードを読まない / `code` は bare を検出して `ssh setup`・`shell` を案内するエラー / `update` は OS 更新のみのスクリプト (reboot マーカーは共通) / `delete` は空の distribution・VPC Origin メタを既にスキップする構造だったためそのまま動作 / NAT 電源連動は通常インスタンスと同一 (egress が必要)
 
 ### 8.18 Kiro CLI / Kiro Crew の既定導入 (Issue #68)
 
@@ -609,7 +610,7 @@ Issue #20 の内容を `--preset kiro` (§8.16) として一般化していた�
 - **PATH**: 公式インストーラは shell の rc を変更せず PATH 行を表示するだけなので、`~/.bashrc` への追記をこちらで行う (`grep -qF` による冪等化)
 - **必要パッケージ**: インストーラは Linux で `unzip` を必須依存としてチェックする。通常テンプレートには無かったため `unzip unar` を追加した (bare テンプレートは `unzip` があったので `unar` を追加)
 - **AppArmor 制約**: `kirocrew service install` が導入する AppArmor profile は unprivileged userns の許可を含むため、`~/.kiro` が group/world 書き込み可能な間は導入を拒否する (他の local user が `~/.kiro/crew-venv/bin/kirocrew` を差し替えて許可を得られてしまう)。ubuntu ユーザーは private group により umask 0002 で動くためツリーは 0775 で作られる。したがって service install の**直前**に `chmod -R go-w "$HOME/.kiro"` を実行する。この順序はテストで固定
-- **best-effort**: 両テンプレートは `set -euxo pipefail` で動くため、導入失敗が user-data 全体を落とすと code-server の起動や SSM へのバージョン記録に波及する。スクリプトは `if sudo ...; then ... else WARNING fi` の構造で自身の失敗を吸収し、再実行コマンド (`setup rerun --preset kiro`) を案内する。内側のシェルは `set -euo pipefail` を自前で設定し、最初の失敗で止まる (pipefail はインストーラのダウンロード失敗が空スクリプト = exit 0 として通過するのを防ぐ)
+- **best-effort**: 両テンプレートは `set -euxo pipefail` で動くため、導入失敗が user-data 全体を落とすと code-server の起動や SSM へのバージョン記録に波及する。スクリプトは `if sudo ...; then ... else WARNING fi` の構造で自身の失敗を吸収し、再実行コマンド (`provision --preset kiro`) を案内する。内側のシェルは `set -euo pipefail` を自前で設定し、最初の失敗で止まる (pipefail はインストーラのダウンロード失敗が空スクリプト = exit 0 として通過するのを防ぐ)
 - **配置順**: 通常テンプレートでは code-server の起動とバージョン記録の後 (遅いダウンロードが利用開始を遅らせない)。bare テンプレートではホームの `chown -R` の後 (`~/.kiro` のモードを後から触らない)
 - **オプトアウト**: `create --no-kiro` → `CreateInstanceInput.NoKiro` → `userdata.*Params.InstallKiro` (正の意味に反転)。テンプレートは `{{if .InstallKiro}}` で節全体を囲むため、無効時は節コメントすら残らない
 
@@ -620,15 +621,15 @@ code-server のパス転送 (`/proxy/5476/`) では、Kiro Crew の Host 検査�
 - **経路**: `https://<crew>` → CloudFront (オリジンのカスタムヘッダー `X-Forwarded-Host: 15476.kirocrew.nakama.internal`) → code-server:8080 (パスワード認証 → `proxy-domain` の照合でポート 15476 を選び、パスを変えずに転送) → nginx 127.0.0.1:15476 (Origin を検査し、Host と Origin を `localhost:5476` に書き換え、`X-Forwarded-Proto: https` を付ける。`X-Forwarded-For` は残す) → Kiro Crew 127.0.0.1:5476
 - **構成の組み立て**: `distributionConfig()` を code-server 用と Kiro Crew 用で共用する。共通の内容は、VPC Origin が 1 つ、CachingDisabled、AllViewer、全メソッド許可、redirect-to-https、共有の WAF。Kiro Crew 用はこれにオリジンのカスタムヘッダーを足すだけである。code-server 用の構成は、関数に切り出す前と 1 バイトも変わっていない (テストで固定)
 - **リダイレクト**: 既存の distribution に `/proxy/5476*` と `/absproxy/5476*` の behavior を先頭に足す。中身は、既定の behavior (`GetDistributionConfig` が返したもの) の全項目を写し、Function の関連付けだけを viewer-request の CloudFront Function 1 件に差し替えたもの (Lambda@Edge は 0 件)。UpdateDistribution は、API が読み出し時に埋める項目 (`SmoothStreaming` など) が欠けた behavior を拒否するので、全項目を写す (`kirocrewCacheBehavior`。#73)。既定の behavior に欠けた項目があれば、API の既定値で補う。SDK に項目が増えたときは、reflect を使ったテストで検出する。Function は `https://<crew>` + 残りのパス + クエリへの 302 を返す。パスの照合は厳密に行うので、`/proxy/54760` は素通しになる。behavior の追加と削除は冪等で、利用者が足した behavior は残す。内容が変わらないときは UpdateDistribution を呼ばない
-- **enable** (冪等、途中から再実行できる): code-server の distribution が前提で、無ければ `nakama aws cloudfront add` を案内するエラーにする (ADR 0028、§8.30)。`GetKiroCrewWeb` (`kirocrew --internet`) も同じく、CloudFront が無ければ `cloudfront add` → `kirocrew enable` を案内する。次の順に進む。① インスタンスの確認 (bare は拒否、停止中は `start` を案内) → ② 既存の distribution の構成から VPC Origin と WAF を読む → ③ Kiro Crew 用 distribution を作り、**作った直後に ID とドメインをメタデータへ書く** → ④ Run Command でインスタンス側を設定する (nginx の導入と設定、`VSCODE_PROXY_URI` を固定する systemd drop-in、`config.yaml` の管理ブロック、code-server の再起動。結果は `NAKAMA_KIROCREW_OK` / `NAKAMA_KIROCREW_ERROR` で返す) → ⑤ Function を作成または更新して LIVE に公開 → ⑥ 既存の distribution に behavior を足す → ⑦ 2 つの distribution が Deployed になるのを並行して待つ。④ が失敗したら ⑥ は行わないので、壊れた設定へ誘導されることはない
-- **disable / delete**: `cloudfront delete` (§8.30) は Kiro Crew の分も消すので、disable は Kiro Crew の画面だけをやめるときに使う。disable は、behavior を外して反映を待つ → Function を削除する (CloudFront が使用中と返す間は再試行) → Kiro Crew 用 distribution を削除する → インスタンスが起動していれば後片付けのスクリプトを実行する (停止中なら飛ばして、そのことを知らせる) → 最後にメタデータを消す、の順に進む。delete は、Kiro Crew 用 distribution を**既存の distribution と VPC Origin より先に**消し (どちらも同じ VPC Origin を参照しているため)、Function は既存の distribution を消した後に消す
+- **enable** (`cloudfront add --kirocrew`、Issue #129 までは `kirocrew enable`。冪等、途中から再実行できる): code-server の distribution が前提である。CLI は先に `AddCloudFront` (冪等) を呼ぶので、その distribution は必ずある。`EnableKiroCrewWeb` は、それが無いとき (非推奨の `kirocrew enable` から呼ばれたとき) に `cloudfront add --kirocrew` を案内するエラーにする (ADR 0028、§8.30)。`GetKiroCrewWeb` (`kirocrew --internet`) も、Kiro Crew の distribution が無ければ `cloudfront add --kirocrew` を案内する。`EnableKiroCrewWeb` は次の順に進む。① インスタンスの確認 (bare は拒否、停止中は `start` を案内) → ② 既存の distribution の構成から VPC Origin と WAF を読む → ③ Kiro Crew 用 distribution を作り、**作った直後に ID とドメインをメタデータへ書く** → ④ Run Command でインスタンス側を設定する (nginx の導入と設定、`VSCODE_PROXY_URI` を固定する systemd drop-in、`config.yaml` の管理ブロック、code-server の再起動。結果は `NAKAMA_KIROCREW_OK` / `NAKAMA_KIROCREW_ERROR` で返す) → ⑤ Function を作成または更新して LIVE に公開 → ⑥ 既存の distribution に behavior を足す → ⑦ 2 つの distribution が Deployed になるのを並行して待つ。④ が失敗したら ⑥ は行わないので、壊れた設定へ誘導されることはない
+- **disable / delete**: `cloudfront delete` (§8.30) は Kiro Crew の分も消すので、disable (`cloudfront delete --kirocrew`、Issue #129 までは `kirocrew disable`) は Kiro Crew の画面だけをやめるときに使う。CLI は `PlanDeleteCloudFront` で Kiro Crew の distribution を確かめ、あれば確認してから (`--yes` で省略。非推奨の `kirocrew disable` は確認しない) `DisableKiroCrewWeb` を呼ぶ。distribution が無ければ確認せず、残りの部品だけを片付ける。disable は、behavior を外して反映を待つ → Function を削除する (CloudFront が使用中と返す間は再試行) → Kiro Crew 用 distribution を削除する → インスタンスが起動していれば後片付けのスクリプトを実行する (停止中なら飛ばして、そのことを知らせる) → 最後にメタデータを消す、の順に進む。delete は、Kiro Crew 用 distribution を**既存の distribution と VPC Origin より先に**消し (どちらも同じ VPC Origin を参照しているため)、Function は既存の distribution を消した後に消す
 - **トークン**: `MintKiroCrewToken` が、リクエストのたびに RSA-4096 の鍵を作り、公開鍵を埋め込んだスクリプトを Run Command で実行する。スクリプトは `kirocrew token` の出力からループバックの URL を取り出し、`openssl pkeyutl` (OAEP、SHA-256、MGF1 も SHA-256) で暗号化して `NAKAMA_KIROCREW_TOKEN_RSA <base64>` として返す。復号した値は `[A-Za-z0-9._-]` の 20〜1024 バイトかを確かめ、エラーメッセージにも値を含めない。Run Command の成功ログには、出力の中身を書かずバイト数だけを DEBUG で出す
-- **ブラウザの起動**: 1 回限りログインページ (ADR 0012) を `newOneShotLoginServerFor(…, loginTarget{origin, label, extra})` に汎用化した。Kiro Crew では送信先を `https://<crew>/login?to=/&token=…`、href を crew にする。`open` が生成する HTML は変わっていない (テストで固定)。`--no-auth` を付けると `https://<crew>/?token=…` を直接開くので、code-server のログイン画面が先に出る。以上は `--internet` のときの動きで、既定の SSM の経路は §8.29
+- **ブラウザの起動**: 1 回限りログインページ (ADR 0012) を `newOneShotLoginServerFor(…, loginTarget{origin, label, extra})` に汎用化した。Kiro Crew では送信先を `https://<crew>/login?to=/&token=…`、href を crew にする。`code` が生成する HTML は変わっていない (テストで固定)。`--no-auth` を付けると `https://<crew>/?token=…` を直接開くので、code-server のログイン画面が先に出る。以上は `--internet` のときの動きで、既定の SSM の経路は §8.29
 - **Ports パネル**: code-server は、`proxy-domain` があって `VSCODE_PROXY_URI` が未設定だと、`VSCODE_PROXY_URI=//{{port}}.<proxy-domain>` を自分で設定する (`src/node/cli.ts`)。このままでは Ports パネルとターミナルのリンクがすべて `<port>.kirocrew.nakama.internal` を指してしまう。そこで enable では、code-server を再起動する前に drop-in (`/etc/systemd/system/code-server@ubuntu.service.d/nakama-kirocrew.conf`) を置き、`VSCODE_PROXY_URI=./proxy/{{port}}/` (code-server 自身の既定値) に固定する。利用者が `VSCODE_PROXY_URI` を自分で設定していれば触らない。disable は drop-in を消し、code-server の再起動は 1 回にまとめる
 - **メタデータ**: `/nakama/<名前>/meta/kirocrew-distribution-id` と `kirocrew-distribution-domain`。`info` は後者から `kirocrew_url` を表示する
-- **予約名**: `enable` と `disable` はサブコマンド名なので、インスタンス名として予約する
+- **予約名**: `enable` と `disable` は (非推奨の) サブコマンド名なので、インスタンス名として予約する。サブコマンドを消すまで予約は残す
 
-### 8.20 `nakama aws connect <n> <cmd>` のコマンド実行と標準入力 (ADR 0021 / Issue #70、#75)
+### 8.20 `nakama aws shell <n> <cmd>` のコマンド実行と標準入力 (ADR 0021 / Issue #70、#75)
 
 vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSession) で扱うため、標準入力の EOF でセッションが終わり (#70)、終了コードと stderr も伝わらなかった (#75)。子プロセスに payload の `mode` を渡して動作を切り替える。
 
@@ -646,7 +647,7 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - `delete all` は計画 (`PlanACLDeleteAll`、読み取りだけ) と実行 (`DeleteACLAll`) に分ける。計画は IP set と SSM の追加日時を読み、消すエントリ・残すエントリ・SSM にだけある残骸 (Stale) を決める。`--keep-mine` は `acl add` と同じ `IPDiscoverer.DetectPublicIPv4s` で接続元 IP を調べ、そのどれかを含む CIDR を残す (1 つも検出できなければエラー。締め出しを防ぐため黙って続けない。§8.23)。CLI は計画を表示して確認を取る。
 - 実行は IP set を読み直し、計画にあって今もあるエントリだけを除いた一覧で 1 回の `UpdateIPSet` をする (確認の後に追加されたエントリは残る。読み直しで得た lock token により、その間の変更は `WAFOptimisticLockException` で拒否される)。消すものが無ければ更新しない。`Addresses` は空でも nil にしない (SDK の必須項目)。
 - 追加日時は、消したエントリ、計画の後に他から消されたエントリ、まだエントリの無い残骸の分を `DeleteParameter` で消す (`ParameterNotFound` は無視)。IP set が正なので、失敗は警告に留める。
-- IP set を空にすると、Web ACL の既定 (Block) により、すべての distribution (Kiro Crew を含む) がブラウザに 403 を返す。SSM 経由の `connect` / `ssh` / `tunnel` は影響を受けない。
+- IP set を空にすると、Web ACL の既定 (Block) により、すべての distribution (Kiro Crew を含む) がブラウザに 403 を返す。SSM 経由の `shell` / `ssh` / `tunnel` は影響を受けない。
 
 ### 8.22 AWS CLI の導入と、root からの呼び出し (ADR 0024 / Issue #101)
 
@@ -668,7 +669,7 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - **`AddACL`**: 見つかった IP を /32 に正規化し、IP set に無いものだけを足して、1 回の `UpdateIPSet` で更新する (無ければ更新しない)。追加日時はすべて書き直す。引数があるときは検出しない。
 - **CLI**: 失敗した問い合わせがあれば、サイトごとに `warning: IP check: <サイト>: N of 3 checks failed: <最初のエラー>` と、取りこぼしたかもしれないことを stderr に出す。追加したものが 1 つなら出力は今までと同じ (`added: X` / `{"added": "X"}`)、複数なら 1 行ずつと配列。
 - **`--keep-mine`**: 見つかったどれかを含むエントリを残す。確認の文と結果は「your IP X」または「one of your IPs X, Y」と書く。JSON の結果には `my_ips` を加え、`my_ip` (先頭) も残す。
-- **`open` / `doctor`**: `PublicIPv4` (checkip に 1 回) のまま。
+- **`code` / `doctor`**: `PublicIPv4` (checkip に 1 回) のまま。
 
 ### 8.24 `nakama version --check` — 新しい版の確認
 
@@ -693,7 +694,7 @@ vendor した plugin は NonInteractiveCommands も `Standard_Stream` (ShellSess
 - **実行** (`PruneACL`): IP set を読み直す。消すものが無ければ、結果の残りの一覧を作るだけで IP set は更新しない (追加日時も読まない)。あれば追加日時も読み直し、計画の `Delete` のうち、今も IP set にあり、今も cutoff より古いものだけを除いた一覧で、読み直しの lock token 付きの 1 回の `UpdateIPSet` をする。計画の後に足されたエントリは計画に無いので残り、その間に `acl add` で確かめ直されたエントリ (`Refreshed`) も残る。他から消されていたもの (`Gone`) は数えるだけ。
 - **後片付け**: 消したエントリの追加日時と、`Gone` のうち今も古い追加日時を `DeleteParameter` で消す (新しい追加日時は進行中の `acl add` のものなので触らない)。失敗は警告に留める。
 - **`acl list`**: ADDED_AT の隣に AGE (`now − 追加日時` の切り捨ての日数、未来なら 0d、記録が無ければ `-`) を出す。JSON / YAML の出力は変えない。
-- **時刻が更新される操作**: `acl add` だけ。`open` (§8.10 の WAF soft check) や code-server の利用では更新しない。毎日 `open` だけ使う利用者のエントリも古く見えるので、`prune` の前に `acl add` を勧める (ヘルプ、チュートリアル 3 章)。
+- **時刻が更新される操作**: `acl add` だけ。`code` (§8.10 の WAF soft check) や code-server の利用では更新しない。毎日 `code` だけ使う利用者のエントリも古く見えるので、`prune` の前に `acl add` を勧める (ヘルプ、チュートリアル 3 章)。
 - **権限**: 使う API (`ListIPSets`、`GetIPSet`、`UpdateIPSet`、`GetParametersByPath`、`DeleteParameter`) は `acl` の行にすべてある。追加の IAM 権限は要らない。
 
 ### 8.27 `nakama aws delete` — 記録の無い SG・ENI・EC2 をタグで探す
@@ -714,7 +715,7 @@ create / restore が SG・ENI・EC2 を作ってから SSM に記録するまで
 private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (NAT インスタンス、ADR 0007) のどちらかを通る。VPC に 1 つで、private の経路表の `0.0.0.0/0` が向く先で決まる。
 
 - **方式の決め方** (`planNATMode`、`PlanInit` は読み取りだけ): `--nat` > `/nakama/_meta/nat-mode` の記録 > nakama の VPC があれば `instance` (ADR 0026 より前の環境は変えない) > `gateway` (新しい環境)。記録に知らない値があればエラー (新しい版が書いた値を推測しない)。`PlanInit` は、既存環境で方式が変わるとき `Switch` と `From`、稼働中 (pending / running) の code-server インスタンスの名前を返す
-- **CLI** (`nakama aws init --nat gateway|instance [--yes]`): `--nat` の値を AWS を呼ぶ前に検査する。`Switch` なら、作るもの・消すもの・料金・稼働中のインスタンス (外向きの接続と connect / ssh / tunnel のセッションが張り替えの瞬間に切れる) を表示して y/N を聞く (`--yes` で省略)。新しい環境の `gateway` では聞かず、料金の注記を stderr に出す。その後 `Init(InitInput{NATMode: plan.NATMode})`
+- **CLI** (`nakama aws init --nat gateway|instance [--yes]`): `--nat` の値を AWS を呼ぶ前に検査する。`Switch` なら、作るもの・消すもの・料金・稼働中のインスタンス (外向きの接続と shell / ssh / tunnel のセッションが張り替えの瞬間に切れる) を表示して y/N を聞く (`--yes` で省略)。新しい環境の `gateway` では聞かず、料金の注記を stderr に出す。その後 `Init(InitInput{NATMode: plan.NATMode})`
 - **記録**: init は AZ の確認の後、何かを作る前に方式を記録する (`writeNATMode`)。途中で止まった init は、次の init が同じ方式で続ける。新しい環境で VPC を作った後に止まっても、既存環境として `instance` にはならない
 - **`initEgress` の順序** (新しい NAT → 経路 → 古い NAT。経路を張り替える前に失敗したら古い NAT が残る):
   - `gateway`: `initNATGateway` → `initRouteTables(routeTargetNATGateway)` → `removeNATInstance`
@@ -725,14 +726,14 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
 - **実行時** (create / start / update / 削除済みインスタンスの restore): `ensureEgress` は、NAT インスタンスがあれば起動し、無ければ NAT Gateway が `available` かを確かめる (`pending` なら待つ。無い・`failed` なら init を案内してエラー)。stop / delete / edit / update の後 / restore の電源の再調整 (`reconcileNATInstancePowerStateExcluding`) は、NAT インスタンスが無ければ何もしない。判断に記録を使わないのは、instance の利用者に新しい権限 (`ec2:DescribeNatGateways`) を求めないため。gateway では NAT インスタンスを terminate するので、リソースと記録は一致する。切り替えの途中で両方があるときは NAT インスタンスを起動し、どちらの経路でも外へ出られるようにする
 - **表示**: `InitResult` に `NATMode`、`NATGatewayID` / `NATGatewayEIPAllocationID` / `NATGatewayPublicIP`、片付けたもの (`DeletedNATGatewayID`、`ReleasedNATGatewayEIPID`、`TerminatedNATInstanceID`、`DeletedNATInstanceSGID`。カンマ区切り) を載せる。init の表は方式に合わせて NAT の行を出し分ける。`list --show-nat` は NAT インスタンス (TYPE `NAT`) と NAT Gateway (TYPE `NATGW`) の行を出し、外向きの IP を `PublicIP` (表では最後の列に `egress <IP>`) で示す。`ec2:DescribeNatGateways` が拒否されたら警告して NAT Gateway の行を省く
 - **doctor の `egress` 行** (`InspectEgress` → `evaluateEgress`): 経路表が無ければ warn (init を案内)。経路の先が使えない (消えた NAT Gateway、`available` でない NAT Gateway、どの NAT インスタンスのものでもない ENI、既定の経路が無い、ほかの何かを向く) なら fail。切り替えの残り (gateway なのに NAT インスタンスがある、instance なのに NAT Gateway がある) と、記録 (未記録は instance) と実際の経路の不一致は warn。詳細は「<方式> mode (recorded / none recorded)」、NAT の説明、見つかった問題の順に `; ` でつなぐ
-- **`TargetNotConnected` の案内**: connect / ssh / tunnel が StartSession の `TargetNotConnected` で諦めるとき、`currentNATMode` (NAT インスタンス → NAT Gateway の順に探す) で見つかった NAT に合わせた確認方法を案内する。見つからない・調べられないときは両方を挙げる
+- **`TargetNotConnected` の案内**: shell / ssh / tunnel が StartSession の `TargetNotConnected` で諦めるとき、`currentNATMode` (NAT インスタンス → NAT Gateway の順に探す) で見つかった NAT に合わせた確認方法を案内する。見つからない・調べられないときは両方を挙げる
 - **古い版との混在** (ADR 0026 の Decision 8): NAT Gateway の名前は `nakama-natgw` のまま。ADR 0026 より前の版の init は、この NAT Gateway を削除して NAT インスタンスへ戻す。新しい版の doctor が記録とのずれを warn で知らせ、`init` で gateway に戻せる
-- **権限**: 付録 A。init に `ec2:AllocateAddress` / `ec2:CreateNatGateway` / `ec2:DeleteSecurityGroup` / `ec2:TerminateInstances`。`egressActions` (create / start / update / restore) と `natLookupActions` (connect / ssh / tunnel) と list / doctor に `ec2:DescribeNatGateways`。doctor に `ec2:DescribeRouteTables` / `ec2:DescribeInstances` / `ssm:GetParameter`
+- **権限**: 付録 A。init に `ec2:AllocateAddress` / `ec2:CreateNatGateway` / `ec2:DeleteSecurityGroup` / `ec2:TerminateInstances`。`egressActions` (create / start / update / restore) と `natLookupActions` (shell / ssh / tunnel) と list / doctor に `ec2:DescribeNatGateways`。doctor に `ec2:DescribeRouteTables` / `ec2:DescribeInstances` / `ssm:GetParameter`
 - **テスト**: `init_egress_test.go` の状態を持つフェイク (NAT インスタンス、SG、経路表、NAT Gateway、EIP。変更の呼び出しを順に記録) で、両方向の切り替えの順序、失敗時に古い NAT が残ること、`failed` の NAT Gateway の作り直し、2 回目の init、`initIAM` の NAT 用ロールを確かめる。`nat_mode_test.go` は方式の決め方、`egress_test.go` は `InspectEgress` と doctor の判定、`nat_instance_test.go` は `ensureEgress` と電源の再調整を確かめる。実際の AWS での確認は手動 (§9)
 
-### 8.29 ブラウザからの接続を SSM で — `open` / `kirocrew` と転送の監督 (ADR 0027 / Issue #118)
+### 8.29 ブラウザからの接続を SSM で — `code` / `kirocrew` と転送の監督 (ADR 0027 / Issue #118)
 
-`open` と `kirocrew` は、既定でインスタンスの tunnel デーモン (§8.12) に転送を足し、ルーター (§8.31) の URL をブラウザで開く。`--local-port` のときは `http://localhost:<ポート>`。CloudFront の経路 (§8.10、§8.19) は `--internet` のときだけ。
+`code` と `kirocrew` は、既定でインスタンスの tunnel デーモン (§8.12) に転送を足し、ルーター (§8.31) の URL をブラウザで開く。`--local-port` のときは `http://localhost:<ポート>`。CloudFront の経路 (§8.10、§8.19) は `--internet` のときだけ。
 
 ```
 ブラウザ ─ http://code-server.<名前>.nakama.localhost:18888 (127.0.0.1 / ::1)
@@ -752,11 +753,11 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
   - 必要なときだけ: ローカルの接続が開いているか、5 分以内に見たときだけ張り直す。そうでなければ `idle` で次の接続を待つ
   - 検知: 用途 (`ForwardPurpose`) のある転送で、接続が開いているあいだ 15 秒ごとに HTTP (Host `localhost:<ポート>`) を送り、10 秒で失敗、3 回続いたら子を止め、TerminateSession してから張り直す。確立の時間切れと確立前の子の失敗、子の一般的な失敗のあとも TerminateSession する
   - 時間の値はパッケージ変数で、テストが短くする
-- **open の SSM 経路** (`runAWSOpenSSM`): `GetInstanceInfo` (bare と停止中は拒否。distribution は要らない) → `EnsureBrowserForward` → 1 回限りのページの送信先を `<オリジン>/login` (ルーターの URL か `http://localhost:<ポート>`) にした METHOD A → METHOD C。ブラウザを起動できなければ (`browserLaunchError`) URL を出さずにエラー。WAF の確認はしない。ルーターのポートが使用中なら `RouterPortInUseError` (`NAKAMA_ROUTER_PORT` の案内) をそのまま返す
-- **kirocrew の SSM 経路** (`runKirocrewOpenSSM`): `GetInstanceInfo` (停止中は拒否。bare も可) → `EnsureBrowserForward` → `MintKiroCrewToken` (`readKirocrewInstance` は bare を拒否しない) → 1 回限りのページ (`tokenPageTemplate`、`GET <オリジン>/` に hidden の `token`)。期限内に読まれなければ `<オリジン>/?token=…` を直接開く。`--no-auth` はトークン無しで開く。`kirocrew enable` / `GetKiroCrewWeb` は使わない
+- **code の SSM 経路** (`runAWSCodeSSM`): `GetInstanceInfo` (bare と停止中は拒否。distribution は要らない) → `EnsureBrowserForward` → 1 回限りのページの送信先を `<オリジン>/login` (ルーターの URL か `http://localhost:<ポート>`) にした METHOD A → METHOD C。ブラウザを起動できなければ (`browserLaunchError`) URL を出さずにエラー。WAF の確認はしない。ルーターのポートが使用中なら `RouterPortInUseError` (`NAKAMA_ROUTER_PORT` の案内) をそのまま返す
+- **kirocrew の SSM 経路** (`runKirocrewOpenSSM`): `GetInstanceInfo` (停止中は拒否。bare も可) → `EnsureBrowserForward` → `MintKiroCrewToken` (`readKirocrewInstance` は bare を拒否しない) → 1 回限りのページ (`tokenPageTemplate`、`GET <オリジン>/` に hidden の `token`)。期限内に読まれなければ `<オリジン>/?token=…` を直接開く。`--no-auth` はトークン無しで開く。`EnableKiroCrewWeb` / `GetKiroCrewWeb` は使わない
 - **Cookie**: user data と update の `nakama_set_cookie_suffix` (`internal/userdata/cookie_suffix.sh`) が、code-server 4.107.0 以降の config.yaml に `cookie-suffix: <名前>` を足す (既にあれば触らない)。restore は config.yaml のパスワードの行だけを替えるので、そのまま残る。ルーターの URL ではホスト名がインスタンスごとに違うので、Cookie はそれだけで分かれる (`--local-port` で `localhost` のポートを並べたときのために残す)
 - **delete**: 最後に `stopLocalTunnel` でこの機械の同名のデーモンを止める (失敗は警告)
-- **テスト**: `tunnel_forward_test.go` (本物のソケットで plugin を模し、再接続・待ち・検知・idle を確かめる)、`tunnel_browser_test.go`、`tunnel_browser_router_test.go`、`tunnel_daemon_test.go`、`aws_open_ssm_test.go`、`instance_update_run_test.go` の cookie-suffix。パッケージの `TestMain` は tunnel の状態ディレクトリを一時ディレクトリに向け、テストが利用者のデーモンに触れないようにする
+- **テスト**: `tunnel_forward_test.go` (本物のソケットで plugin を模し、再接続・待ち・検知・idle を確かめる)、`tunnel_browser_test.go`、`tunnel_browser_router_test.go`、`tunnel_daemon_test.go`、`aws_code_ssm_test.go`、`instance_update_run_test.go` の cookie-suffix。パッケージの `TestMain` は tunnel の状態ディレクトリを一時ディレクトリに向け、テストが利用者のデーモンに触れないようにする
 
 ### 8.30 CloudFront はインスタンスごとの任意 — `create --cloudfront` と `cloudfront add` / `delete` (ADR 0028 / Issue #120)
 
@@ -775,12 +776,12 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
   0. CloudFront があれば `meta/cloudfront-deleting=true` を書く
   1. SG の CloudFront の受信の規則を外す (`revokeSGIngress`。規則が無ければ AWS は成功で `UnknownIpPermissions` に返す。古い挙動の `InvalidPermission.NotFound` と、SG が無い `InvalidGroup.NotFound` も「無い」と扱う)。ここでインスタンスへの CloudFront からの経路は切れる (実機では、delete を始めて 15 秒後の `/healthz` が 504 だった)
   2. `deleteCloudFrontResources` (`nakama aws delete` と共通。§8.3 の手順 3)。force なし
-  3. Kiro Crew の distribution があった場合、インスタンスが running なら `kirocrewDisableScript` (nginx のサイト、code-server の proxy-domain と drop-in) を Run Command で実行する。running でなければ飛ばし、出力の `instance_skipped` と、`kirocrew disable` での後片付けを案内する
+  3. Kiro Crew の distribution があった場合、インスタンスが running なら `kirocrewDisableScript` (nginx のサイト、code-server の proxy-domain と drop-in) を Run Command で実行する。running でなければ飛ばし、出力の `instance_skipped` と、`cloudfront delete --kirocrew` での後片付けを案内する
   4. `meta/` の distribution-id / distribution-domain / vpc-origin-id / kirocrew-* / cloudfront-deleting をまとめて消す
 - **途中で止まった delete の印**: 実機での 1 回の観察では、`DeleteVpcOrigin` の後、VPC origin は消えるまで `Deploying` を返し続けた (削除中を表す状態は返らなかった。状態の値は API リファレンスに列挙されていない)。状態からは「途中で止まった delete」を見分けられないので、SSM の印 (`meta/cloudfront-deleting`) で見分ける。`nakama aws delete` は `/nakama/<name>/` ごと消すので、この印も消える
 - **bare と古いインスタンス**: delete は bare でも受け付ける。CloudFront が無いインスタンスでは手順 1 だけを行い、規則が残っていれば外す (ADR 0028 より前の bare)。既存の CloudFront は自動では消さない
 - **restore**: `RestoreInput.CloudFront` / `RestorePlan.CloudFront`。バックアップの作成 (`backupSource`) は `meta/distribution-id` があれば `nakama:cloudfront=true` を付け、作り直しの計画は、このタグがあって `--cloudfront` が無いときに警告する (§8.5.1)
-- **表示**: `info` は CloudFront が無ければ `cloudfront : none` と開き方を出し、JSON に `cloudfront` (bool) を入れる。`open --internet` / `kirocrew --internet` / `kirocrew enable` は、CloudFront が無いとき `cloudfront add` を案内する。`list` は変えない (DISTRIBUTION_DOMAIN が空)
+- **表示**: `info` は CloudFront が無ければ `cloudfront : none` と開き方を出し、JSON に `cloudfront` (bool) を入れる。`code --internet` は CloudFront が無いとき `cloudfront add` を、`kirocrew --internet` は Kiro Crew の distribution が無いとき `cloudfront add --kirocrew` を案内する。`list` は変えない (DISTRIBUTION_DOMAIN が空)
 - **権限**: 権限表の `create` / `restore` の行は CloudFront の操作を含まない。`cloudfront` の行が add / delete と `--cloudfront` の分 (`cloudFrontBuildActions` と `cloudFrontTeardownActions`。`ec2:RevokeSecurityGroupIngress` を含む) を持つ
 - **テスト**: `cloudfront_test.go` (順序、各段階での失敗と Ctrl-C からの再開、無くなった部品の作り直し、前提の拒否、delete の順序・Kiro Crew の有無・停止中・再開・反映待ち、bare の残りの規則、add → delete の往復、`nakama aws delete` との共通化)、`instance_create_record_test.go` (`--cloudfront` の有無ごとの記録)、`restore_test.go`、`backup_test.go`、`doctor_test.go`、`aws_cloudfront_test.go`
 
@@ -804,11 +805,35 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
   - Kiro Crew: Host を `localhost:5476` に。Origin がルーター自身のオリジンと一致すれば `http://localhost:5476` に、Referer がルーターのオリジンの URL なら同じオリジンの URL に置き換える (それ以外は変えない)。応答の `Location` が `http://localhost:5476` の URL なら、ルーターのオリジンに戻す (`rewriteKiroCrewLocation`。`http://localhost:54760` のような別のポートは対象外)。`127.0.0.1` に置き換えないのは、Kiro Crew が Cookie の無い文書の GET を `localhost` へ 302 で移すため
   - WebSocket (101) と event stream は `ReverseProxy` がそのまま扱う (`text/event-stream` と長さの分からない応答はすぐ flush する)
 - **転送先への接続** (`newRouterTransport`): 127.0.0.1 だけ、プロキシを使わない、HTTP/1.1、keep-alive の遊休は 10 秒 (`routerUpstreamIdleTimeout`)。デーモンは開いているローカルの接続を利用中とみなす (§8.29 の「必要なときだけ」) ので、遊休の接続を持ち続けない
-- **エラーのページ** (`writeRouterPage`): `Cache-Control: no-store`、`X-Nakama-Router-Error: <題名>`、html/template。知らない Host は 421。転送が無い・デーモンが応答しない・dead は 502 で、`nakama aws open <名前>` (Kiro Crew は `kirocrew`)、dead なら理由と `tunnel status` を示す。中継が失敗したときは、デーモンの最後の理由を添え、`LastErrorCode` が TargetNotConnected なら `nakama aws start <名前>` を先に示す (`upstreamErrorPage`)。`httpHealthCheck` は `X-Nakama-Router-Error` の付いた応答を失敗として扱うので、open の待ちがルーターのページで終わることはない
+- **エラーのページ** (`writeRouterPage`): `Cache-Control: no-store`、`X-Nakama-Router-Error: <題名>`、html/template。知らない Host は 421。転送が無い・デーモンが応答しない・dead は 502 で、`nakama aws code <名前>` (Kiro Crew は `kirocrew`)、dead なら理由と `tunnel status` を示す。中継が失敗したときは、デーモンの最後の理由を添え、`LastErrorCode` が TargetNotConnected なら `nakama aws start <名前>` を先に示す (`upstreamErrorPage`)。`httpHealthCheck` は `X-Nakama-Router-Error` の付いた応答を失敗として扱うので、code の待ちがルーターのページで終わることはない
 - **プロセス** (`RunRouterDaemon` → `runRouterDaemon`): `listenLoopback` でポートを取る (失敗なら状態を書かずに終わる) → 制御のチャネル (127.0.0.1:0、bearer token) → 状態ファイル `~/.config/nakama/router.json` (0600。PID・ポート・制御ポート・トークン・版・開始時刻。tunnel の状態のディレクトリの外。`router` は有効なインスタンス名なので)。O_EXCL で作れなければ、前の持ち主に問い合わせ、応答すれば (別のポートのルーター) 終わり、応答しなければ置き換える → 中継と制御を始める (`GET /status`、`POST /stop`。unix では SIGTERM / SIGINT も停止) → `watchRouterIdle` が 15 秒ごとに応答する tunnel のデーモンを数え (`countLiveTunnels`。読むだけ)、0 が 1 分続いたら止める。ログは `openDaemonLogger("nakama-router")` (syslog のタグ。Windows はイベントログのソース `nakama`)
 - **CLI 側** (`EnsureRouter`。`EnsureBrowserForward` が `--local-port` の無いときに呼ぶ): 状態ファイルのルーターが応答し、版 (`version.String()`) とポートが同じなら使う。応答しなければ状態ファイルを消す。版かポートが違えば、ポートが違うときは新しいポートが空いているかを先に確かめ (空いていなければ、動いているルーターを止めずに `RouterPortInUseError`)、`POST /stop` で止めて状態ファイルが消えるまで待つ (停止の要求が失敗したら、そのルーターは動いているので状態ファイルを残し、何も起動せずに pid・ポート・版を示すエラーにする)。そのあとポートが 127.0.0.1 と ::1 で空いているかを確かめ (`RouterPortInUseError`。nakama の転送が使っていれば `tunnelHoldingPort` でそのインスタンス名も示し、`NAKAMA_ROUTER_PORT=<ポート+1>` の例を出す)、隠しコマンドを tunnel のデーモンと同じく切り離して起動し、状態ファイルと `/status` が応答するまで 15 秒待つ。2 つの CLI が同時に起動しても、ポートを取った 1 つが両方に使われる
-- **表示**: `GetTunnelStatus` は、ルーターが動いていれば、用途ごとに `findBrowserForward` の転送へ `URL` (`http://<用途>.<名前>.nakama.localhost:<ポート>/`) を入れる (デーモンは送らない。CLI 側で埋める)。`tunnel status` は表の後に `router: running on localhost:<ポート> (pid N)` と、URL の一覧 (名前を省いたときは名前付き) を出す。ブラウザ用の転送があるのにルーターが無ければ、`router: not running` と open / kirocrew での起動を案内する。`GetRouterStatus` は資格情報なしで動き、応答の無いルーターの状態ファイルを消す
+- **表示**: `GetTunnelStatus` は、ルーターが動いていれば、用途ごとに `findBrowserForward` の転送へ `URL` (`http://<用途>.<名前>.nakama.localhost:<ポート>/`) を入れる (デーモンは送らない。CLI 側で埋める)。`tunnel status` は表の後に `router: running on localhost:<ポート> (pid N)` と、URL の一覧 (名前を省いたときは名前付き) を出す。ブラウザ用の転送があるのにルーターが無ければ、`router: not running` と code / kirocrew での起動を案内する。`GetRouterStatus` は資格情報なしで動き、応答の無いルーターの状態ファイルを消す
 - **テスト**: `router_test.go` (名前の判定、書き換え、転送用のヘッダー、421、エラーのページ、WebSocket、event stream、遊休の接続、ルーターのページを応答とみなさないこと、`tunnelRoutes`)、`router_daemon_test.go` (本物のソケット。状態ファイル、制御、両方のループバック、停止、tunnel が無いときの終了、使用中のポート、残った状態ファイル、別のルーター、tunnel のデーモンの `/status` を通した通し)、`router_start_test.go`、`tunnel_browser_router_test.go`、`aws_tunnel_test.go`。パッケージの `TestMain` と `withTunnelStateDir` は、tunnel の状態のディレクトリを一時ディレクトリの下の `tunnels` に向け、`router.json` もその一時ディレクトリに置かれるようにする
+
+### 8.32 コマンドとフラグの名前の整理 (ADR 0030 / Issue #129)
+
+v0.30.0 で、次のように名前を変えた。古い名前は v0.30.x の間は動き、削除は v0.31.0 以降に別の Issue で行う。
+
+| 古い名前 | 新しい名前 |
+|---|---|
+| `open <name>` | `code <name>` |
+| `connect <name> [cmd...]` | `shell <name> [cmd...]` (`--tty` に `-t` を足した) |
+| `setup rerun <name>` | `provision <name>` |
+| `kirocrew enable <name>` | `cloudfront add <name> --kirocrew` |
+| `kirocrew disable <name>` | `cloudfront delete <name> --kirocrew` |
+| `create --name <name>` | `create <name>` |
+| `login --name` / `profile save --name` | `--alias` |
+
+- **古いコマンド** (`deprecatedCommand`、`internal/cli/deprecated.go`): 新しいコマンドの構築関数をもう 1 回呼び、`Use` の最初の語を古い名前に替え、`Deprecated` に `use "<新しい名前>" instead` を入れる。cobra は `Deprecated` のコマンドをヘルプと補完から外し、実行のときに `Command "<古い名前>" is deprecated, …` を `OutOrStderr` (既定は stderr) に書く。stdout と `-o json` は変わらない。引数とフラグは新しいコマンドと同じになる (`connect` の `SetInterspersed(false)` も)。`setup` のグループも `Deprecated` にした。`kirocrew enable` / `disable` は、元の処理のまま `Deprecated` にした (確認もしない)
+- **古いフラグ**: `create --name` と、`login` / `profile save` の `--name` は、pflag の `MarkDeprecated` で隠す。使うと、cobra が解析の後に `Flag --name has been deprecated, …` を stderr に書く。新旧の両方が違う値で与えられたら、`resolveCreateName` / `aliasFlags.resolve` が、AWS を呼ぶ前に (login ではブラウザを開く前に) エラーにする
+- **`create <name>`**: ヘルプに名前の規則 (2〜32 文字、英小文字・数字・ハイフン、先頭と末尾は英数字。`instanceNamePattern`) を書く。以前のフラグの説明 `[a-z0-9][a-z0-9-]*` は長さと末尾を表していなかった
+- **`cloudfront add --kirocrew`**: `AddCloudFront` (冪等) → `warnIfNotAllowlisted` → `EnableKiroCrewWeb` (§8.19)。後半が失敗したら、code-server の分はできていることと、同じコマンドで続きから進むことをエラーに書く。JSON は、add の結果 (`AddCloudFrontOutput` を埋め込む。YAML は inline) に `kirocrew` (`EnableKiroCrewWebOutput`) を足したもの。`--kirocrew` が無ければ、出力は以前と同じ
+- **`cloudfront delete --kirocrew`**: `PlanDeleteCloudFront` → Kiro Crew の distribution があれば確認 (`kiroCrewDeletePrompt`。`--yes` で省略) → `DisableKiroCrewWeb`。distribution が無ければ確認せず、残りの部品だけを片付ける
+- **`backup delete` の確認**: `FindBackup` で対象を引き、ラベル・スナップショット・大きさ・作成時刻・メモを示して確認する (`backupDeletePrompt`。`-y` / `--yes` で省略)。確認した `Backup` をそのまま `DeleteFoundBackup` に渡すので、示したものと別のスナップショットは消さない。標準入力が EOF なら `readYesNo` がエラーを返し、何も消さない
+- **doctor の項目名**: `code`、`shell`、`cloudfront --kirocrew`、`update / provision`。`-o json` の `feature` の値も変わる
+- **変えないもの**: ルーターのホスト名 (`code-server.<名前>.nakama.localhost`。サービスの名前で、`kirocrew.` と対になる)。service 層の `Connect` / `connect_session*.go`、syslog のタグ `nakama-connect`、隠しコマンド `session-runner` (SSM のセッションの仕組みの名前)。`code` と `kirocrew` が共用する `openFlags` などの部品 (この open は動詞)。インスタンスの設定ファイルに書く印 (`# BEGIN nakama kirocrew (managed by …kirocrew enable…)` など。消すときにこの文字列で探す) と、Run Command のコメント (`nakama: kirocrew enable <名前>`)
+- **テスト**: `deprecated_test.go` (古い名前が同じ引数とフラグで動く、ヘルプに出ない、案内が stderr だけに出る)、`aws_create_test.go`、`aws_login_test.go`、`aws_profile_test.go`、`aws_cloudfront_test.go`、`aws_kirocrew_test.go`、`aws_backup_test.go`、`aws_shell_test.go`、`flag_usage_test.go` (フラグの説明が大文字で始まる)、`backup_test.go`
 
 ## 9. テスト戦略
 
@@ -818,7 +843,7 @@ private subnet の外向き通信は、`gateway` (NAT Gateway) か `instance` (N
 | `internal/naming` / `internal/tagging` | ピュア関数のテーブル駆動テスト |
 | `internal/awsx` | 資格情報解決の分岐は `resolverHooks` を差し替えて検証する。IP 検出は `httptest` のサーバーで検証する。実 API は呼ばない |
 | `internal/signin` / `internal/proxy` / `internal/cliproxy` / `internal/version` | `httptest` のサーバーと、差し替えた依存 (時計、HTTP クライアント、`t.Setenv` による環境変数) で検証する |
-| `internal/service` | AWS interface を自家製 fake (`fakeCreateEC2` など) で差し替えたユニットテスト。Run Command で送るスクリプトの一部 (`update`、`kirocrew`、`connect` のコマンド実行など) は bash とスタブで実行する。CloudFront の構成のように SDK の型に項目が増えうるものは、reflect で項目を列挙して漏れを検出する |
+| `internal/service` | AWS interface を自家製 fake (`fakeCreateEC2` など) で差し替えたユニットテスト。Run Command で送るスクリプトの一部 (`update`、`kirocrew`、`shell` のコマンド実行など) は bash とスタブで実行する。CloudFront の構成のように SDK の型に項目が増えうるものは、reflect で項目を列挙して漏れを検出する |
 | `internal/cli` | cobra のフラグ解析と委譲テスト |
 | 実 AWS E2E | 手動 (CI には載せない) |
 
@@ -840,7 +865,7 @@ GitHub Actions (`.github/workflows/ci.yml`) で以下を main への push と PR
 - **VPC Origin** = CloudFront が VPC 内のリソース (ALB / NLB / EC2) をオリジンにできる新機能。2026 年 5 月時点で東京リージョン対応済 ([source](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html))
 - **WebSocket on VPC Origins** = 2026 年 5 月 GA ([source](https://aws.amazon.com/about-aws/whats-new/2026/05/amazon-cloudfront-websockets-vpc-origins/))
 
-## 12. `nakama aws connect` の取り込み方針 (案3)
+## 12. `nakama aws shell` (Issue #129 までは `connect`) の取り込み方針 (案3)
 
 詳細根拠は [adr/0005-aws-connect-via-session-manager.md](adr/0005-aws-connect-via-session-manager.md)。
 
@@ -860,7 +885,7 @@ replace github.com/twinj/uuid => ./third_party/twinj-uuid
 - 追加実装:
   - `internal/awsx`: `SSMAPI` に `StartSession` / `TerminateSession` を追加し、解決済 `aws.Credentials` + region + SSM endpoint を `session.Session` 構築用に取り出す口を設ける
   - `internal/service/connect.go`: instance-id 解決、モード→`DocumentName`/`Parameters` 組立、`StartSession`、plugin セッション起動
-  - `internal/cli/aws_connect.go`: cobra コマンド (`--tty` / 位置引数、`SetInterspersed(false)`)、`aws.go` の `AddCommand` に配線 (ポートフォワードは `aws_tunnel.go` へ移管。§8.12)
+  - `internal/cli/aws_shell.go`: cobra コマンド (`--tty` / `-t` / 位置引数、`SetInterspersed(false)`)、`aws.go` の `AddCommand` に配線 (ポートフォワードは `aws_tunnel.go` へ移管。§8.12)
 - テスト方針: argv/Parameters 組立と引数解析はピュア関数化してユニットテスト。実セッションは手動 E2E (CI 非搭載)。
 
 ## 13. 資格情報解決とマルチアカウントプロファイル (ADR 0011, ADR 0016)
@@ -967,7 +992,7 @@ provider の Retrieve が呼び直されてネイティブリフレッシュが�
 ブラウザ起動 (internal/browser、起動失敗時も URL 表示で待機継続) →
 `signin.Login` → `awsx.ResolveLoginSessionIdentity` による STS 識別確認 →
 profilestore への自動 save & load (alias 既定はアカウント ID、
-`--name` で上書き、collision 検査は profile save と共通) を行う。
+`--alias` で上書き、collision 検査は profile save と共通) を行う。
 
 ## 14. アウトバウンド通信のプロキシ解決 (ADR 0015)
 

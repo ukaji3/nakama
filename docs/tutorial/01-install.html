@@ -186,13 +186,13 @@ nakama version</code></pre>
 <p>仕事用と個人用など、複数の AWS アカウントを切り替えて使う場合は <code>profile</code> を使います。サインインしたセッションに名前を付けて保存し、あとから選び直せます。</p>
 
 <p class="cmd-caption">PowerShell で実行 (アカウント A とアカウント B を登録する例)</p>
-<pre><code>nakama aws login                        # アカウント A にサインイン
-nakama aws profile save --name work      # 「work」という名前で保存
+<pre><code>nakama aws login                          # アカウント A にサインイン
+nakama aws profile save --alias work      # 「work」という名前で保存
 
-nakama aws login                        # アカウント B にサインイン
-nakama aws profile save --name personal  # 「personal」として保存
+nakama aws login                          # アカウント B にサインイン
+nakama aws profile save --alias personal  # 「personal」として保存
 
-nakama aws profile list                  # 保存したものを一覧表示
+nakama aws profile list                   # 保存したものを一覧表示
 nakama aws profile load work              # 以降のコマンドは work を使う
 nakama aws profile unload                 # 選択を解除 (既定の認証方法に戻す)
 nakama aws profile delete personal        # 登録を削除</code></pre>
@@ -204,7 +204,7 @@ nakama aws profile delete personal        # 登録を削除</code></pre>
   <tbody>
     <tr><td><code>ACTIVE</code></td><td><code>*</code> が付いているものが、いま nakama が使うアカウントです</td></tr>
     <tr><td><code>ACCOUNT</code></td><td>AWS アカウント ID (12 桁の数字)</td></tr>
-    <tr><td><code>ALIAS</code></td><td><code>--name</code> で付けた呼び名</td></tr>
+    <tr><td><code>ALIAS</code></td><td><code>--alias</code> で付けた呼び名</td></tr>
     <tr><td><code>IDENTITY</code></td><td>どのユーザー / ロールとして動くか</td></tr>
     <tr><td><code>SAVED</code></td><td>保存した日時</td></tr>
     <tr><td><code>STATUS</code></td><td>まだ使えるか、期限切れかどうか</td></tr>

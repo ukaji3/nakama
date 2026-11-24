@@ -48,7 +48,7 @@
 <pre><code>nakama aws doctor</code></pre>
 
 <figure>
-  <img width="900" height="430" src="img/doctor-map.svg" alt="doctor は手元の環境 (proxy、tls、tunnels)、AWS 側 (credentials、waf-allowlist、egress)、機能ごとの権限 (capability: create、connect、backup、delete など) を点検する。結果は ok / warn / fail の 3 種類。完全に読み取り専用で、パスワードや資格情報は表示しない。">
+  <img width="900" height="430" src="img/doctor-map.svg" alt="doctor は手元の環境 (proxy、tls、tunnels)、AWS 側 (credentials、waf-allowlist、egress)、機能ごとの権限 (capability: create、shell、backup、delete など) を点検する。結果は ok / warn / fail の 3 種類。完全に読み取り専用で、パスワードや資格情報は表示しない。">
   <figcaption><strong>図 7-1: doctor が点検する範囲。</strong> AWS のリソースも手元の設定も<strong>一切変更しません</strong>。何度実行しても安全です。</figcaption>
 </figure>
 
@@ -107,7 +107,7 @@
 <p>サインインできていれば、機能ごとの権限の行が並びます。</p>
 <pre class="output"><code>[ ok ] capability: init all 32 actions allowed
 [ ok ] capability: create all 24 actions allowed
-[ ok ] capability: connect all 5 actions allowed
+[ ok ] capability: shell all 5 actions allowed
 [warn] capability: backup missing: ec2:CreateSnapshot, ec2:DeleteSnapshot
                        -&gt; grant the listed actions to use this feature (the simulation evaluates Resource "*"; resource-scoped allow policies can be reported as missing even though the real call succeeds)</code></pre>
 
@@ -157,11 +157,11 @@
   <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
-      <td><code>open</code> / <code>kirocrew</code> が <code>local port 18888 of the nakama router is not available</code> で失敗する</td>
+      <td><code>code</code> / <code>kirocrew</code> が <code>local port 18888 of the nakama router is not available</code> で失敗する</td>
       <td>手元の 18888 番 (アドレスで行き先を選ぶ入口の番号) を別のプログラムか、nakama の転送が使っています (後者なら名前が表示されます)。環境変数 <code>NAKAMA_ROUTER_PORT</code> で別の番号を指定してください (例: PowerShell なら <code>$env:NAKAMA_ROUTER_PORT = "18889"</code>)</td>
     </tr>
     <tr>
-      <td><code>open --local-port</code> / <code>kirocrew --local-port</code> が <code>local port … is in use</code> (または <code>is not available</code>) で失敗する</td>
+      <td><code>code --local-port</code> / <code>kirocrew --local-port</code> が <code>local port … is in use</code> (または <code>is not available</code>) で失敗する</td>
       <td>指定した番号を別のプログラムか、nakama の別の開発環境の入口が使っています (後者なら名前が表示されます)。別の番号を指定するか、<code>--local-port</code> を付けずに開いてください</td>
     </tr>
     <tr>
@@ -170,22 +170,22 @@
     </tr>
     <tr>
       <td>ブラウザに「No code-server forward for &lt;名前&gt;」(Kiro Crew は「No kirocrew forward」) と表示される</td>
-      <td>その開発環境の転送が動いていません (パソコンの再起動や <code>tunnel stop</code> の後など)。ページに表示されたコマンド (<code>nakama aws open &lt;名前&gt;</code> など) を実行してください</td>
+      <td>その開発環境の転送が動いていません (パソコンの再起動や <code>tunnel stop</code> の後など)。ページに表示されたコマンド (<code>nakama aws code &lt;名前&gt;</code> など) を実行してください</td>
     </tr>
     <tr>
       <td>ブラウザに「The code-server forward of &lt;名前&gt; did not answer」と表示される</td>
       <td>SSM のセッションがつながっていません。ページに表示された理由を確かめてください。開発環境が止まっていれば <code>nakama aws start &lt;名前&gt;</code> で起動します</td>
     </tr>
     <tr>
-      <td><code>open</code> / <code>kirocrew</code> が <code>could not launch a browser</code> で失敗する</td>
+      <td><code>code</code> / <code>kirocrew</code> が <code>could not launch a browser</code> で失敗する</td>
       <td>ブラウザを見つけられませんでした。<code>--browser &lt;コマンド&gt;</code> で起動するブラウザを指定してください (入口は動き続けています。止めるなら <code>nakama aws tunnel stop &lt;名前&gt;</code>)</td>
     </tr>
     <tr>
-      <td><code>open</code> / <code>kirocrew</code> が <code>did not become usable within 1m0s</code> で失敗する</td>
+      <td><code>code</code> / <code>kirocrew</code> が <code>did not become usable within 1m0s</code> で失敗する</td>
       <td>表示された理由を確認します。<code>TargetNotConnected</code> なら、下の「ターミナルや ssh でつながらない」の同じ行と同じ対処です。<code>nakama aws tunnel status &lt;名前&gt;</code> で入口の状態も見られます</td>
     </tr>
     <tr>
-      <td><code>open</code> / <code>kirocrew</code> が <code>started by an older nakama</code> で失敗する</td>
+      <td><code>code</code> / <code>kirocrew</code> が <code>started by an older nakama</code> で失敗する</td>
       <td>古い版の nakama が起動した常駐プログラムが残っています。<code>nakama aws tunnel restart &lt;名前&gt;</code> で入れ替えてから、もう一度実行してください</td>
     </tr>
     <tr>
@@ -209,7 +209,7 @@
       <td><code>nakama aws info &lt;名前&gt; --show-password</code> で表示して入力します。自動ログインができない環境では、その理由が表示されます</td>
     </tr>
     <tr>
-      <td><code>open</code> がエラーで、ssh や connect を案内される</td>
+      <td><code>code</code> がエラーで、ssh や shell を案内される</td>
       <td>その環境は <code>--bare</code> で作られています (<a href="04-create.html#bare">第 4 章「軽量ボックス」</a>)</td>
     </tr>
   </tbody>
@@ -222,24 +222,24 @@
   <thead><tr><th scope="col">症状</th><th scope="col">対処</th></tr></thead>
   <tbody>
     <tr>
-      <td><code>connect</code> / <code>ssh</code> が <code>TargetNotConnected</code> (<code>is not connected</code>) で失敗する</td>
+      <td><code>shell</code> / <code>ssh</code> が <code>TargetNotConnected</code> (<code>is not connected</code>) で失敗する</td>
       <td>開発環境の SSM エージェントが AWS につながっていません。<code>start</code> や <code>create</code> の直後なら 1〜2 分待ってから、もう一度試します。続く場合は、開発環境がインターネットに出られていない可能性があります (通信は中継役の NAT インスタンスか NAT ゲートウェイを通ります)。<code>nakama aws list --show-nat</code> で中継役の状態 (NAT インスタンスなら <code>running</code>、NAT ゲートウェイなら <code>available</code>) を確かめ、<code>nakama aws doctor</code> の <code>egress</code> の行も見たうえで、<code>nakama aws init</code> を実行してください。<code>init</code> は NAT インスタンスを点検して壊れていれば直し、使えなくなった NAT ゲートウェイは作り直します。直した後は、開発環境を <code>stop</code> と <code>start</code> で再起動します (作成直後に失敗した環境は、初期設定が途中で止まっているので、<code>delete</code> して作り直してください)</td>
     </tr>
     <tr>
-      <td><code>connect</code> だけがつながらない (他のコマンドは動く)</td>
+      <td><code>shell</code> だけがつながらない (他のコマンドは動く)</td>
       <td>会社のプロキシが WebSocket を遮断している可能性があります (<a href="02-proxy-cert.html#websocket">第 2 章「WebSocket が遮断されている場合」</a>)。プロキシ管理者に許可を依頼してください</td>
     </tr>
     <tr>
       <td>権限が無いと言われる</td>
-      <td><code>doctor</code> の <code>capability: connect</code> 行を確認します。<code>ssm:StartSession</code> などが必要です</td>
+      <td><code>doctor</code> の <code>capability: shell</code> 行を確認します。<code>ssm:StartSession</code> などが必要です</td>
     </tr>
     <tr>
-      <td><code>connect &lt;名前&gt; &lt;コマンド&gt;</code> が止まって見える (出力が出ない)</td>
-      <td>このモードでは、出力はコマンドが終わってからまとめて表示されます。<code>kiro-cli login</code> のように入力や確認コードを待つコマンドは、コードが見えないまま止まって見えます。Ctrl-C で中断する (それまでの出力と終了コードが出ます) か、<code>--tty</code> を付けて実行し直してください: <code>nakama aws connect --tty &lt;名前&gt; &lt;コマンド&gt;</code>。10 秒以上かかると、この案内が自動でも表示されます</td>
+      <td><code>shell &lt;名前&gt; &lt;コマンド&gt;</code> が止まって見える (出力が出ない)</td>
+      <td>このモードでは、出力はコマンドが終わってからまとめて表示されます。<code>kiro-cli login</code> のように入力や確認コードを待つコマンドは、コードが見えないまま止まって見えます。Ctrl-C で中断する (それまでの出力と終了コードが出ます) か、<code>--tty</code> を付けて実行し直してください: <code>nakama aws shell --tty &lt;名前&gt; &lt;コマンド&gt;</code>。10 秒以上かかると、この案内が自動でも表示されます</td>
     </tr>
     <tr>
-      <td><code>connect &lt;名前&gt; &lt;コマンド&gt;</code> が 255 で終わる</td>
-      <td>nakama 自身が失敗したか、終了コードを受け取る前にセッションが切れています。表示された理由を確認してください。<code>'</code> や <code>$</code> を含むコマンドは環境側のシェルが解釈するので、ssh と同じようにクォートします (例: <code>nakama aws connect dev01 "echo \"it's\""</code>)</td>
+      <td><code>shell &lt;名前&gt; &lt;コマンド&gt;</code> が 255 で終わる</td>
+      <td>nakama 自身が失敗したか、終了コードを受け取る前にセッションが切れています。表示された理由を確認してください。<code>'</code> や <code>$</code> を含むコマンドは環境側のシェルが解釈するので、ssh と同じようにクォートします (例: <code>nakama aws shell dev01 "echo \"it's\""</code>)</td>
     </tr>
     <tr>
       <td>環境が起動しているのにつながらない</td>
@@ -255,7 +255,7 @@
     </tr>
     <tr>
       <td>切断が多い</td>
-      <td><code>connect</code> / <code>tunnel</code> は keepalive の間隔を短くできます (<a href="02-proxy-cert.html#disconnect">第 2 章「切断が多いときの設定」</a>)。<code>ssh</code> の場合は <code>~/.ssh/config</code> に <code>ServerAliveInterval 30</code> を追加します</td>
+      <td><code>shell</code> / <code>tunnel</code> は keepalive の間隔を短くできます (<a href="02-proxy-cert.html#disconnect">第 2 章「切断が多いときの設定」</a>)。<code>ssh</code> の場合は <code>~/.ssh/config</code> に <code>ServerAliveInterval 30</code> を追加します</td>
     </tr>
   </tbody>
 </table>
@@ -305,7 +305,7 @@
     </tr>
     <tr>
       <td>セットアップ (<code>--setup</code> など) が失敗した</td>
-      <td>サーバー自体は作成できています。ログを確認して再実行します:<br><code>nakama aws connect &lt;名前&gt; sudo tail -n 50 /var/log/nakama-provision.log</code><br><code>nakama aws setup rerun &lt;名前&gt; --setup .\setup.sh</code></td>
+      <td>サーバー自体は作成できています。ログを確認して再実行します:<br><code>nakama aws shell &lt;名前&gt; sudo tail -n 50 /var/log/nakama-provision.log</code><br><code>nakama aws provision &lt;名前&gt; --setup .\setup.sh</code></td>
     </tr>
     <tr>
       <td><code>init</code> が途中で失敗した</td>
@@ -325,10 +325,10 @@ nakama aws doctor -o json</code></pre>
 </div>
 <p>より詳しい記録が必要な場合は <code>-v</code> を付けると詳細ログが出ます。</p>
 <pre><code>nakama aws -v list
-nakama aws -v connect dev01</code></pre>
+nakama aws -v shell dev01</code></pre>
 <div class="callout warn" role="note">
-  <span class="title">connect ではフラグを名前より前に置きます</span>
-  <p><code>connect</code> は<strong>インスタンス名より後ろに書いたものをすべて「環境側で実行するコマンド」として送ります</strong>。<code>nakama aws connect dev01 -v</code> と書くと、<code>-v</code> は nakama のオプションではなく環境側で実行されようとして失敗します。<code>nakama aws -v connect dev01</code> のように前に置いてください。<code>--tty</code> や <code>--retry</code> も同じです。</p>
+  <span class="title">shell ではフラグを名前より前に置きます</span>
+  <p><code>shell</code> は<strong>インスタンス名より後ろに書いたものをすべて「環境側で実行するコマンド」として送ります</strong>。<code>nakama aws shell dev01 -v</code> と書くと、<code>-v</code> は nakama のオプションではなく環境側で実行されようとして失敗します。<code>nakama aws -v shell dev01</code> のように前に置いてください。<code>--tty</code> や <code>--retry</code> も同じです。</p>
 </div>
 
 <nav class="pager" aria-label="章の移動">

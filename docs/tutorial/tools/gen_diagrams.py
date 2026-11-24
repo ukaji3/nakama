@@ -335,7 +335,7 @@ def d_flow_first_time() -> Svg:
         ("1. サインイン", "nakama aws login", "ブラウザで承認", "約 1 分"),
         ("2. 基盤を作る", "nakama aws init", "1 回だけ (共有)", "約 3 分"),
         ("3. 環境を作る", "nakama aws create", "1 人で何台でも", "数分"),
-        ("4. 使い始める", "nakama aws open", "ブラウザが開く", "数秒"),
+        ("4. 使い始める", "nakama aws code", "ブラウザが開く", "数秒"),
     ]
     x = 20
     for i, (title, cmd, note, dur) in enumerate(steps):
@@ -476,13 +476,13 @@ def d_access_paths() -> Svg:
         920,
         420,
         "4 つのアクセス方法の使い分け",
-        "ブラウザで開く open、ターミナルに入る connect、デスクトップのエディタから使う ssh、"
+        "ブラウザで開く code、ターミナルに入る shell、デスクトップのエディタから使う ssh、"
         "ポートを手元に持ってくる tunnel の 4 つがある。どれも既定は SSM 経由。",
     )
     rows = [
-        ("open", "ブラウザで VS Code を開く", ["SSM 経由 (既定)", "--internet で CloudFront"],
+        ("code", "ブラウザで VS Code を開く", ["SSM 経由 (既定)", "--internet で CloudFront"],
          ["画面だけで完結したい"], "ok"),
-        ("connect", "ターミナルに入る", ["SSM 経由"],
+        ("shell", "ターミナルに入る", ["SSM 経由"],
          ["ログを見る・コマンドを叩く"], "step"),
         ("ssh", "手元の VS Code / scp / git", ["SSM 経由"],
          ["デスクトップのエディタを使いたい"], "step"),
@@ -593,7 +593,7 @@ def d_doctor_map() -> Svg:
     s.label(650, 36, "機能ごとの権限", size=15, color=INK, weight="600")
     s.box(650, 50, 230, 218, [
         "capability: create",
-        "capability: connect",
+        "capability: shell",
         "capability: backup",
         "capability: delete",
         "…など機能ごとに 1 行",
@@ -633,7 +633,7 @@ def d_bare_vs_full() -> Svg:
     ], "step", font_size=14)
     s.box(20, 275, 420, 100, [
         "使えるもの",
-        "open / connect / ssh / tunnel / backup /",
+        "code / shell / ssh / tunnel / backup /",
         "restore / edit / update / start / stop / delete",
     ], "ok", font_size=14)
 
@@ -649,9 +649,9 @@ def d_bare_vs_full() -> Svg:
     ], "neutral", font_size=14)
     s.box(470, 275, 410, 100, [
         "使えるもの",
-        "connect / ssh / tunnel / backup / restore /",
+        "shell / ssh / tunnel / backup / restore /",
         "edit / update (OS のみ) / start / stop / delete",
-        "open は使えません (案内が出ます)",
+        "code は使えません (案内が出ます)",
     ], "note", font_size=14)
     return s
 
