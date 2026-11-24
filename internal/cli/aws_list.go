@@ -30,7 +30,7 @@ func newAWSListCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&showNAT, "show-nat", false,
-		"include the shared NAT instance (TYPE=NAT, running/stopped) and the NAT gateway (TYPE=NATGW) "+
+		"Include the shared NAT instance (TYPE=NAT, running/stopped) and the NAT gateway (TYPE=NATGW) "+
 			"with the egress IP address")
 	return cmd
 }
