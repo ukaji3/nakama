@@ -56,7 +56,6 @@ KNOWN_COMMANDS = {
     "nakama aws cli",
     "nakama aws cloudfront",
     "nakama aws profile",
-    "nakama aws setup",
     "nakama aws ssh",
     "nakama aws login",
     "nakama aws profile save",
@@ -72,15 +71,13 @@ KNOWN_COMMANDS = {
     "nakama aws create",
     "nakama aws list",
     "nakama aws info",
-    "nakama aws open",
+    "nakama aws code",
     "nakama aws kirocrew",
-    "nakama aws kirocrew enable",
-    "nakama aws kirocrew disable",
     "nakama aws cloudfront add",
     "nakama aws cloudfront delete",
     "nakama aws start",
     "nakama aws stop",
-    "nakama aws connect",
+    "nakama aws shell",
     "nakama aws ssh setup",
     "nakama aws ssh proxy",
     "nakama aws tunnel",
@@ -98,7 +95,7 @@ KNOWN_COMMANDS = {
     "nakama aws restore",
     "nakama aws delete",
     "nakama aws doctor",
-    "nakama aws setup rerun",
+    "nakama aws provision",
     "nakama aws cli shell",
 }
 
@@ -106,11 +103,11 @@ KNOWN_COMMANDS = {
 KNOWN_FLAGS = {
     "nakama": {"--help", "--output", "-o", "--verbose", "-v"},
     "nakama version": {"--check"},
-    "nakama aws login": {"--remote", "--name"},
-    "nakama aws profile save": {"--name"},
+    "nakama aws login": {"--remote", "--alias"},
+    "nakama aws profile save": {"--alias"},
     "nakama aws init": {"--nat", "--yes", "-y"},
     "nakama aws create": {
-        "--name", "--instance-type", "--bare", "--preset", "--setup", "--dotfiles",
+        "--instance-type", "--bare", "--preset", "--setup", "--dotfiles",
         "--code-server-version", "--with-admin", "--with-role", "--show-password",
         "--no-kiro", "--cloudfront",
     },
@@ -118,9 +115,9 @@ KNOWN_FLAGS = {
     "nakama aws acl prune": {"--older-than", "--yes", "-y"},
     "nakama aws list": {"--show-nat"},
     "nakama aws info": {"--show-password"},
-    "nakama aws open": {"--no-auth", "--print-url", "--browser", "--timeout", "--internet", "--local-port"},
+    "nakama aws code": {"--no-auth", "--print-url", "--browser", "--timeout", "--internet", "--local-port"},
     "nakama aws kirocrew": {"--no-auth", "--print-url", "--browser", "--timeout", "--internet", "--local-port"},
-    "nakama aws connect": {"--tty", "--retry"},
+    "nakama aws shell": {"--tty", "-t", "--retry"},
     "nakama aws ssh setup": {"--identity", "--no-key", "--port"},
     "nakama aws ssh proxy": {"--port"},
     "nakama aws tunnel": {"-L", "--forward"},
@@ -129,17 +126,18 @@ KNOWN_FLAGS = {
     "nakama aws update": {"--keep", "--yes", "-y"},
     "nakama aws backup create": {"--label", "--note", "--keep"},
     "nakama aws backup note": {"--label", "--note"},
-    "nakama aws backup delete": {"--label"},
+    "nakama aws backup delete": {"--label", "--yes", "-y"},
     "nakama aws restore": {"--label", "--yes", "-y", "--instance-type", "--bare", "--with-admin", "--with-role", "--cloudfront"},
-    "nakama aws cloudfront delete": {"--yes", "-y"},
+    "nakama aws cloudfront add": {"--kirocrew"},
+    "nakama aws cloudfront delete": {"--kirocrew", "--yes", "-y"},
     "nakama aws delete": {"--force", "--yes", "-y"},
-    "nakama aws setup rerun": {"--setup", "--dotfiles", "--preset"},
+    "nakama aws provision": {"--setup", "--dotfiles", "--preset"},
     "nakama aws cli shell": {"--shell"},
 }
 
 # 値を取るフラグ (次のトークンはその値なので、フラグ名として検査しない)
 VALUE_FLAGS = {
-    "--name", "--instance-type", "--preset", "--setup", "--dotfiles",
+    "--alias", "--instance-type", "--preset", "--setup", "--dotfiles",
     "--code-server-version", "--with-role", "--label", "--note", "--keep",
     "--ebs", "--retry", "--identity", "--port", "--timeout", "--browser",
     "--shell", "--output", "-o", "-L", "--forward", "--older-than", "--nat",
@@ -148,7 +146,7 @@ VALUE_FLAGS = {
 
 # 名前の後ろに任意の外部コマンドを取るコマンド (それ以降は nakama の
 # フラグではないので検査を打ち切る)
-PASSTHROUGH_COMMANDS = {"nakama aws connect"}
+PASSTHROUGH_COMMANDS = {"nakama aws shell"}
 
 problems: list[str] = []
 

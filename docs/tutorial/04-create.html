@@ -50,21 +50,21 @@
 
 <h2 id="basic">1. まず 1 台作ってみる</h2>
 <p class="cmd-caption">PowerShell で実行</p>
-<pre><code>nakama aws create --name dev01 --instance-type t3.medium</code></pre>
+<pre><code>nakama aws create dev01 --instance-type t3.medium</code></pre>
 
 <p>完了すると、次のような情報が表示されます。</p>
 <pre class="output"><code>instance created
   name              : dev01
   instance_id       : i-0123456789abcdef0
   cloudfront        : none (add it with `nakama aws cloudfront add dev01`)
-  open              : nakama aws open dev01  (over SSM)
+  open              : nakama aws code dev01  (over SSM)
   password          : (use `nakama aws info dev01 --show-password`)</code></pre>
 
 <div class="callout note" role="note">
   <span class="title">コマンドはすぐに終わり、code-server の準備に数分かかります</span>
-  <p><code>create</code> は、サーバーが起動した時点で終わります。code-server などの導入は、そのあとサーバーの中で数分かけて進みます。すぐに <code>nakama aws open dev01</code> を実行して開けなければ、少し待ってからもう一度実行してください。</p>
+  <p><code>create</code> は、サーバーが起動した時点で終わります。code-server などの導入は、そのあとサーバーの中で数分かけて進みます。すぐに <code>nakama aws code dev01</code> を実行して開けなければ、少し待ってからもう一度実行してください。</p>
   <p><strong>コマンドの実行中は PowerShell のウィンドウを閉じたり <kbd>Ctrl</kbd>+<kbd>C</kbd> を押したりしないでください。</strong>途中で止めてしまった場合は <code>nakama aws list</code> で状態を確認し、中途半端な環境が残っていれば <code>nakama aws delete &lt;名前&gt; --force</code> で片付けてから作り直します。</p>
-  <p>開発環境には、インターネットから届く入口がありません。ブラウザは SSM という AWS の仕組みを通ってつながります (<a href="05-use.html#open">第 5 章</a>)。インターネット経由の入口が要るときは、<a href="#cloudfront">CloudFront を足します</a>。</p>
+  <p>開発環境には、インターネットから届く入口がありません。ブラウザは SSM という AWS の仕組みを通ってつながります (<a href="05-use.html#code">第 5 章</a>)。インターネット経由の入口が要るときは、<a href="#cloudfront">CloudFront を足します</a>。</p>
 </div>
 
 <p>作れたかどうかは <code>list</code> で確認できます。</p>
@@ -81,19 +81,19 @@ state             : running
 instance_type     : t3.medium
 eni_id            : eni-0123456789abcdef0
 security_group_id : sg-0123456789abcdef0
-cloudfront        : none (open over SSM with `nakama aws open dev01`; add CloudFront with `nakama aws cloudfront add dev01`)
+cloudfront        : none (open over SSM with `nakama aws code dev01`; add CloudFront with `nakama aws cloudfront add dev01`)
 code_server_ver   : 4.104.2
 password          : (use --show-password to reveal)</code></pre>
 
 <p>使い始める準備はこれで完了です。開き方は<a href="05-use.html">第 5 章</a>で説明します。</p>
 
 <h2 id="name">2. 名前のルール</h2>
-<p><code>--name</code> に使えるのは次の形式です。</p>
+<p><code>nakama aws create</code> の後ろに書く名前に使えるのは、次の形式です。</p>
 <ul>
   <li>小文字の英数字とハイフン (<code>-</code>) のみ。<strong>大文字・記号・日本語は使えません</strong></li>
   <li>先頭と末尾は英数字 (ハイフンで始めたり終わったりできません)</li>
   <li>長さは 2〜32 文字</li>
-  <li>次の 5 つは<strong>予約語</strong>で使えません: <code>start</code> / <code>stop</code> / <code>status</code> / <code>restart</code> / <code>suggest</code> (<code>nakama aws tunnel</code> のサブコマンド名と区別できなくなるため)</li>
+  <li>次の 7 つは<strong>予約語</strong>で使えません: <code>start</code> / <code>stop</code> / <code>status</code> / <code>restart</code> / <code>suggest</code> (<code>nakama aws tunnel</code> のサブコマンド名と区別できなくなるため)、<code>enable</code> / <code>disable</code> (以前の <code>nakama aws kirocrew</code> のサブコマンド名で、v0.30.x の間は残るため)</li>
 </ul>
 <div class="callout tip" role="note">
   <span class="title">名前の付け方の例</span>
@@ -121,22 +121,22 @@ password          : (use --show-password to reveal)</code></pre>
 <h2 id="password">4. パスワードの扱い</h2>
 <p>ブラウザから開くときのログインパスワードは、作成時に自動生成され、AWS の SSM Parameter Store (AWS 側の設定・秘密情報の保管庫) に暗号化されて保管されます。<strong>あなたのパソコンには保存されません。</strong></p>
 <pre><code>nakama aws info dev01 --show-password     # 必要なときだけ表示する
-nakama aws create --name dev02 --instance-type t3.medium --show-password   # 作成時に表示する</code></pre>
+nakama aws create dev02 --instance-type t3.medium --show-password   # 作成時に表示する</code></pre>
 <div class="callout tip" role="note">
   <span class="title">ふだんはパスワードを見なくて済みます</span>
-  <p><code>nakama aws open</code> はパスワードの自動入力までやってくれます (<a href="05-use.html#open">第 5 章「ブラウザで開く」</a>)。パスワードを手で入れる必要があるのは、別の端末のブラウザから開くときなどです。</p>
+  <p><code>nakama aws code</code> はパスワードの自動入力までやってくれます (<a href="05-use.html#code">第 5 章「ブラウザで開く」</a>)。パスワードを手で入れる必要があるのは、別の端末のブラウザから開くときなどです。</p>
 </div>
 
 <h2 id="cloudfront">5. インターネットからの入口を足す (CloudFront)</h2>
 <p>ふつうは要りません。SSM が使えないネットワーク (WebSocket を遮断する会社のプロキシの下など) から開きたいときや、別の端末のブラウザから URL で開きたいときに、正面玄関 (CloudFront) を足します。正面玄関は、許可した IP アドレスからのアクセスだけを通します (<a href="03-init.html#acl">第 3 章</a>)。</p>
 <p class="cmd-caption">PowerShell で実行</p>
 <pre><code>nakama aws cloudfront add dev01           # 作った後から足す (環境が起動している必要があります)
-nakama aws create --name dev02 --instance-type t3.medium --cloudfront   # 作るときに一緒に作る</code></pre>
+nakama aws create dev02 --instance-type t3.medium --cloudfront   # 作るときに一緒に作る</code></pre>
 <pre class="output"><code>CloudFront added
   name : dev01
   url  : https://d111111abcdef8.cloudfront.net
 
-Open it with: nakama aws open --internet dev01</code></pre>
+Open it with: nakama aws code --internet dev01</code></pre>
 <div class="callout note" role="note">
   <span class="title">5〜20 分ほどかかります</span>
   <p>CloudFront の設定が世界中に反映されるのを待ちます (<code>cloudfront add</code> は実測で約 5 分、<code>create --cloudfront</code> は全体で 15〜20 分ほど)。途中で止めても、同じコマンドをもう一度実行すれば続きから進みます。CloudFront とその門番 (WAF) の分の料金もかかります (<a href="03-init.html#cost">第 3 章</a>)。</p>
@@ -153,21 +153,21 @@ Open it with: nakama aws open --internet dev01</code></pre>
 <p>デスクトップ版の VS Code や JetBrains、あるいはターミナルだけで作業するなら、ブラウザ版 VS Code (code-server) は不要です。<code>--bare</code> を付けると、code-server とパスワードを作らずに<strong>サーバー本体だけ</strong>を用意します。</p>
 
 <p class="cmd-caption">PowerShell で実行</p>
-<pre><code>nakama aws create --name box01 --instance-type t3.medium --bare</code></pre>
+<pre><code>nakama aws create box01 --instance-type t3.medium --bare</code></pre>
 <pre class="output"><code>instance created
   name              : box01
   instance_id       : i-0123456789abcdef0
   kind              : bare (no code-server / CloudFront)
-  access            : nakama aws ssh setup box01  |  nakama aws connect box01</code></pre>
+  access            : nakama aws ssh setup box01  |  nakama aws shell box01</code></pre>
 
 <figure>
-  <img width="900" height="400" src="img/bare-vs-full.svg" alt="通常の create は EC2 インスタンス、code-server、ログイン用パスワードを作り、数分で使えるようになる。CloudFront は --cloudfront のときだけ作り、そのときは約15分かかる。--bare は EC2 インスタンスと SSM 経由の接続のみを作る。bare では open が使えない。">
+  <img width="900" height="400" src="img/bare-vs-full.svg" alt="通常の create は EC2 インスタンス、code-server、ログイン用パスワードを作り、数分で使えるようになる。CloudFront は --cloudfront のときだけ作り、そのときは約15分かかる。--bare は EC2 インスタンスと SSM 経由の接続のみを作る。bare では code が使えない。">
   <figcaption><strong>図 4-1: 通常の <code>create</code> と <code>--bare</code> の違い。</strong> <code>--bare</code> は code-server を入れないので、ブラウザからは開けません。CloudFront はどちらも作りません (通常の方は <code>--cloudfront</code> で作れます)。</figcaption>
 </figure>
 
 <div class="callout note" role="note">
   <span class="title">--bare で作った環境の使い方</span>
-  <p><code>connect</code> (ターミナル) / <code>ssh</code> (手元のエディタ) / <code>tunnel</code> (ポート転送) が使えます。<code>list</code> では TYPE 列が <code>BARE</code> と表示されます。<code>open</code> を実行すると、代わりに <code>ssh setup</code> や <code>connect</code> を使うよう案内するエラーになります。</p>
+  <p><code>shell</code> (ターミナル) / <code>ssh</code> (手元のエディタ) / <code>tunnel</code> (ポート転送) が使えます。<code>list</code> では TYPE 列が <code>BARE</code> と表示されます。<code>code</code> を実行すると、代わりに <code>ssh setup</code> や <code>shell</code> を使うよう案内するエラーになります。</p>
   <p><code>--bare</code> と <code>--code-server-version</code> (この章の最後で説明する、ブラウザ版 VS Code のバージョンを固定するオプション) は同時に指定できません。code-server を入れないため、バージョン指定に意味がないからです。</p>
 </div>
 
@@ -175,8 +175,8 @@ Open it with: nakama aws open --internet dev01</code></pre>
 <p><code>create</code> で作った環境には、<strong>Kiro CLI と Kiro Crew、そして Crew の gateway サービス</strong>が自動で入ります。<code>--bare</code> でも同じです。追加の指定は要りません。</p>
 
 <p class="cmd-caption">PowerShell で実行</p>
-<pre><code>nakama aws create --name dev01 --instance-type t3.medium            # Kiro も入る
-nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れない</code></pre>
+<pre><code>nakama aws create dev01 --instance-type t3.medium            # Kiro も入る
+nakama aws create dev02 --instance-type t3.medium --no-kiro  # 入れない</code></pre>
 
 <p>入るものは次の 3 つです (すべて <code>ubuntu</code> ユーザーとして導入されます)。</p>
 <ol role="list">
@@ -190,8 +190,8 @@ nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れな�
 <div class="callout warn" role="note">
   <span class="title">初回だけ認証が必要です</span>
   <p>導入はされますが、<strong>サインインは自動化できません</strong>。最初に 1 回だけ、環境の中で次を実行してください。</p>
-  <pre><code>nakama aws connect --tty dev01 kiro-cli login --use-device-flow</code></pre>
-  <p>表示される確認コードとURLで承認します。<strong><code>--tty</code> を付けるのが大切です</strong>。付けないと、出力がコマンドの終了後まで表示されず、コードが見えないまま止まって見えます (その場合は Ctrl-C で中断し、<code>--tty</code> を付けて実行し直してください)。先に <code>nakama aws connect dev01</code> で環境に入ってから <code>kiro-cli login --use-device-flow</code> を実行しても構いません。</p>
+  <pre><code>nakama aws shell --tty dev01 kiro-cli login --use-device-flow</code></pre>
+  <p>表示される確認コードとURLで承認します。<strong><code>--tty</code> を付けるのが大切です</strong>。付けないと、出力がコマンドの終了後まで表示されず、コードが見えないまま止まって見えます (その場合は Ctrl-C で中断し、<code>--tty</code> を付けて実行し直してください)。先に <code>nakama aws shell dev01</code> で環境に入ってから <code>kiro-cli login --use-device-flow</code> を実行しても構いません。</p>
 </div>
 
 <div class="callout note" role="note">
@@ -203,7 +203,7 @@ nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れな�
 <div class="callout tip" role="note">
   <span class="title">失敗しても create は成功します</span>
   <p>ネットワークの都合などで Kiro の導入が失敗しても、<strong>環境自体は作成され、そのまま使えます</strong>。その場合は次で同じ手順をやり直せます。</p>
-  <pre><code>nakama aws setup rerun dev01 --preset kiro</code></pre>
+  <pre><code>nakama aws provision dev01 --preset kiro</code></pre>
   <p>導入のログは環境側の <code>/var/log/nakama-userdata.log</code> に残ります。</p>
 </div>
 
@@ -231,18 +231,18 @@ nakama aws create --name dev02 --instance-type t3.medium --no-kiro  # 入れな�
 </div>
 
 <p class="cmd-caption">PowerShell で実行</p>
-<pre><code>nakama aws create --name dev02 --instance-type t3.medium --preset kiro
-nakama aws create --name dev03 --instance-type t3.medium --setup .\setup.sh
-nakama aws create --name dev04 --instance-type t3.medium --dotfiles https://github.com/me/dotfiles.git</code></pre>
+<pre><code>nakama aws create dev02 --instance-type t3.medium --preset kiro
+nakama aws create dev03 --instance-type t3.medium --setup .\setup.sh
+nakama aws create dev04 --instance-type t3.medium --dotfiles https://github.com/me/dotfiles.git</code></pre>
 
-<p>あとから実行したい場合、あるいは失敗して再実行したい場合は <code>setup rerun</code> を使います。</p>
-<pre><code>nakama aws setup rerun dev01 --setup .\setup.sh
-nakama aws setup rerun dev01 --preset kiro</code></pre>
+<p>あとから実行したい場合、あるいは失敗して再実行したい場合は <code>provision</code> を使います。</p>
+<pre><code>nakama aws provision dev01 --setup .\setup.sh
+nakama aws provision dev01 --preset kiro</code></pre>
 
 <div class="callout warn" role="note">
   <span class="title">セットアップが失敗しても create は成功します</span>
-  <p>サーバー自体は作成できているため、セットアップの失敗で全体を巻き戻すことはしません。失敗した場合は警告と再実行コマンドが表示されます。実行ログはサーバー上の <code>/var/log/nakama-provision.log</code> に残るので、<code>nakama aws connect &lt;名前&gt;</code> で入って確認できます。</p>
-  <pre><code>nakama aws connect dev01 sudo tail -n 50 /var/log/nakama-provision.log</code></pre>
+  <p>サーバー自体は作成できているため、セットアップの失敗で全体を巻き戻すことはしません。失敗した場合は警告と再実行コマンドが表示されます。実行ログはサーバー上の <code>/var/log/nakama-provision.log</code> に残るので、<code>nakama aws shell &lt;名前&gt;</code> で入って確認できます。</p>
+  <pre><code>nakama aws shell dev01 sudo tail -n 50 /var/log/nakama-provision.log</code></pre>
 </div>
 
 <div class="callout warn" role="note">
@@ -261,8 +261,8 @@ nakama aws setup rerun dev01 --preset kiro</code></pre>
 
 <h2 id="iam">9. AWS を操作する権限を持たせる</h2>
 <p>開発環境の中から AWS を操作したい場合 (CDK や CloudFormation = コードで AWS のリソースを作る仕組みを使うなど)、サーバーに権限 (IAM ロール) を持たせられます。使う予定がなければ、この節は読み飛ばして構いません。</p>
-<pre><code>nakama aws create --name ops01 --instance-type t3.medium --with-admin
-nakama aws create --name app01 --instance-type t3.medium --with-role my-existing-role</code></pre>
+<pre><code>nakama aws create ops01 --instance-type t3.medium --with-admin
+nakama aws create app01 --instance-type t3.medium --with-role my-existing-role</code></pre>
 
 <div class="table-wrap">
 <table>
@@ -282,12 +282,12 @@ nakama aws create --name app01 --instance-type t3.medium --with-role my-existing
 
 <div class="callout warn" role="note">
   <span class="title">--with-role を使うときの注意</span>
-  <p>指定したロールに SSM の権限 (<code>AmazonSSMManagedInstanceCore</code>) が含まれていないと、<code>connect</code> / <code>ssh</code> / <code>tunnel</code> / <code>update</code> や初期パスワードの取得が動かない可能性があります。この場合、実行時に警告が表示されます。</p>
+  <p>指定したロールに SSM の権限 (<code>AmazonSSMManagedInstanceCore</code>) が含まれていないと、<code>shell</code> / <code>ssh</code> / <code>tunnel</code> / <code>update</code> や初期パスワードの取得が動かない可能性があります。この場合、実行時に警告が表示されます。</p>
 </div>
 
 <h2 id="version">10. code-server のバージョンを固定する</h2>
 <p>既定では最新版が入ります。特定のバージョンに固定したい場合は次のようにします。</p>
-<pre><code>nakama aws create --name dev05 --instance-type t3.medium --code-server-version 4.104.2</code></pre>
+<pre><code>nakama aws create dev05 --instance-type t3.medium --code-server-version 4.104.2</code></pre>
 
 <nav class="pager" aria-label="章の移動">
   <a href="03-init.html">← 前へ: 第 3 章 土台を用意する</a>

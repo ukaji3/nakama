@@ -26,7 +26,7 @@
   <text x="650" y="36" text-anchor="start" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="15" font-weight="600" fill="#111827">機能ごとの権限</text>
   <rect x="650" y="50" width="230" height="218" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2" />
   <text x="765" y="93" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: create</text>
-  <text x="765" y="113" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: connect</text>
+  <text x="765" y="113" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: shell</text>
   <text x="765" y="133" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: backup</text>
   <text x="765" y="153" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">capability: delete</text>
   <text x="765" y="173" text-anchor="middle" font-family="Segoe UI, Meiryo, Hiragino Kaku Gothic ProN, sans-serif" font-size="14" font-weight="400" fill="#111827">…など機能ごとに 1 行</text>

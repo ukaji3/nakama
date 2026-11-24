@@ -107,7 +107,7 @@
 <p>nakama はこのうち<strong>環境変数</strong>を使います。あなたの <code>~/.aws/config</code> を書き換えないためです。</p>
 
 <h2 id="nakama-itself">4. nakama 本体は設定不要</h2>
-<p>nakama 自身の通信 (AWS の操作、サインイン、<code>connect</code> など) は、<strong>設定なしで会社のネットワークを通ります</strong>。理由は 2 つあります。</p>
+<p>nakama 自身の通信 (AWS の操作、サインイン、<code>shell</code> など) は、<strong>設定なしで会社のネットワークを通ります</strong>。理由は 2 つあります。</p>
 <ul>
   <li><strong>プロキシを自動で見つけます。</strong> 環境変数 (<code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code> / <code>NO_PROXY</code>) があればそれを使い、無ければ Windows のプロキシ設定を自動で読みます (WinHTTP = Windows がプロキシ設定を保持している場所、PAC スクリプト = 接続先ごとにどのプロキシを使うかを決める、会社が配る小さなプログラム)</li>
   <li><strong>証明書は Windows の信頼リストで検証します。</strong> 会社の CA が配布されていれば、そのまま検証が通ります</li>
@@ -200,18 +200,18 @@ exit          # 元のシェルに戻る</code></pre>
 </div>
 
 <h2 id="websocket">7. WebSocket が遮断されている場合</h2>
-<p>nakama の <code>connect</code> / <code>ssh</code> / <code>tunnel</code> は、内部で WebSocket という通信方式を使います (AWS の SSM Session Manager がそれを使うため)。監査型プロキシがこれを遮断している環境では、これらのコマンドが使えません。</p>
+<p>nakama の <code>shell</code> / <code>ssh</code> / <code>tunnel</code> は、内部で WebSocket という通信方式を使います (AWS の SSM Session Manager がそれを使うため)。監査型プロキシがこれを遮断している環境では、これらのコマンドが使えません。</p>
 <ul>
-  <li>症状: サインインや <code>list</code> は動くのに、<code>connect</code> だけがつながらない</li>
+  <li>症状: サインインや <code>list</code> は動くのに、<code>shell</code> だけがつながらない</li>
   <li>対処: プロキシの管理者に「AWS の Session Manager が使う WebSocket 通信を許可してほしい」と依頼してください</li>
-  <li>切り分け: サインインや <code>list</code> は動くのに <code>connect</code> だけが失敗する場合、権限ではなく通信方式の遮断が疑われます (<code>nakama aws doctor</code> の <code>capability: connect</code> が <code>ok</code> なら権限は足りています)</li>
+  <li>切り分け: サインインや <code>list</code> は動くのに <code>shell</code> だけが失敗する場合、権限ではなく通信方式の遮断が疑われます (<code>nakama aws doctor</code> の <code>capability: shell</code> が <code>ok</code> なら権限は足りています)</li>
 </ul>
 
 <h2 id="disconnect">8. 切断が多いときの設定</h2>
-<p>使っていない通信を積極的に切るプロキシの配下では、<code>connect</code> や <code>tunnel</code> が頻繁に切れることがあります。その場合、通信を維持するための信号 (keepalive) の間隔を短くできます。</p>
+<p>使っていない通信を積極的に切るプロキシの配下では、<code>shell</code> や <code>tunnel</code> が頻繁に切れることがあります。その場合、通信を維持するための信号 (keepalive) の間隔を短くできます。</p>
 <p class="cmd-caption">PowerShell で実行 (このウィンドウの中だけで有効)</p>
 <pre><code>$env:SSM_PLUGIN_PING_INTERVAL_SECONDS = "30"
-nakama aws connect dev01</code></pre>
+nakama aws shell dev01</code></pre>
 <p>単位は秒で、既定は 300 (5 分) です。短くしすぎると通信量が増えるため、30〜60 程度から試してください。</p>
 
 <div class="callout tip" role="note">

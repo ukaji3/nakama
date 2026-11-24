@@ -86,7 +86,7 @@ nakama aws backup create dev01 --keep 5                         # 古い世代�
 nakama aws backup list dev01                                    # 一覧
 nakama aws backup list                                           # 全環境の一覧 (NAME 列付き)
 nakama aws backup note dev01 --label before-upgrade --note "動作確認済み"
-nakama aws backup delete dev01 --label before-upgrade</code></pre>
+nakama aws backup delete dev01 --label before-upgrade           # 消すものを表示して確かめる (--yes で省略)</code></pre>
 
 <pre class="output"><code>LABEL                 CREATED_AT            STATE       GiB    NOTE
 before-upgrade        2026-09-12T22:10:33Z  completed   30     アップグレード前
@@ -112,7 +112,7 @@ nakama aws restore dev01 --label before-upgrade  # 世代を指定して戻す</
 
 <div class="callout warn" role="note">
   <span class="title">復元が終わると環境は停止した状態になります</span>
-  <p>復元は環境を止めてディスクを入れ替えるため、完了後は<strong>停止状態のまま</strong>です。使うときは <code>nakama aws start dev01</code> で起動してください。復元中は数分かかり、その間 <code>connect</code> や <code>tunnel</code> の接続は切れます。</p>
+  <p>復元は環境を止めてディスクを入れ替えるため、完了後は<strong>停止状態のまま</strong>です。使うときは <code>nakama aws start dev01</code> で起動してください。復元中は数分かかり、その間 <code>shell</code> や <code>tunnel</code> の接続は切れます。</p>
 </div>
 
 <h3 id="restore-deleted">削除した環境を復元する</h3>
@@ -129,11 +129,11 @@ nakama aws restore dev01 --label before-upgrade  # 世代を指定して作り�
 The disk is the backup's; nothing is reinstalled. The code-server password is new.
 The instance is left stopped.
 [y/N]:</code></pre>
-<p>CloudFront を作らないので、CloudFront の反映を待つ時間はかかりません (ディスクの入れ替えの待ちはあります)。終わったら <code>nakama aws start dev01</code> で起動し、<code>nakama aws open dev01</code> で開いてください。</p>
+<p>CloudFront を作らないので、CloudFront の反映を待つ時間はかかりません (ディスクの入れ替えの待ちはあります)。終わったら <code>nakama aws start dev01</code> で起動し、<code>nakama aws code dev01</code> で開いてください。</p>
 <ul>
   <li><strong>そのまま戻るもの</strong>: ディスクの中身 (コード、設定、入れたソフトウェア)。ソフトウェアは入れ直さないので、バックアップを取ったときの版のままです。最新にするには <code>nakama aws update dev01</code> を使います。<code>ssh</code> の接続先の鍵 (ホスト鍵) も同じなので、<code>nakama aws ssh setup</code> で作った設定はそのまま使えます。</li>
-  <li><strong>新しくなるもの</strong>: code-server のパスワード。<code>open</code> はパスワードを自動で入れるので、いつもどおり開けます。</li>
-  <li><strong>CloudFront</strong>: 作り直しでは作りません。元の環境に CloudFront があったときは、そのことを警告で知らせます。要るなら <code>nakama aws restore dev01 --cloudfront</code> のように指定するか、あとで <code>nakama aws cloudfront add dev01</code> を実行します (URL は新しくなるので、ブックマークは作り直してください。<code>--cloudfront</code> を付けると作り直しに 15〜20 分ほどかかります)。Kiro Crew の画面を <code>--internet</code> で使っていた場合は、そのあと <code>nakama aws kirocrew enable dev01</code> も実行します。</li>
+  <li><strong>新しくなるもの</strong>: code-server のパスワード。<code>code</code> はパスワードを自動で入れるので、いつもどおり開けます。</li>
+  <li><strong>CloudFront</strong>: 作り直しでは作りません。元の環境に CloudFront があったときは、そのことを警告で知らせます。要るなら <code>nakama aws restore dev01 --cloudfront</code> のように指定するか、あとで <code>nakama aws cloudfront add dev01</code> を実行します (URL は新しくなるので、ブックマークは作り直してください。<code>--cloudfront</code> を付けると作り直しに 15〜20 分ほどかかります)。Kiro Crew の画面を <code>--internet</code> で使っていた場合は、そのあと <code>nakama aws cloudfront add dev01 --kirocrew</code> も実行します。</li>
   <li><strong>大きさと種類</strong>: バックアップを取ったときのインスタンスタイプと種類 (<code>--bare</code> かどうか) で作ります。<code>--instance-type</code> で別のタイプにもできますが、<code>t3</code> (Intel/AMD) と <code>t4g</code> (ARM) のように CPU の種類が違うタイプにはできません。</li>
 </ul>
 
@@ -168,7 +168,7 @@ nakama aws update dev01 --keep 5 --yes    # 自動バックアップを 5 世代
 
 <div class="callout warn" role="note">
   <span class="title">Kiro Crew は再起動します</span>
-  <p>更新の最後に Kiro Crew を再起動するので、動いているセッションは切れます。Kiro Crew の更新に失敗しても、ほかの更新は終わっているので <code>update</code> は成功として終わり、警告を表示します。そのときは <code>nakama aws connect dev01</code> で入り、<code>kirocrew update</code> を実行して原因を確かめてください。</p>
+  <p>更新の最後に Kiro Crew を再起動するので、動いているセッションは切れます。Kiro Crew の更新に失敗しても、ほかの更新は終わっているので <code>update</code> は成功として終わり、警告を表示します。そのときは <code>nakama aws shell dev01</code> で入り、<code>kirocrew update</code> を実行して原因を確かめてください。</p>
 </div>
 
 <div class="callout note" role="note">
@@ -210,8 +210,8 @@ nakama aws edit dev01 --instance-type t3.medium --yes    # 確認を省略</code
 <div class="callout danger" role="note">
   <span class="title">中身はディスクごと消えます</span>
   <p><code>delete</code> はディスクも削除するため、<strong>その環境に置いていたコードやデータは失われます</strong>。戻せるのは、<code>backup create</code> で取ったバックアップの時点までです (<a href="#restore-deleted">削除した環境を復元する</a>)。それ以降に書いた内容は戻りません。</p>
-  <p>必要なものは、削除の前に <code>nakama aws backup create</code> を取るか、git へ push するか、<code>nakama aws connect</code> や <code>scp</code> で手元にコピーしてください。</p>
-  <p><code>backup</code> のスナップショットは環境の削除後も残り、<strong>保管料がかかり続けます</strong>。不要なら <code>nakama aws backup delete &lt;名前&gt; --label &lt;ラベル&gt;</code> で消してください。</p>
+  <p>必要なものは、削除の前に <code>nakama aws backup create</code> を取るか、git へ push するか、<code>nakama aws shell</code> や <code>scp</code> で手元にコピーしてください。</p>
+  <p><code>backup</code> のスナップショットは環境の削除後も残り、<strong>保管料がかかり続けます</strong>。不要なら <code>nakama aws backup delete &lt;名前&gt; --label &lt;ラベル&gt;</code> で消してください (消すものを表示して確かめます。スクリプトから消すときは <code>--yes</code> を付けます)。</p>
 </div>
 
 <div class="table-wrap">

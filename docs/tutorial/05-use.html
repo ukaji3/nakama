@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>第 5 章 開発環境を使う — nakama チュートリアル</title>
-<meta name="description" content="ブラウザ (open)、ターミナル (connect)、手元の VS Code (ssh)、ポート転送 (tunnel) の 4 つのアクセス方法の使い分けと、Kiro Crew の画面を開く方法 (kirocrew)。">
+<meta name="description" content="ブラウザ (code)、ターミナル (shell)、手元の VS Code (ssh)、ポート転送 (tunnel) の 4 つのアクセス方法の使い分けと、Kiro Crew の画面を開く方法 (kirocrew)。">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -32,8 +32,8 @@
   <p class="toc-label" style="margin-top:1.2rem">この章の内容</p>
   <ol>
     <li><a href="#choose">4 つの方法の使い分け</a></li>
-    <li><a href="#open">ブラウザで開く (open)</a></li>
-    <li><a href="#connect">ターミナルに入る (connect)</a></li>
+    <li><a href="#code">ブラウザで開く (code)</a></li>
+    <li><a href="#shell">ターミナルに入る (shell)</a></li>
     <li><a href="#ssh">手元の VS Code から使う (ssh)</a></li>
     <li><a href="#tunnel">ポートを手元に持ってくる (tunnel)</a></li>
     <li><a href="#kirocrew">Kiro Crew の画面を開く (kirocrew)</a></li>
@@ -42,24 +42,24 @@
 
 <main id="main">
 <h1>第 5 章 開発環境を使う</h1>
-<p class="lead">作った環境には 4 つの入り方があります。全部覚える必要はありません。まずは <code>open</code> と <code>connect</code> の 2 つを知っておけば十分です。</p>
+<p class="lead">作った環境には 4 つの入り方があります。全部覚える必要はありません。まずは <code>code</code> と <code>shell</code> の 2 つを知っておけば十分です。</p>
 
 <h2 id="choose">1. 4 つの方法の使い分け</h2>
 <figure>
-  <img width="920" height="420" src="img/access-paths.svg" alt="open はブラウザで VS Code を開き、既定は SSM 経由で、CloudFront を足した環境では --internet を付けると CloudFront 経由。connect はターミナルに入り SSM 経由。ssh は手元の VS Code や scp、git を使うために SSM 経由。tunnel はポートを手元に持ってきて SSM 経由。">
-  <figcaption><strong>図 5-1: 4 つのアクセス方法。</strong> どれも既定は SSM 経由なので、IP の許可は不要です。CloudFront を足した環境 (<a href="04-create.html#cloudfront">第 4 章</a>) で、<code>open</code> (と <code>kirocrew</code>) に <code>--internet</code> を付けたときだけ、インターネット (CloudFront) 経由になり、IP の許可が要ります。</figcaption>
+  <img width="920" height="420" src="img/access-paths.svg" alt="code はブラウザで VS Code を開き、既定は SSM 経由で、CloudFront を足した環境では --internet を付けると CloudFront 経由。shell はターミナルに入り SSM 経由。ssh は手元の VS Code や scp、git を使うために SSM 経由。tunnel はポートを手元に持ってきて SSM 経由。">
+  <figcaption><strong>図 5-1: 4 つのアクセス方法。</strong> どれも既定は SSM 経由なので、IP の許可は不要です。CloudFront を足した環境 (<a href="04-create.html#cloudfront">第 4 章</a>) で、<code>code</code> (と <code>kirocrew</code>) に <code>--internet</code> を付けたときだけ、インターネット (CloudFront) 経由になり、IP の許可が要ります。</figcaption>
 </figure>
 
-<h2 id="open">2. ブラウザで開く (open)</h2>
+<h2 id="code">2. ブラウザで開く (code)</h2>
 <p class="cmd-caption">PowerShell で実行</p>
-<pre><code>nakama aws open dev01</code></pre>
+<pre><code>nakama aws code dev01</code></pre>
 <p>ブラウザが開き、パスワードの入力も自動で通過して、VS Code の画面が表示されます。あとは普段の VS Code と同じように使えます。</p>
 <p>ブラウザのアドレスは <code>http://code-server.dev01.nakama.localhost:18888</code> です。nakama が手元のパソコンに入口を用意し、そこから SSM (AWS の権限で守られた通り道) を通って開発環境の code-server につなぎます。開発環境にはインターネットからの入口が無く、IP の許可も要りません。</p>
 <p>アドレスには開発環境の名前が入るので、いくつ開いても番号を選んだり覚えたりする必要はありません。手元の入口 (ポート 18888) は 1 つで、nakama がアドレスの名前を見て行き先を選びます。ログインの状態も、開発環境ごとに分かれて残ります。</p>
 
 <div class="callout tip" role="note">
   <span class="title">つなぎっぱなしで構いません</span>
-  <p>入口は nakama の常駐プログラム (<code>tunnel</code> と同じもの、<a href="#tunnel">5 節</a>) が持っていて、<code>open</code> の後も動き続けます。ネットワークが切れたとき、Wi-Fi を切り替えたとき、パソコンがスリープから戻ったときも、<strong>自動でつなぎ直します</strong>。VS Code の画面には再接続中である旨が表示され、つながれば作業の続きに戻れます。</p>
+  <p>入口は nakama の常駐プログラム (<code>tunnel</code> と同じもの、<a href="#tunnel">5 節</a>) が持っていて、<code>code</code> の後も動き続けます。ネットワークが切れたとき、Wi-Fi を切り替えたとき、パソコンがスリープから戻ったときも、<strong>自動でつなぎ直します</strong>。VS Code の画面には再接続中である旨が表示され、つながれば作業の続きに戻れます。</p>
   <p>状態は <code>nakama aws tunnel status dev01</code> で、止めるときは <code>nakama aws tunnel stop dev01</code> で。5 分使わなかった入口は、次にブラウザがつなぐまで SSM のセッションを張らずに待ちます (状態 <code>idle</code>)。</p>
 </div>
 
@@ -67,13 +67,13 @@
   <span class="title">ポート 18888 がふさがっているとき</span>
   <p>手元で別のプログラムが 18888 番を使っているとエラーになります。環境変数 <code>NAKAMA_ROUTER_PORT</code> で別の番号を指定してください (アドレスの番号もその番号になります)。</p>
   <pre><code>$env:NAKAMA_ROUTER_PORT = "18889"
-nakama aws open dev01</code></pre>
+nakama aws code dev01</code></pre>
 </div>
 
 <div class="callout note" role="note">
   <span class="title"><code>*.nakama.localhost</code> を開けないとき</span>
   <p>このアドレスは、Chrome・Edge・Firefox と、macOS 26 以降の Safari で開けます。それより前の macOS の Safari などで開けないときは、<code>--local-port</code> で番号を指定すると、<code>http://localhost:&lt;番号&gt;</code> で開きます。</p>
-  <pre><code>nakama aws open --local-port 18080 dev01</code></pre>
+  <pre><code>nakama aws code --local-port 18080 dev01</code></pre>
 </div>
 
 <div class="callout note" role="note">
@@ -109,7 +109,7 @@ nakama aws open dev01</code></pre>
 
 <div class="callout note" role="note">
   <span class="title">--bare で作った環境では使えません</span>
-  <p><code>--bare</code> の環境には code-server も CloudFront もないため、<code>open</code> は使えず、代わりの方法を案内するエラーになります。</p>
+  <p><code>--bare</code> の環境には code-server も CloudFront もないため、<code>code</code> は使えず、代わりの方法を案内するエラーになります。</p>
 </div>
 
 <div class="callout note" role="note">
@@ -117,19 +117,19 @@ nakama aws open dev01</code></pre>
   <p>code-server の拡張機能は、<a href="https://open-vsx.org/">Open VSX</a> というストアから入ります。Microsoft の Marketplace は、利用規約で Microsoft 製品専用とされているため使えません。目的の拡張機能が見つからない場合は、Open VSX で名前を検索してみてください。デスクトップ版の VS Code から使う場合 (<a href="#ssh">4 節</a>) は、Marketplace の拡張機能も使えます。</p>
 </div>
 
-<h2 id="connect">3. ターミナルに入る (connect)</h2>
-<p>ログを見たい、コマンドを叩きたい、というときは <code>connect</code> です。SSH の鍵や設定は不要で、AWS の権限だけで入れます。</p>
+<h2 id="shell">3. ターミナルに入る (shell)</h2>
+<p>ログを見たい、コマンドを叩きたい、というときは <code>shell</code> です。SSH の鍵や設定は不要で、AWS の権限だけで入れます。</p>
 
 <p class="cmd-caption">PowerShell で実行</p>
-<pre><code>nakama aws connect dev01                  # 対話シェルに入る (exit で抜ける)
-nakama aws connect dev01 ls -la           # コマンドを 1 つだけ実行する
-nakama aws connect --tty dev01 top        # 画面が動くコマンドを実行する (フラグは名前より前)</code></pre>
+<pre><code>nakama aws shell dev01                  # 対話シェルに入る (exit で抜ける)
+nakama aws shell dev01 ls -la           # コマンドを 1 つだけ実行する
+nakama aws shell --tty dev01 top        # 画面が動くコマンドを実行する (フラグは名前より前)</code></pre>
 
 <div class="callout note" role="note">
   <span class="title">コマンド実行の結果はスクリプトから判定できます</span>
-  <p><code>connect dev01 &lt;コマンド&gt;</code> は ssh と同じように、<strong>環境側のコマンドの終了コードで終わります</strong>。エラー出力は手元のエラー出力 (stderr) に出ます。たとえば PowerShell では <code>nakama aws connect dev01 test -d /srv/app; $LASTEXITCODE</code> で、ディレクトリがあれば 0、無ければ 1 が表示されます。nakama 自身がうまく動かなかったときは 255 です。</p>
+  <p><code>shell dev01 &lt;コマンド&gt;</code> は ssh と同じように、<strong>環境側のコマンドの終了コードで終わります</strong>。エラー出力は手元のエラー出力 (stderr) に出ます。たとえば PowerShell では <code>nakama aws shell dev01 test -d /srv/app; $LASTEXITCODE</code> で、ディレクトリがあれば 0、無ければ 1 が表示されます。nakama 自身がうまく動かなかったときは 255 です。</p>
   <p>結果はコマンドが終わってからまとめて表示されます。途中経過を見たいときは <code>--tty</code> を付けてください (その代わり、終了コードは受け取れません)。</p>
-  <p>コマンドに手元のデータを渡すこと (<code>| nakama aws connect ...</code>) はできません。ファイルを送るときは、次の節の <code>ssh</code> / <code>scp</code> を使います。一方、対話シェルにはファイルの内容を流し込めます (<code>nakama aws connect dev01 &lt; steps.sh</code>。PowerShell では <code>Get-Content steps.sh | nakama aws connect dev01</code>)。ただし Windows では、この流し込みはコンソールでしか使えません。</p>
+  <p>コマンドに手元のデータを渡すこと (<code>| nakama aws shell ...</code>) はできません。ファイルを送るときは、次の節の <code>ssh</code> / <code>scp</code> を使います。一方、対話シェルにはファイルの内容を流し込めます (<code>nakama aws shell dev01 &lt; steps.sh</code>。PowerShell では <code>Get-Content steps.sh | nakama aws shell dev01</code>)。ただし Windows では、この流し込みはコンソールでしか使えません。</p>
 </div>
 
 <div class="callout note" role="note">
@@ -216,7 +216,7 @@ Then: ssh nakama-dev01   |   VS Code: Remote-SSH -> nakama-dev01</code></pre>
 
 <div class="callout warn" role="note">
   <span class="title">ssh の切断は ssh 側の設定に従います</span>
-  <p><code>connect</code> や <code>tunnel</code> のような nakama の自動再接続は、<code>ssh</code> 経由では働きません。切断が気になる場合は、<code>~/.ssh/config</code> に <code>ServerAliveInterval 30</code> のような設定を自分で足してください。</p>
+  <p><code>shell</code> や <code>tunnel</code> のような nakama の自動再接続は、<code>ssh</code> 経由では働きません。切断が気になる場合は、<code>~/.ssh/config</code> に <code>ServerAliveInterval 30</code> のような設定を自分で足してください。</p>
 </div>
 
 <h2 id="tunnel">5. ポートを手元に持ってくる (tunnel)</h2>
@@ -229,7 +229,7 @@ FORWARD                   STATE         SINCE       DETAIL
 3000:3000                 active        0s</code></pre>
 <p><code>pid</code> は裏で動いている常駐プログラムの番号です (覚える必要はありません)。</p>
 
-<p>このコマンドは<strong>すぐに終了します</strong>。転送は裏で常駐するプログラムが維持するので、ターミナルを閉じても続きます。セッションが切れても、手元のポートは開いたまま自動でつなぎ直します (回数の上限はありません)。<code>open</code> と <code>kirocrew</code> の入口も、同じ常駐プログラムに加わります。</p>
+<p>このコマンドは<strong>すぐに終了します</strong>。転送は裏で常駐するプログラムが維持するので、ターミナルを閉じても続きます。セッションが切れても、手元のポートは開いたまま自動でつなぎ直します (回数の上限はありません)。<code>code</code> と <code>kirocrew</code> の入口も、同じ常駐プログラムに加わります。</p>
 
 <div class="table-wrap">
 <table>
@@ -237,11 +237,11 @@ FORWARD                   STATE         SINCE       DETAIL
   <tbody>
     <tr><td><code>nakama aws tunnel dev01 -L 3000:3000</code></td><td>転送を開始 (<code>start</code> は省略できます)</td></tr>
     <tr><td><code>nakama aws tunnel start dev01 -L 8080:8080 -L 5432:db.internal:5432</code></td><td>複数同時に転送。3 つ組の形式は「手元のポート:相手ホスト:相手のポート」です</td></tr>
-    <tr><td><code>nakama aws tunnel status dev01</code></td><td>その環境の転送状態を表示 (<code>open</code> / <code>kirocrew</code> の入口は <code>(code-server)</code> / <code>(kirocrew)</code> と表示されます)</td></tr>
+    <tr><td><code>nakama aws tunnel status dev01</code></td><td>その環境の転送状態を表示 (<code>code</code> / <code>kirocrew</code> の入口は <code>(code-server)</code> / <code>(kirocrew)</code> と表示されます)</td></tr>
     <tr><td><code>nakama aws tunnel status</code></td><td>このパソコンに記録された<strong>すべての</strong>転送を一覧 (AWS の資格情報が不要)</td></tr>
     <tr><td><code>nakama aws tunnel suggest dev01</code></td><td>環境側で待ち受けているポートを調べて、<code>-L</code> の書き方を提案します (転送はしません)</td></tr>
     <tr><td><code>nakama aws tunnel restart dev01</code></td><td>設定を変えずに常駐プログラムを入れ替える (nakama を新しい版にした後、<code>dead</code> になった転送を戻すときなどに)</td></tr>
-    <tr><td><code>nakama aws tunnel stop dev01</code></td><td>転送を止めて常駐も終了 (<code>open</code> / <code>kirocrew</code> の入口も止まります)</td></tr>
+    <tr><td><code>nakama aws tunnel stop dev01</code></td><td>転送を止めて常駐も終了 (<code>code</code> / <code>kirocrew</code> の入口も止まります)</td></tr>
   </tbody>
 </table>
 </div>
@@ -273,11 +273,11 @@ FORWARD                   STATE         SINCE       DETAIL
 </div>
 
 <h2 id="kirocrew">6. Kiro Crew の画面を開く (kirocrew)</h2>
-<p>環境に入っている Kiro Crew には Web の画面があります。この画面は環境の中の <code>localhost:5476</code> でだけ待ち受けています。<code>kirocrew</code> は、<code>open</code> と同じく SSM 経由で、この画面を手元の <code>http://kirocrew.dev01.nakama.localhost:18888</code> に持ってきて開きます。</p>
+<p>環境に入っている Kiro Crew には Web の画面があります。この画面は環境の中の <code>localhost:5476</code> でだけ待ち受けています。<code>kirocrew</code> は、<code>code</code> と同じく SSM 経由で、この画面を手元の <code>http://kirocrew.dev01.nakama.localhost:18888</code> に持ってきて開きます。</p>
 
 <p class="cmd-caption">PowerShell で実行</p>
 <pre><code>nakama aws kirocrew dev01</code></pre>
-<p>ブラウザが開き、Kiro Crew へのサインインが自動で済んで、画面が表示されます。準備の操作 (<code>enable</code>) は要りません。<code>--bare</code> で作った環境でも使えます。手元のパソコンでも Kiro Crew を動かしていて 5476 番を使っていても、そのまま開けます。</p>
+<p>ブラウザが開き、Kiro Crew へのサインインが自動で済んで、画面が表示されます。準備の操作 (CloudFront) は要りません。<code>--bare</code> で作った環境でも使えます。手元のパソコンでも Kiro Crew を動かしていて 5476 番を使っていても、そのまま開けます。</p>
 
 <div class="callout note" role="note">
   <span class="title">どうやって安全に開いているのか</span>
@@ -291,12 +291,11 @@ FORWARD                   STATE         SINCE       DETAIL
 </div>
 
 <h3 id="kirocrew-internet">CloudFront 経由で開く (<code>--internet</code>)</h3>
-<p>SSM が使えないネットワークなどで、インターネット (CloudFront) 経由で開きたいときは、<strong>Kiro Crew を外に直接出さず、必ず code-server を通して</strong>開く仕組みを用意します。code-server の CloudFront の入口 (<a href="04-create.html#cloudfront">第 4 章</a>) と IP の許可 (<a href="03-init.html#acl">第 3 章</a>) が先に要ります。</p>
+<p>SSM が使えないネットワークなどで、インターネット (CloudFront) 経由で開きたいときは、<strong>Kiro Crew を外に直接出さず、必ず code-server を通して</strong>開く仕組みを用意します。IP の許可 (<a href="03-init.html#acl">第 3 章</a>) が先に要ります。code-server の CloudFront の入口 (<a href="04-create.html#cloudfront">第 4 章</a>) が無ければ、同じコマンドが先に作ります。</p>
 
 <p class="cmd-caption">PowerShell で実行 (最初の 1 回だけ)</p>
-<pre><code>nakama aws cloudfront add dev01            # code-server の入口 (まだ無ければ)
-nakama aws kirocrew enable dev01</code></pre>
-<p>Kiro Crew 用の入口 (CloudFront) と、環境の中の小さなプロキシを用意します。CloudFront の反映待ちで数分から十数分かかります。途中で code-server が 1 回再起動するので、開いているブラウザの VS Code はつなぎ直されます。ポート転送 (Ports パネルやターミナルのリンク) は今までどおり使えます。</p>
+<pre><code>nakama aws cloudfront add dev01 --kirocrew</code></pre>
+<p>code-server の入口 (まだ無ければ) に続けて、Kiro Crew 用の入口 (CloudFront) と、環境の中の小さなプロキシを用意します。CloudFront の反映待ちで数分から十数分 (code-server の入口も作るときは、さらに 15〜20 分) かかります。途中で code-server が 1 回再起動するので、開いているブラウザの VS Code はつなぎ直されます。ポート転送 (Ports パネルやターミナルのリンク) は今までどおり使えます。</p>
 
 <p class="cmd-caption">PowerShell で実行 (使うたび)</p>
 <pre><code>nakama aws kirocrew --internet dev01</code></pre>
@@ -308,18 +307,18 @@ nakama aws kirocrew enable dev01</code></pre>
 </div>
 
 <div class="callout tip" role="note">
-  <span class="title"><code>enable</code> の後はターミナルのリンクも CloudFront へ</span>
-  <p><code>enable</code> の後は、code-server を CloudFront 経由で開いているとき、ターミナルで <code>kirocrew token</code> が出す <code>http://localhost:5476?token=…</code> のリンクをクリックすると、Kiro Crew 用の入口へ自動で転送されます。初めて開くときは、Kiro Crew 用の入口で code-server のパスワードを 1 回だけ聞かれます (別の入口なので、ログイン状態を共有できないためです)。</p>
+  <span class="title"><code>--kirocrew</code> の後はターミナルのリンクも CloudFront へ</span>
+  <p><code>cloudfront add --kirocrew</code> の後は、code-server を CloudFront 経由で開いているとき、ターミナルで <code>kirocrew token</code> が出す <code>http://localhost:5476?token=…</code> のリンクをクリックすると、Kiro Crew 用の入口へ自動で転送されます。初めて開くときは、Kiro Crew 用の入口で code-server のパスワードを 1 回だけ聞かれます (別の入口なので、ログイン状態を共有できないためです)。</p>
 </div>
 
 <div class="table-wrap">
 <table>
   <thead><tr><th scope="col">コマンド</th><th scope="col">内容</th></tr></thead>
   <tbody>
-    <tr><td><code>nakama aws kirocrew dev01</code></td><td>SSM 経由でブラウザで開く (<code>--local-port</code>、<code>--print-url</code>、<code>--no-auth</code>、<code>--browser</code>、<code>--timeout</code> の意味は <code>open</code> と同じ。<code>--no-auth</code> はトークンを渡さずに開く)</td></tr>
-    <tr><td><code>nakama aws kirocrew enable dev01</code></td><td>CloudFront 経由の仕組みを用意する (<code>cloudfront add</code> が先に要る。何度実行しても同じ結果。途中で失敗しても、もう一度実行すれば続きから進む)</td></tr>
-    <tr><td><code>nakama aws kirocrew --internet dev01</code></td><td>CloudFront 経由でブラウザで開く (<code>enable</code> が先に要る)</td></tr>
-    <tr><td><code>nakama aws kirocrew disable dev01</code></td><td>CloudFront 経由の仕組みを取り外す (<code>nakama aws cloudfront delete</code> と <code>nakama aws delete</code> でも一緒に消える)</td></tr>
+    <tr><td><code>nakama aws kirocrew dev01</code></td><td>SSM 経由でブラウザで開く (<code>--local-port</code>、<code>--print-url</code>、<code>--no-auth</code>、<code>--browser</code>、<code>--timeout</code> の意味は <code>code</code> と同じ。<code>--no-auth</code> はトークンを渡さずに開く)</td></tr>
+    <tr><td><code>nakama aws cloudfront add dev01 --kirocrew</code></td><td>CloudFront 経由の仕組みを用意する (code-server の入口が無ければ先に作る。何度実行しても同じ結果。途中で失敗しても、もう一度実行すれば続きから進む)</td></tr>
+    <tr><td><code>nakama aws kirocrew --internet dev01</code></td><td>CloudFront 経由でブラウザで開く (<code>cloudfront add --kirocrew</code> が先に要る)</td></tr>
+    <tr><td><code>nakama aws cloudfront delete dev01 --kirocrew</code></td><td>Kiro Crew の CloudFront 経由の仕組みだけを取り外す (確認があり、<code>--yes</code> で省略。code-server の入口は残る。<code>nakama aws cloudfront delete</code> と <code>nakama aws delete</code> でも一緒に消える)</td></tr>
   </tbody>
 </table>
 </div>

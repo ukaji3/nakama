@@ -89,7 +89,7 @@ nakama aws init --nat instance    # NAT インスタンスを使う</code></pre>
 
 <div class="callout warn" role="note">
   <span class="title">切り替えの瞬間に接続が切れます</span>
-  <p>経路を切り替える瞬間に、動いている開発環境の外向きの接続と、<code>connect</code> / <code>ssh</code> / <code>tunnel</code> の接続が切れます (<code>connect</code> と <code>tunnel</code> は自動でつなぎ直します)。確認の画面に、動いている開発環境の名前が出ます。NAT ゲートウェイから NAT インスタンスに戻すと、外向きの IP アドレスが変わります。</p>
+  <p>経路を切り替える瞬間に、動いている開発環境の外向きの接続と、<code>shell</code> / <code>ssh</code> / <code>tunnel</code> の接続が切れます (<code>shell</code> と <code>tunnel</code> は自動でつなぎ直します)。確認の画面に、動いている開発環境の名前が出ます。NAT ゲートウェイから NAT インスタンスに戻すと、外向きの IP アドレスが変わります。</p>
 </div>
 
 <div class="callout warn" role="note">
@@ -116,7 +116,7 @@ nakama aws init --nat instance    # NAT インスタンスを使う</code></pre>
 </div>
 
 <h2 id="acl">2. CloudFront 経由で開くときは IP を許可する</h2>
-<p><code>nakama aws open</code> と <code>nakama aws kirocrew</code> は、既定では SSM 経由で開くので、この節の作業は要りません (<a href="05-use.html#open">第 5 章</a>)。開発環境に CloudFront の入口を足して (<a href="04-create.html#cloudfront">第 4 章</a>)、<code>--internet</code> を付けて CloudFront 経由で開くときだけ、あなたの接続元 IP アドレスを門番 (WAF) に登録します。登録していない IP からは、正面玄関で拒否されます (403 エラー)。</p>
+<p><code>nakama aws code</code> と <code>nakama aws kirocrew</code> は、既定では SSM 経由で開くので、この節の作業は要りません (<a href="05-use.html#code">第 5 章</a>)。開発環境に CloudFront の入口を足して (<a href="04-create.html#cloudfront">第 4 章</a>)、<code>--internet</code> を付けて CloudFront 経由で開くときだけ、あなたの接続元 IP アドレスを門番 (WAF) に登録します。登録していない IP からは、正面玄関で拒否されます (403 エラー)。</p>
 
 <p class="cmd-caption">PowerShell で実行 (いまの接続元 IP を自動で調べて登録します)</p>
 <pre><code>nakama aws acl add</code></pre>
@@ -150,17 +150,17 @@ nakama aws acl delete all                # すべて消す</code></pre>
 
 <div class="callout warn" role="note">
   <span class="title">時刻を更新するのは <code>acl add</code> だけです</span>
-  <p><code>nakama aws open --internet</code> で開いたり、ブラウザで使ったりしても、時刻は更新されません。毎日使っている IP でも、しばらく <code>acl add</code> していなければ古く見えます。その場所から使い続けるなら、<code>acl prune</code> の前に <code>nakama aws acl add</code> を実行してください。</p>
+  <p><code>nakama aws code --internet</code> で開いたり、ブラウザで使ったりしても、時刻は更新されません。毎日使っている IP でも、しばらく <code>acl add</code> していなければ古く見えます。その場所から使い続けるなら、<code>acl prune</code> の前に <code>nakama aws acl add</code> を実行してください。</p>
 </div>
 
 <div class="callout danger" role="note">
   <span class="title"><code>acl delete all</code> は自分も締め出します</span>
-  <p>すべて消すと、<strong>CloudFront 経由 (<code>--internet</code>) では、どの開発環境 (Kiro Crew の画面も含む) も、あなたを含むすべてのブラウザに 403 を返します</strong>。CloudFront 経由で使い続けるなら <code>--keep-mine</code> を付けるか、消した後に <code>nakama aws acl add</code> で登録し直してください。SSM 経由の <code>open</code> / <code>kirocrew</code> と <code>connect</code> / <code>ssh</code> / <code>tunnel</code> は許可リストを使わないので、影響を受けません。</p>
+  <p>すべて消すと、<strong>CloudFront 経由 (<code>--internet</code>) では、どの開発環境 (Kiro Crew の画面も含む) も、あなたを含むすべてのブラウザに 403 を返します</strong>。CloudFront 経由で使い続けるなら <code>--keep-mine</code> を付けるか、消した後に <code>nakama aws acl add</code> で登録し直してください。SSM 経由の <code>code</code> / <code>kirocrew</code> と <code>shell</code> / <code>ssh</code> / <code>tunnel</code> は許可リストを使わないので、影響を受けません。</p>
 </div>
 
 <div class="callout tip" role="note">
   <span class="title">許可が要るのは CloudFront 経由のアクセスだけ</span>
-  <p><code>open</code> / <code>kirocrew</code> (既定) と <code>connect</code> / <code>ssh</code> / <code>tunnel</code> は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)。IP 許可が必要なのは、CloudFront の入口を足した環境に <code>--internet</code> を付けて開く場合だけです。開発環境は、作った時点ではインターネットからの入口を持ちません (<a href="04-create.html#cloudfront">第 4 章</a>)。<a href="05-use.html">第 5 章</a>で詳しく扱います。</p>
+  <p><code>code</code> / <code>kirocrew</code> (既定) と <code>shell</code> / <code>ssh</code> / <code>tunnel</code> は SSM 経由なので、IP の許可は不要です (AWS の権限で守られます)。IP 許可が必要なのは、CloudFront の入口を足した環境に <code>--internet</code> を付けて開く場合だけです。開発環境は、作った時点ではインターネットからの入口を持ちません (<a href="04-create.html#cloudfront">第 4 章</a>)。<a href="05-use.html">第 5 章</a>で詳しく扱います。</p>
 </div>
 
 <div class="callout danger" role="note">
@@ -177,7 +177,7 @@ nakama aws acl delete all                # すべて消す</code></pre>
   <tbody>
     <tr><td>開発環境の EC2 インスタンス</td><td><strong>起動している時間だけ</strong>。停止すればかかりません</td></tr>
     <tr><td>ディスク (EBS)</td><td><strong>作ってある間ずっと</strong>。停止中も保管料がかかります (中身を保つため)</td></tr>
-    <tr><td>NAT ゲートウェイ (<code>--nat gateway</code>)</td><td><strong>作ってある間ずっと</strong>。開発環境を全部止めてもかかります。時間割りの料金 + 中継した通信量 (<code>connect</code> / <code>tunnel</code> の通信も含む) + 固定 IP (Elastic IP) の料金 (<a href="https://aws.amazon.com/vpc/pricing/">Amazon VPC の料金</a>)</td></tr>
+    <tr><td>NAT ゲートウェイ (<code>--nat gateway</code>)</td><td><strong>作ってある間ずっと</strong>。開発環境を全部止めてもかかります。時間割りの料金 + 中継した通信量 (<code>shell</code> / <code>tunnel</code> の通信も含む) + 固定 IP (Elastic IP) の料金 (<a href="https://aws.amazon.com/vpc/pricing/">Amazon VPC の料金</a>)</td></tr>
     <tr><td>NAT インスタンス (<code>--nat instance</code>)</td><td>開発環境が 1 台でも起動している時間だけ (自動で連動します)。ただし <code>init</code> の直後は起動した状態で作られ、次に <code>stop</code> / <code>delete</code> などで電源が見直されるまで動き続けます</td></tr>
     <tr><td>CloudFront</td><td>入口を足した環境だけ。通信量とリクエスト数に応じて</td></tr>
     <tr><td>WAF</td><td>Web ACL が存在する間、時間割りの基本料金 + リクエスト数 (<a href="https://aws.amazon.com/waf/pricing/">AWS WAF の料金</a>)。CloudFront の入口を持つ環境が無くても、Web ACL は土台に残るので基本料金はかかります</td></tr>
