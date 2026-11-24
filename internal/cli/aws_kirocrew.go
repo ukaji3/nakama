@@ -64,7 +64,7 @@ type kirocrewOpenResult struct {
 func newAWSKirocrewCommandWithDeps(deps kirocrewDeps) *cobra.Command {
 	f := &openFlags{}
 	cmd := &cobra.Command{
-		Use:   "kirocrew [enable|disable] <name>",
+		Use:   "kirocrew <name>",
 		Short: "Open the Kiro Crew dashboard in your browser over SSM, signed in",
 		Long: `Opens the Kiro Crew web dashboard of an instance in your browser, signed
 in.
@@ -75,12 +75,11 @@ nakama router on this machine (ADR 0029), at
 http://kirocrew.<name>.nakama.localhost:18888 (NAKAMA_ROUTER_PORT moves
 the router; with --local-port the browser opens http://localhost:<port>
 instead). A Kiro Crew of your own on this machine keeps its port 5476.
-No ` + "`kirocrew enable`" + ` is needed for this, and it works on --bare
-instances too. The forward runs in the instance's tunnel daemon in the
-background and reconnects by itself; stop it with
-` + "`nakama aws tunnel stop <name>`" + `. Kiro Crew sees these requests as
-local ones, so the dashboard also allows changing settings and showing
-secrets.
+No CloudFront is needed for this, and it works on --bare instances too.
+The forward runs in the instance's tunnel daemon in the background and
+reconnects by itself; stop it with ` + "`nakama aws tunnel stop <name>`" + `.
+Kiro Crew sees these requests as local ones, so the dashboard also
+allows changing settings and showing secrets.
 
 --internet opens the dashboard through its own CloudFront distribution
 instead (ADR 0020). Kiro Crew is never exposed directly there: the
@@ -88,20 +87,16 @@ distribution reaches code-server, which checks its password session and
 forwards the request to a loopback-only proxy in front of the gateway.
 The same WAF allowlist as code-server applies (` + "`nakama aws acl add`" + `).
 
-  nakama aws kirocrew <name>                   open the dashboard over SSM
-  nakama aws cloudfront add <name>             give the instance CloudFront (needed first)
-  nakama aws kirocrew enable <name>            build the CloudFront access (once per instance)
-  nakama aws kirocrew --internet <name>        open the dashboard through CloudFront
-  nakama aws kirocrew disable <name>           remove the CloudFront access
+  nakama aws kirocrew <name>                        open the dashboard over SSM
+  nakama aws cloudfront add <name> --kirocrew       build the CloudFront access (once per instance)
+  nakama aws kirocrew --internet <name>             open the dashboard through CloudFront
+  nakama aws cloudfront delete <name> --kirocrew    remove Kiro Crew's CloudFront access
 
 Opening mints a dashboard token on the instance (returned encrypted to
 this process) and hands it to the browser through a one-shot page on
 127.0.0.1; with --internet the code-server password goes along, exactly
 like ` + "`nakama aws code --internet`" + `. Neither value is written to disk or
-logged.
-
-"enable" and "disable" are subcommands, so they cannot be used as
-instance names.`,
+logged.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runKirocrewOpen(cmd, args[0], f, deps)
@@ -111,48 +106,33 @@ instance names.`,
 		noAuth: "Skip the automatic sign-in (over SSM: open the dashboard without a token; " +
 			"with --internet: skip the code-server auto-login and open the dashboard URL with the token only)",
 		printURL: "Do not launch a browser; print the URL(s) instead (the URLs carry a token valid for 5 minutes)",
+		internet: "Use the Kiro Crew CloudFront distribution (added with nakama aws cloudfront add --kirocrew; " +
+			"needs your IP in the WAF allowlist) instead of an SSM port forward",
 	})
 
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "enable <name>",
-			Short: "Build the Kiro Crew access through CloudFront for --internet (idempotent)",
-			Long: `Creates a CloudFront distribution dedicated to Kiro Crew, installs a
-loopback-only nginx proxy on the instance, enables code-server's
-host-based proxy for that distribution, and makes code-server's
-/proxy/5476/ links (e.g. the URL printed by ` + "`kirocrew token`" + `)
-redirect to it. Only ` + "`nakama aws kirocrew --internet`" + ` needs this; the
-default SSM path does not.
-
-It builds on the instance's code-server CloudFront distribution, which
-instances get only on request: run ` + "`nakama aws cloudfront add <name>`" + `
-first (ADR 0028). ` + "`nakama aws cloudfront delete`" + ` removes both.
-
-The instance must be running. code-server is restarted once, so an open
-browser tab reconnects. CloudFront takes several minutes (up to ~15) to
-deploy; the command waits for it. Safe to re-run: it resumes where a
-previous run stopped and never creates a second distribution.
-
-The distribution adds CloudFront and WAF charges; see the AWS pricing
-calculator for an estimate.`,
-			Args: cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return runKirocrewEnable(cmd, args[0], deps)
-			},
+	// enable and disable moved to `cloudfront add|delete --kirocrew`
+	// (Issue #129, ADR 0030). They stay, hidden and deprecated, with
+	// their old behavior through v0.30.x; "enable" and "disable" stay
+	// reserved instance names meanwhile.
+	enable := &cobra.Command{
+		Use:        "enable <name>",
+		Short:      "Build the Kiro Crew access through CloudFront for --internet (idempotent)",
+		Deprecated: `use "nakama aws cloudfront add <name> --kirocrew" instead`,
+		Args:       cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKirocrewEnable(cmd, args[0], deps)
 		},
-		&cobra.Command{
-			Use:   "disable <name>",
-			Short: "Remove the Kiro Crew web access of an instance (idempotent)",
-			Long: `Removes the redirect, the CloudFront function and the Kiro Crew
-distribution, and (when the instance is running) the nginx site and the
-code-server proxy settings. Parts that are already gone are skipped.
-` + "`nakama aws delete`" + ` also removes all of it.`,
-			Args: cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return runKirocrewDisable(cmd, args[0], deps)
-			},
+	}
+	disable := &cobra.Command{
+		Use:        "disable <name>",
+		Short:      "Remove the Kiro Crew web access of an instance (idempotent)",
+		Deprecated: `use "nakama aws cloudfront delete <name> --kirocrew" instead`,
+		Args:       cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKirocrewDisable(cmd, args[0], deps)
 		},
-	)
+	}
+	cmd.AddCommand(enable, disable)
 	return cmd
 }
 

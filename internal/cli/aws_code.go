@@ -217,13 +217,14 @@ opened without it; retrieve it with ` + "`nakama aws info <name> --show-password
 	addOpenFlags(cmd, f, openFlagHelp{
 		noAuth:   "Skip auto-login; just open code-server",
 		printURL: "Do not launch a browser; print the URL(s) instead",
+		internet: "Use the CloudFront distribution (added with nakama aws cloudfront add; needs your IP in the WAF allowlist) instead of an SSM port forward",
 	})
 	return cmd
 }
 
 // openFlagHelp is the per-command wording of the shared flags.
 type openFlagHelp struct {
-	noAuth, printURL string
+	noAuth, printURL, internet string
 }
 
 // addOpenFlags registers the flags `code` and `kirocrew` share.
@@ -234,8 +235,7 @@ func addOpenFlags(cmd *cobra.Command, f *openFlags, help openFlagHelp) {
 		"Browser launcher command (the URL is appended as the last argument)")
 	cmd.Flags().DurationVar(&f.timeout, "timeout", 30*time.Second,
 		"How long to wait for the browser to fetch the one-shot login page")
-	cmd.Flags().BoolVar(&f.internet, "internet", false,
-		"Use the CloudFront distribution (added with nakama aws cloudfront add; needs your IP in the WAF allowlist) instead of an SSM port forward")
+	cmd.Flags().BoolVar(&f.internet, "internet", false, help.internet)
 	cmd.Flags().IntVar(&f.localPort, "local-port", 0,
 		"Also serve the SSM port forward on this local port, and open localhost:<port> in the browser instead of the nakama router address")
 }

@@ -134,7 +134,7 @@ type AddCloudFrontOutput struct {
 //
 // The instance must be running: CloudFront accepts only a fully
 // deployed origin resource for a VPC origin. Kiro Crew web access is
-// not part of this; `nakama aws kirocrew enable` builds it on top.
+// not part of this; EnableKiroCrewWeb builds it on top (`cloudfront add --kirocrew`).
 func (s *Service) AddCloudFront(ctx context.Context, name string) (*AddCloudFrontOutput, error) {
 	m, err := s.readCloudFrontMeta(ctx, name)
 	if err != nil {
@@ -316,7 +316,7 @@ type DeleteCloudFrontOutput struct {
 	// InstanceSkipped is true when Kiro Crew web access was enabled but
 	// the instance was not running, so its nginx site and code-server
 	// proxy settings were left in place (harmless without the
-	// distribution; `nakama aws kirocrew disable` removes them once the
+	// distribution; `nakama aws cloudfront delete --kirocrew` removes them once the
 	// instance runs).
 	InstanceSkipped bool `json:"instance_skipped,omitempty"`
 }

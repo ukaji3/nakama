@@ -205,8 +205,8 @@ func TestKirocrew_PasswordFailureFallsBackToPlain(t *testing.T) {
 }
 
 func TestKirocrew_Preconditions(t *testing.T) {
-	notEnabled := &fakeKirocrewBackend{webErr: fmt.Errorf("%w: run `nakama aws kirocrew enable dev01` first", service.ErrKiroCrewWebNotEnabled)}
-	if _, _, err := runKirocrewCommand(t, notEnabled, &fakeLauncher{}, "--internet", "dev01"); err == nil || !strings.Contains(err.Error(), "kirocrew enable dev01") {
+	notEnabled := &fakeKirocrewBackend{webErr: fmt.Errorf("%w: run `nakama aws cloudfront add dev01 --kirocrew` first", service.ErrKiroCrewWebNotEnabled)}
+	if _, _, err := runKirocrewCommand(t, notEnabled, &fakeLauncher{}, "--internet", "dev01"); err == nil || !strings.Contains(err.Error(), "cloudfront add dev01 --kirocrew") {
 		t.Errorf("not enabled: err = %v", err)
 	}
 	if notEnabled.minted != 0 {
@@ -230,6 +230,9 @@ func TestKirocrew_Preconditions(t *testing.T) {
 	}
 }
 
+// TestKirocrew_EnableAndDisableSubcommands: the deprecated subcommands
+// keep their behavior through v0.30.x and name their replacement
+// (Issue #129); help lists neither.
 func TestKirocrew_EnableAndDisableSubcommands(t *testing.T) {
 	backend := enabledKirocrewBackend()
 	out, _, err := runKirocrewCommand(t, backend, &fakeLauncher{}, "enable", "dev01")
@@ -238,6 +241,12 @@ func TestKirocrew_EnableAndDisableSubcommands(t *testing.T) {
 	}
 	if len(backend.enabled) != 1 || backend.enabled[0] != "dev01" || !strings.Contains(out, "nakama aws kirocrew --internet dev01") {
 		t.Errorf("enable: calls=%v out=%s", backend.enabled, out)
+	}
+	// The test tree has no stderr of its own for cobra's notice, so it
+	// lands in the out buffer; in production it goes to os.Stderr
+	// (TestDeprecatedCommandNamesTheReplacementOnStderr).
+	if !strings.Contains(out, `Command "enable" is deprecated, use "nakama aws cloudfront add <name> --kirocrew" instead`) {
+		t.Errorf("enable: no deprecation notice in %q", out)
 	}
 
 	backend.skipped = true
@@ -248,8 +257,21 @@ func TestKirocrew_EnableAndDisableSubcommands(t *testing.T) {
 	if len(backend.disabled) != 1 || !strings.Contains(out, "not running") {
 		t.Errorf("disable: calls=%v out=%s", backend.disabled, out)
 	}
+	if !strings.Contains(out, `Command "disable" is deprecated, use "nakama aws cloudfront delete <name> --kirocrew" instead`) {
+		t.Errorf("disable: no deprecation notice in %q", out)
+	}
 	if backend.minted != 0 {
 		t.Error("enable/disable must not mint tokens")
+	}
+
+	cmd := newAWSKirocrewCommandWithDeps(kirocrewDeps{})
+	if cmd.Use != "kirocrew <name>" || cmd.HasAvailableSubCommands() {
+		t.Errorf("Use %q, available subcommands %v; want `kirocrew <name>` and none listed", cmd.Use, cmd.HasAvailableSubCommands())
+	}
+	for _, old := range []string{"kirocrew enable", "kirocrew disable"} {
+		if strings.Contains(cmd.Long, old) {
+			t.Errorf("help still teaches %q", old)
+		}
 	}
 }
 
