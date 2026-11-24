@@ -94,10 +94,10 @@ func TestLogin_SavesAndActivatesProfile(t *testing.T) {
 	}
 }
 
-func TestLogin_NameFlagSetsAlias(t *testing.T) {
+func TestLogin_AliasFlagSetsAlias(t *testing.T) {
 	deps, store, _ := newTestLoginDeps(t)
-	if _, _, err := runLoginCommand(t, deps, "--name", "dev"); err != nil {
-		t.Fatalf("login --name: %v", err)
+	if _, _, err := runLoginCommand(t, deps, "--alias", "dev"); err != nil {
+		t.Fatalf("login --alias: %v", err)
 	}
 	data, _ := store.Load()
 	if len(data.Profiles) != 1 || data.Profiles[0].Alias != "dev" {
@@ -155,7 +155,7 @@ func TestLogin_UpsertsExistingAccountAndActivates(t *testing.T) {
 		prof("111111111111", "old-alias"),
 		prof("222222222222", "other"),
 	)
-	if _, _, err := runLoginCommand(t, deps, "--name", "fresh"); err != nil {
+	if _, _, err := runLoginCommand(t, deps, "--alias", "fresh"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	data, _ := store.Load()
@@ -174,7 +174,7 @@ func TestLogin_UpsertsExistingAccountAndActivates(t *testing.T) {
 func TestLogin_AliasCollisionRejected(t *testing.T) {
 	deps, store, _ := newTestLoginDeps(t)
 	seedProfiles(t, store, "", prof("222222222222", "dev"))
-	_, _, err := runLoginCommand(t, deps, "--name", "dev")
+	_, _, err := runLoginCommand(t, deps, "--alias", "dev")
 	if err == nil {
 		t.Fatal("expected alias collision error")
 	}
@@ -212,4 +212,61 @@ func TestLogin_IdentityFailurePropagates(t *testing.T) {
 	if data, _ := store.Load(); len(data.Profiles) != 0 {
 		t.Errorf("nothing must be saved on failure: %+v", data.Profiles)
 	}
+}
+
+// TestLogin_DeprecatedNameFlag: --name, the alias flag before Issue
+// #129, still sets the alias with a deprecation warning, and a --name
+// that disagrees with --alias stops the command before the sign-in.
+func TestLogin_DeprecatedNameFlag(t *testing.T) {
+	const warning = "Flag --name has been deprecated, use --alias"
+	t.Run("alone", func(t *testing.T) {
+		deps, store, _ := newTestLoginDeps(t)
+		out, errOut, err := runLoginCommand(t, deps, "--name", "dev")
+		if err != nil {
+			t.Fatalf("login --name: %v", err)
+		}
+		if !strings.Contains(out+errOut, warning) {
+			t.Errorf("no deprecation warning in %q", out+errOut)
+		}
+		if data, _ := store.Load(); len(data.Profiles) != 1 || data.Profiles[0].Alias != "dev" {
+			t.Errorf("alias not applied: %+v", data.Profiles)
+		}
+	})
+	t.Run("same value as --alias", func(t *testing.T) {
+		deps, store, _ := newTestLoginDeps(t)
+		if _, _, err := runLoginCommand(t, deps, "--alias", "dev", "--name", "dev"); err != nil {
+			t.Fatalf("login: %v", err)
+		}
+		if data, _ := store.Load(); len(data.Profiles) != 1 || data.Profiles[0].Alias != "dev" {
+			t.Errorf("alias not applied: %+v", data.Profiles)
+		}
+	})
+	t.Run("disagrees with --alias", func(t *testing.T) {
+		deps, store, browserCalls := newTestLoginDeps(t)
+		signedIn := false
+		deps.login = func(context.Context, signin.LoginOptions) (*signin.LoginResult, error) {
+			signedIn = true
+			return nil, errors.New("must not be reached")
+		}
+		_, _, err := runLoginCommand(t, deps, "--alias", "dev", "--name", "prod")
+		if err == nil || !strings.Contains(err.Error(), `--alias "dev" and --name "prod" disagree`) {
+			t.Fatalf("err %v, want the disagreement", err)
+		}
+		if signedIn || len(*browserCalls) != 0 {
+			t.Error("the sign-in started although the command line was rejected")
+		}
+		if data, _ := store.Load(); len(data.Profiles) != 0 {
+			t.Errorf("a profile was saved: %+v", data.Profiles)
+		}
+	})
+	t.Run("help shows --alias only", func(t *testing.T) {
+		cmd := newAWSLoginCommandWithDeps(loginDeps{})
+		usages := cmd.Flags().FlagUsages()
+		if !strings.Contains(usages, "--alias") || strings.Contains(usages, "--name") {
+			t.Errorf("flag help:\n%s", usages)
+		}
+		if cmd.Use != "login [--remote] [--alias <alias>]" {
+			t.Errorf("Use = %q", cmd.Use)
+		}
+	})
 }

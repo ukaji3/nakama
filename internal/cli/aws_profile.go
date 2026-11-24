@@ -95,9 +95,9 @@ type profileSaveResult struct {
 }
 
 func newAWSProfileSaveCommand(deps profileDeps) *cobra.Command {
-	var alias string
+	flags := &aliasFlags{}
 	cmd := &cobra.Command{
-		Use:   "save [--name <alias>]",
+		Use:   "save [--alias <alias>]",
 		Short: "Save the current `aws login` session under nakama's profile registry",
 		Long: `Resolves the CURRENT AWS identity (default credential chain, ignoring any
 active nakama profile), reads the login_session identifier that ` + "`aws login`" + `
@@ -106,6 +106,10 @@ account ID. Re-saving the same account overwrites the previous entry.
 The active profile selection is not changed by this command.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			alias, err := flags.resolve(cmd)
+			if err != nil {
+				return err
+			}
 			ctx := withCancel(cmd)
 
 			// 1. Identify whatever the user is logged into RIGHT NOW.
@@ -167,9 +171,38 @@ The active profile selection is not changed by this command.`,
 			return renderOutput(cmd.OutOrStdout(), global.Output, res, text)
 		},
 	}
-	cmd.Flags().StringVar(&alias, "name", "",
-		"Alias for the saved profile (default: the AWS account ID)")
+	addAliasFlags(cmd, flags)
 	return cmd
+}
+
+// aliasFlags is the --alias flag of `login` and `profile save`, plus
+// --name, its spelling before Issue #129. `create --name` named an
+// instance while these named a profile alias, so the alias flag says
+// what it sets; --name keeps working, hidden, with a deprecation
+// warning on stderr.
+type aliasFlags struct{ alias, name string }
+
+// addAliasFlags registers --alias and the deprecated --name on cmd.
+func addAliasFlags(cmd *cobra.Command, f *aliasFlags) {
+	cmd.Flags().StringVar(&f.alias, "alias", "",
+		"Alias for the saved profile (default: the AWS account ID)")
+	cmd.Flags().StringVar(&f.name, "name", "", "Alias for the saved profile (deprecated: use --alias)")
+	_ = cmd.Flags().MarkDeprecated("name", "use --alias")
+}
+
+// resolve returns the alias given with --alias or with the deprecated
+// --name ("" when neither was given). Both may be given only with the
+// same value.
+func (f *aliasFlags) resolve(cmd *cobra.Command) (string, error) {
+	aliasSet, nameSet := cmd.Flags().Changed("alias"), cmd.Flags().Changed("name")
+	switch {
+	case aliasSet && nameSet && f.alias != f.name:
+		return "", fmt.Errorf("--alias %q and --name %q disagree; give only --alias", f.alias, f.name)
+	case nameSet && !aliasSet:
+		return f.name, nil
+	default:
+		return f.alias, nil
+	}
 }
 
 // checkAliasCollision rejects an alias that already identifies a
@@ -181,7 +214,7 @@ func checkAliasCollision(data *profilestore.Data, accountID, alias string) error
 			continue // overwriting our own entry is fine
 		}
 		if p.Alias == alias || p.AccountID == alias {
-			return fmt.Errorf("alias %q already refers to account %s; choose another --name", alias, p.AccountID)
+			return fmt.Errorf("alias %q already refers to account %s; choose another --alias", alias, p.AccountID)
 		}
 	}
 	return nil

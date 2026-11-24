@@ -104,10 +104,10 @@ func TestProfileSave_DefaultAliasIsAccountID(t *testing.T) {
 	}
 }
 
-func TestProfileSave_NameFlagSetsAlias(t *testing.T) {
+func TestProfileSave_AliasFlagSetsAlias(t *testing.T) {
 	deps, store := newTestProfileDeps(t)
-	if _, _, err := runProfileCommand(t, deps, "save", "--name", "dev"); err != nil {
-		t.Fatalf("save --name: %v", err)
+	if _, _, err := runProfileCommand(t, deps, "save", "--alias", "dev"); err != nil {
+		t.Fatalf("save --alias: %v", err)
 	}
 	data, _ := store.Load()
 	if len(data.Profiles) != 1 || data.Profiles[0].Alias != "dev" {
@@ -115,10 +115,44 @@ func TestProfileSave_NameFlagSetsAlias(t *testing.T) {
 	}
 }
 
+// TestProfileSave_DeprecatedNameFlag: --name still sets the alias with
+// a deprecation warning; one that disagrees with --alias is rejected
+// before anything is resolved or saved (Issue #129).
+func TestProfileSave_DeprecatedNameFlag(t *testing.T) {
+	deps, store := newTestProfileDeps(t)
+	out, errOut, err := runProfileCommand(t, deps, "save", "--name", "dev")
+	if err != nil {
+		t.Fatalf("save --name: %v", err)
+	}
+	if !strings.Contains(out+errOut, "Flag --name has been deprecated, use --alias") {
+		t.Errorf("no deprecation warning in %q", out+errOut)
+	}
+	if data, _ := store.Load(); len(data.Profiles) != 1 || data.Profiles[0].Alias != "dev" {
+		t.Errorf("alias not applied: %+v", data.Profiles)
+	}
+
+	deps, store = newTestProfileDeps(t)
+	resolved := false
+	deps.callerIdentity = func(context.Context) (string, string, error) {
+		resolved = true
+		return "", "", errors.New("must not be reached")
+	}
+	_, _, err = runProfileCommand(t, deps, "save", "--alias", "dev", "--name", "prod")
+	if err == nil || !strings.Contains(err.Error(), "disagree") {
+		t.Fatalf("err %v, want the disagreement", err)
+	}
+	if resolved {
+		t.Error("the identity was resolved although the command line was rejected")
+	}
+	if data, _ := store.Load(); len(data.Profiles) != 0 {
+		t.Errorf("a profile was saved: %+v", data.Profiles)
+	}
+}
+
 func TestProfileSave_UpsertOverwritesSameAccount(t *testing.T) {
 	deps, store := newTestProfileDeps(t)
 	seedProfiles(t, store, "", prof("111111111111", "old"))
-	if _, _, err := runProfileCommand(t, deps, "save", "--name", "new"); err != nil {
+	if _, _, err := runProfileCommand(t, deps, "save", "--alias", "new"); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	data, _ := store.Load()
@@ -150,7 +184,7 @@ func TestProfileSave_NoLoginSessionFails(t *testing.T) {
 func TestProfileSave_AliasCollisionRejected(t *testing.T) {
 	deps, store := newTestProfileDeps(t)
 	seedProfiles(t, store, "", prof("222222222222", "dev"))
-	_, _, err := runProfileCommand(t, deps, "save", "--name", "dev")
+	_, _, err := runProfileCommand(t, deps, "save", "--alias", "dev")
 	if err == nil {
 		t.Fatal("expected alias collision error")
 	}
