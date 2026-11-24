@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -49,9 +51,10 @@ func createInputFromFlags(f *createFlags) service.CreateInstanceInput {
 func newAWSCreateCommand() *cobra.Command {
 	f := &createFlags{}
 	cmd := &cobra.Command{
-		Use:   "create",
+		Use:   "create <name>",
 		Short: "Provision a new code-server EC2 instance (reached over SSM; CloudFront with --cloudfront)",
-		Long: `Provisions:
+		Long: `Creates the instance <name>: 2-32 characters, lowercase letters, digits
+and hyphens, starting and ending with a letter or digit. It provisions:
 
   - A dedicated ENI in the private subnet (Private IP retained across stop/start)
   - A security group with no inbound rule
@@ -79,8 +82,16 @@ code-server); with --with-role <role> an existing IAM role of your
 choice is attached instead. Both preflight the caller's IAM
 permissions via SimulatePrincipalPolicy and abort before creating any
 resource when the permissions are insufficient.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Example: `  nakama aws create dev01 --instance-type t4g.large
+  nakama aws create box1 --instance-type t4g.small --bare
+  nakama aws create web1 --instance-type t4g.medium --cloudfront`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, err := resolveCreateName(args, f.name, cmd.Flags().Changed("name"))
+			if err != nil {
+				return err
+			}
+			f.name = name
 			ctx := withCancel(cmd)
 			in := createInputFromFlags(f)
 			// Fail fast on a bad preset name or an unreadable setup
@@ -140,7 +151,9 @@ resource when the permissions are insufficient.`,
 			return renderOutput(cmd.OutOrStdout(), global.Output, out, fallback)
 		},
 	}
-	cmd.Flags().StringVar(&f.name, "name", "", "Logical name of the instance (required, [a-z0-9][a-z0-9-]*)")
+	// --name was the only way to give the name before Issue #129.
+	cmd.Flags().StringVar(&f.name, "name", "", "Name of the instance (deprecated: give it as the argument)")
+	_ = cmd.Flags().MarkDeprecated("name", "give the name as the argument: nakama aws create <name>")
 	cmd.Flags().StringVar(&f.instanceType, "instance-type", "", "EC2 instance type (required, e.g. t3.medium)")
 	cmd.Flags().StringVar(&f.codeServerVersion, "code-server-version", "", "Pin a specific code-server version (default: latest)")
 	cmd.Flags().BoolVar(&f.showPassword, "show-password", false, "Print the generated code-server password in plain text")
@@ -164,9 +177,25 @@ resource when the permissions are insufficient.`,
 	cmd.MarkFlagsMutuallyExclusive("bare", "code-server-version")
 	// Nor is there a code-server to put behind CloudFront (ADR 0028).
 	cmd.MarkFlagsMutuallyExclusive("bare", "cloudfront")
-	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("instance-type")
 	return cmd
+}
+
+// resolveCreateName picks the instance name of `create`: the argument,
+// or the deprecated --name flag (Issue #129). Both may be given only
+// with the same value, so a script that still passes --name never
+// creates an instance under a name it did not expect.
+func resolveCreateName(args []string, flagName string, flagSet bool) (string, error) {
+	switch {
+	case len(args) == 1 && flagSet && args[0] != flagName:
+		return "", fmt.Errorf("the instance name is given twice, as %q and as --name %q; give it once, as the argument", args[0], flagName)
+	case len(args) == 1:
+		return args[0], nil
+	case flagSet:
+		return flagName, nil
+	default:
+		return "", errors.New("give the name of the new instance: nakama aws create <name> --instance-type <type>")
+	}
 }
 
 // rerunFlags renders the provisioning flags of this invocation so the
