@@ -13,7 +13,7 @@ import (
 	"github.com/ukaji3/nakama/internal/config"
 )
 
-// This file is the service side of `nakama aws open` and
+// This file is the service side of `nakama aws code` and
 // `nakama aws kirocrew` over SSM (Issue #118, ADR 0027): it makes sure
 // the instance's tunnel daemon forwards code-server or Kiro Crew to a
 // local port, and waits until a browser can use it. Without

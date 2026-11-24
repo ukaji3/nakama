@@ -363,7 +363,7 @@ func TestDiagnoseCapabilityDenied(t *testing.T) {
 	// deliberately scoped principal is not a broken environment.
 	opts := doctorAWSOpts(t, nil, "203.0.113.10", nil, &fakeDoctorIAM{denied: []string{"ssm:StartSession"}})
 	rep := Diagnose(context.Background(), opts)
-	for _, feature := range []string{"connect", "ssh", "tunnel"} {
+	for _, feature := range []string{"shell", "ssh", "tunnel"} {
 		c := checkByName(t, rep, "capability: "+feature)
 		if c.Status != CheckWarn {
 			t.Errorf("capability %s = %q, want warn", feature, c.Status)

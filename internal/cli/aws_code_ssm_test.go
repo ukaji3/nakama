@@ -10,11 +10,11 @@ import (
 	"github.com/ukaji3/nakama/internal/service"
 )
 
-// Tests of `open` and `kirocrew` over SSM, the default since Issue #118
+// Tests of `code` and `kirocrew` over SSM, the default since Issue #118
 // (ADR 0027). The CloudFront path (--internet) is covered by
 // aws_open_test.go and aws_kirocrew_test.go.
 
-func TestOpenSSM_AutoLoginThroughTheForward(t *testing.T) {
+func TestCodeSSM_AutoLoginThroughTheForward(t *testing.T) {
 	backend := runningBackend()
 	// Not allowlisted: over SSM the WAF does not matter and must not be
 	// mentioned.
@@ -25,7 +25,7 @@ func TestOpenSSM_AutoLoginThroughTheForward(t *testing.T) {
 	launcher.onOpen = func(u string) { _, pageBody, fetchErr = httpGet(t, u) }
 	deps := newTestOpenDeps(backend, launcher)
 
-	out, errOut, err := runOpenCommand(t, deps, "dev01", "--timeout", "5s")
+	out, errOut, err := runCodeCommand(t, deps, "dev01", "--timeout", "5s")
 	if err != nil {
 		t.Fatalf("open: %v (stderr: %s)", err, errOut)
 	}
@@ -64,11 +64,11 @@ func TestOpenSSM_AutoLoginThroughTheForward(t *testing.T) {
 	}
 }
 
-func TestOpenSSM_LocalPort(t *testing.T) {
+func TestCodeSSM_LocalPort(t *testing.T) {
 	backend := runningBackend()
 	launcher := &fakeLauncher{}
 	deps := newTestOpenDeps(backend, launcher)
-	out, errOut, err := runOpenCommand(t, deps, "dev01", "--local-port", "18080", "--no-auth")
+	out, errOut, err := runCodeCommand(t, deps, "dev01", "--local-port", "18080", "--no-auth")
 	if err != nil {
 		t.Fatalf("open: %v (stderr: %s)", err, errOut)
 	}
@@ -86,14 +86,14 @@ func TestOpenSSM_LocalPort(t *testing.T) {
 	}
 }
 
-func TestOpenSSM_FlagValidation(t *testing.T) {
+func TestCodeSSM_FlagValidation(t *testing.T) {
 	for _, args := range [][]string{
 		{"--internet", "--local-port", "18080", "dev01"},
 		{"--local-port", "0", "dev01"},
 		{"--local-port", "70000", "dev01"},
 	} {
 		backend := runningBackend()
-		_, _, err := runOpenCommand(t, newTestOpenDeps(backend, &fakeLauncher{}), args...)
+		_, _, err := runCodeCommand(t, newTestOpenDeps(backend, &fakeLauncher{}), args...)
 		if err == nil {
 			t.Errorf("open %v must fail", args)
 		}
@@ -106,11 +106,11 @@ func TestOpenSSM_FlagValidation(t *testing.T) {
 // TestOpenSSM_NoBrowserIsAnError: over SSM the browser must open by
 // itself; when it cannot, the command fails and does not print a URL
 // for the user to open (Issue #118).
-func TestOpenSSM_NoBrowserIsAnError(t *testing.T) {
+func TestCodeSSM_NoBrowserIsAnError(t *testing.T) {
 	for _, args := range [][]string{{"dev01"}, {"dev01", "--no-auth"}} {
 		backend := runningBackend()
 		launcher := &fakeLauncher{err: errors.New("no browser found")}
-		out, _, err := runOpenCommand(t, newTestOpenDeps(backend, launcher), args...)
+		out, _, err := runCodeCommand(t, newTestOpenDeps(backend, launcher), args...)
 		if err == nil || !strings.Contains(err.Error(), "could not launch a browser") || !strings.Contains(err.Error(), "--browser") {
 			t.Errorf("open %v: err = %v, want the launch failure with the --browser advice", args, err)
 		}
@@ -120,10 +120,10 @@ func TestOpenSSM_NoBrowserIsAnError(t *testing.T) {
 	}
 }
 
-func TestOpenSSM_PortInUseAdvice(t *testing.T) {
+func TestCodeSSM_PortInUseAdvice(t *testing.T) {
 	backend := runningBackend()
 	backend.forwardErr = &service.LocalPortInUseError{Port: "18080", Holder: "dev02"}
-	_, _, err := runOpenCommand(t, newTestOpenDeps(backend, &fakeLauncher{}), "dev01", "--local-port", "18080")
+	_, _, err := runCodeCommand(t, newTestOpenDeps(backend, &fakeLauncher{}), "dev01", "--local-port", "18080")
 	if err == nil || !strings.Contains(err.Error(), "dev02") || !strings.Contains(err.Error(), "--local-port") {
 		t.Fatalf("err = %v, want the holder and the --local-port advice", err)
 	}
@@ -132,11 +132,11 @@ func TestOpenSSM_PortInUseAdvice(t *testing.T) {
 // TestOpenSSM_RouterPortInUse: a busy router port stops open with the
 // NAKAMA_ROUTER_PORT advice, and nothing else is offered in its place
 // (Issue #124 decision 10).
-func TestOpenSSM_RouterPortInUse(t *testing.T) {
+func TestCodeSSM_RouterPortInUse(t *testing.T) {
 	backend := runningBackend()
 	backend.forwardErr = &service.RouterPortInUseError{Port: 18888, Err: errors.New("address already in use")}
 	launcher := &fakeLauncher{}
-	_, _, err := runOpenCommand(t, newTestOpenDeps(backend, launcher), "dev01")
+	_, _, err := runCodeCommand(t, newTestOpenDeps(backend, launcher), "dev01")
 	if err == nil || !strings.Contains(err.Error(), "NAKAMA_ROUTER_PORT") || !strings.Contains(err.Error(), "18888") {
 		t.Fatalf("err = %v, want the router port and the NAKAMA_ROUTER_PORT advice", err)
 	}
@@ -145,21 +145,21 @@ func TestOpenSSM_RouterPortInUse(t *testing.T) {
 	}
 }
 
-func TestOpenSSM_Preflight(t *testing.T) {
+func TestCodeSSM_Preflight(t *testing.T) {
 	stopped := runningBackend()
 	stopped.info.State = "stopped"
-	if _, _, err := runOpenCommand(t, newTestOpenDeps(stopped, &fakeLauncher{}), "dev01"); err == nil || !strings.Contains(err.Error(), "nakama aws start dev01") {
+	if _, _, err := runCodeCommand(t, newTestOpenDeps(stopped, &fakeLauncher{}), "dev01"); err == nil || !strings.Contains(err.Error(), "nakama aws start dev01") {
 		t.Errorf("stopped: err = %v", err)
 	}
 	bare := runningBackend()
 	bare.info.Kind = "bare"
-	if _, _, err := runOpenCommand(t, newTestOpenDeps(bare, &fakeLauncher{}), "dev01"); err == nil || !strings.Contains(err.Error(), "--bare") {
+	if _, _, err := runCodeCommand(t, newTestOpenDeps(bare, &fakeLauncher{}), "dev01"); err == nil || !strings.Contains(err.Error(), "--bare") {
 		t.Errorf("bare: err = %v", err)
 	}
 	// Over SSM no CloudFront distribution is needed.
 	noCF := runningBackend()
 	noCF.info.DistributionID, noCF.info.DistributionDomain, noCF.info.URL, noCF.info.CloudFront = "", "", "", false
-	if _, _, err := runOpenCommand(t, newTestOpenDeps(noCF, &fakeLauncher{}), "dev01", "--no-auth"); err != nil {
+	if _, _, err := runCodeCommand(t, newTestOpenDeps(noCF, &fakeLauncher{}), "dev01", "--no-auth"); err != nil {
 		t.Errorf("an instance without a distribution must open over SSM: %v", err)
 	}
 	for _, b := range []*fakeOpenBackend{stopped, bare} {
@@ -169,14 +169,14 @@ func TestOpenSSM_Preflight(t *testing.T) {
 	}
 }
 
-func TestOpenSSM_JSONOutput(t *testing.T) {
+func TestCodeSSM_JSONOutput(t *testing.T) {
 	prev := global.Output
 	global.Output = "json"
 	t.Cleanup(func() { global.Output = prev })
 	backend := runningBackend()
 	launcher := &fakeLauncher{}
 	launcher.onOpen = func(u string) { _, _, _ = httpGet(t, u) }
-	out, _, err := runOpenCommand(t, newTestOpenDeps(backend, launcher), "dev01", "--timeout", "5s")
+	out, _, err := runCodeCommand(t, newTestOpenDeps(backend, launcher), "dev01", "--timeout", "5s")
 	if err != nil {
 		t.Fatal(err)
 	}

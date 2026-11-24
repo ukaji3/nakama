@@ -8,7 +8,7 @@ import (
 
 // newAWSRouterDaemonCommand returns the hidden process behind the nakama
 // router (Issue #124, ADR 0029). It is an internal re-exec target, not
-// a user-facing command: `open` and `kirocrew` spawn it detached from
+// a user-facing command: `code` and `kirocrew` spawn it detached from
 // the terminal, and it routes
 // http://<code-server|kirocrew>.<instance>.nakama.localhost:<port>/ to
 // the tunnel daemons' browser forwards until it is told to stop, or no
@@ -17,7 +17,7 @@ func newAWSRouterDaemonCommand() *cobra.Command {
 	var port int
 	cmd := &cobra.Command{
 		Use:    "router-daemon",
-		Short:  "Internal: the local router of the browser forwards (used by open and kirocrew)",
+		Short:  "Internal: the local router of the browser forwards (used by code and kirocrew)",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

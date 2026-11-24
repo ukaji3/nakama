@@ -58,12 +58,12 @@ func newAWSCreateCommand() *cobra.Command {
   - An EC2 instance running Ubuntu 26.04 with code-server installed via cloud-init
   - SSM Parameter Store entries for the password and instance metadata
 
-Open code-server with ` + "`nakama aws open <name>`" + ` (an SSM port forward)
-and terminals with connect / ssh / tunnel. Nothing on the instance is
+Open code-server with ` + "`nakama aws code <name>`" + ` (an SSM port forward)
+and terminals with shell / ssh / tunnel. Nothing on the instance is
 reachable from the internet.
 
 --cloudfront also builds an internet entry path, for
-` + "`nakama aws open --internet`" + `:
+` + "`nakama aws code --internet`" + `:
 
   - An inbound rule on the security group from the CloudFront managed prefix list
   - A CloudFront VPC origin pointing at the EC2 instance
@@ -112,14 +112,14 @@ resource when the permissions are insufficient.`,
 			case out.Bare:
 				// No code-server, so no URL and no password exist.
 				fallback += "  kind              : bare (no code-server / CloudFront)\n" +
-					"  access            : nakama aws ssh setup " + out.Name + "  |  nakama aws connect " + out.Name
+					"  access            : nakama aws ssh setup " + out.Name + "  |  nakama aws shell " + out.Name
 			case out.CloudFront:
 				fallback += "  url               : " + out.URL + "\n" +
-					"  open              : nakama aws open " + out.Name + "  (over SSM; --internet for the URL above)\n" +
+					"  open              : nakama aws code " + out.Name + "  (over SSM; --internet for the URL above)\n" +
 					passwordLine
 			default:
 				fallback += "  cloudfront        : none (add it with `nakama aws cloudfront add " + out.Name + "`)\n" +
-					"  open              : nakama aws open " + out.Name + "  (over SSM)\n" +
+					"  open              : nakama aws code " + out.Name + "  (over SSM)\n" +
 					passwordLine
 			}
 			if out.IAMRole != "" {
@@ -151,11 +151,11 @@ resource when the permissions are insufficient.`,
 	cmd.Flags().StringVar(&f.dotfiles, "dotfiles", "",
 		"Dotfiles repository to clone into ~/.dotfiles and apply (install.sh/setup.sh/bootstrap.sh, else symlinks)")
 	cmd.Flags().BoolVar(&f.bare, "bare", false,
-		"Create a lightweight box without code-server, CloudFront or a password (use connect/ssh/tunnel)")
+		"Create a lightweight box without code-server, CloudFront or a password (use shell/ssh/tunnel)")
 	cmd.Flags().BoolVar(&f.noKiro, "no-kiro", false,
 		"Skip the Kiro CLI / Kiro Crew install that is performed by default")
 	cmd.Flags().BoolVar(&f.cloudFront, "cloudfront", false,
-		"Also build the CloudFront entry path (VPC origin, distribution, WAF) used by open --internet")
+		"Also build the CloudFront entry path (VPC origin, distribution, WAF) used by code --internet")
 	cmd.Flags().StringVar(&f.preset, "preset", "",
 		"Bundled provisioning recipe to apply ("+strings.Join(service.ProvisionPresetNames(), ", ")+")")
 	cmd.MarkFlagsMutuallyExclusive("with-admin", "with-role")

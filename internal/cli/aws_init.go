@@ -50,7 +50,7 @@ before the NAT gateway option keeps the NAT instance, and a new one gets
 the NAT gateway. Changing the mode of an existing environment asks first
 (--yes skips the question): the new NAT is built and checked, the
 private route is repointed (connections through the old NAT, including
-connect / ssh / tunnel sessions, drop at that moment; connect and tunnel
+shell / ssh / tunnel sessions, drop at that moment; shell and tunnel
 reconnect), and the old NAT is removed.
 
 All resources are tagged with nakama:managed=true. Existing
@@ -127,7 +127,7 @@ func initSwitchPrompt(p *service.InitPlan) string {
 			"  - repoint the private default route to the NAT gateway\n" +
 			"  - terminate the NAT instance and delete its security group (its IAM role and instance profile are kept)\n" +
 			"  The NAT gateway is charged hourly while it exists, also when every instance is stopped,\n" +
-			"  plus per GB it carries (connect / tunnel traffic included) and its Elastic IP.\n")
+			"  plus per GB it carries (shell / tunnel traffic included) and its Elastic IP.\n")
 	case service.NATModeInstance:
 		b.WriteString("nakama aws init will move the egress of the private subnets from the NAT gateway to the NAT instance:\n" +
 			"  - create the NAT instance (t4g.nano) in the public subnet and check that it forwards\n" +
@@ -140,8 +140,8 @@ func initSwitchPrompt(p *service.InitPlan) string {
 	}
 	if len(p.ActiveInstances) > 0 {
 		fmt.Fprintf(&b, "Running instances: %s.\n"+
-			"  Their outbound connections and the connect / ssh / tunnel sessions to them drop when the route is\n"+
-			"  repointed (connect and tunnel reconnect).\n", strings.Join(p.ActiveInstances, ", "))
+			"  Their outbound connections and the shell / ssh / tunnel sessions to them drop when the route is\n"+
+			"  repointed (shell and tunnel reconnect).\n", strings.Join(p.ActiveInstances, ", "))
 	}
 	b.WriteString("Continue? [y/N]: ")
 	return b.String()

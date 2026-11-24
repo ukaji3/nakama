@@ -1,5 +1,5 @@
 // Package browser launches the user's web browser in a detached,
-// non-blocking way. It exists so that `nakama aws open` (ADR 0012) can
+// non-blocking way. It exists so that `nakama aws code` (ADR 0012) can
 // hand a URL to whatever browser the desktop environment provides
 // without tying the child process to the CLI's lifetime, and so that
 // callers can distinguish "no browser launcher available on this
@@ -29,7 +29,7 @@ type Launcher interface {
 // ExecLauncher is the default Launcher. It resolves the launcher
 // command in this order of precedence:
 //
-//  1. OverrideCommand (the `--browser` flag of `nakama aws open`),
+//  1. OverrideCommand (the `--browser` flag of `nakama aws code`),
 //  2. the $BROWSER environment variable,
 //  3. a per-OS default: `open` (darwin), `xdg-open` (linux),
 //     `rundll32 url.dll,FileProtocolHandler` (windows, best effort).
@@ -103,7 +103,7 @@ func (l *ExecLauncher) commandLine() ([]string, error) {
 		return []string{"xdg-open"}, nil
 	case "windows":
 		// Best effort: nakama targets linux/darwin, but do not crash
-		// elsewhere (see design of `nakama aws open`, ADR 0012).
+		// elsewhere (see design of `nakama aws code`, ADR 0012).
 		return []string{"rundll32", "url.dll,FileProtocolHandler"}, nil
 	default:
 		return nil, fmt.Errorf(

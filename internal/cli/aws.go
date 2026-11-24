@@ -15,7 +15,7 @@ func newAWSCommand() *cobra.Command {
 		newAWSCreateCommand(),
 		newAWSListCommand(),
 		newAWSInfoCommand(),
-		newAWSOpenCommand(),
+		newAWSCodeCommand(),
 		newAWSKirocrewCommand(),
 		newAWSCloudFrontCommand(),
 		newAWSStartCommand(),
@@ -24,7 +24,7 @@ func newAWSCommand() *cobra.Command {
 		newAWSEditCommand(),
 		newAWSBackupCommand(),
 		newAWSRestoreCommand(),
-		newAWSConnectCommand(),
+		newAWSShellCommand(),
 		newAWSTunnelCommand(),
 		newAWSSSHCommand(),
 		newAWSDoctorCommand(),
@@ -34,6 +34,10 @@ func newAWSCommand() *cobra.Command {
 		newAWSRouterDaemonCommand(),
 		newAWSUpdateCommand(),
 		newAWSProfileCommand(),
+		// The names before Issue #129 (ADR 0030): hidden, and pointing
+		// to the new name on stderr.
+		deprecatedCommand(newAWSCodeCommand(), "open", "nakama aws code"),
+		deprecatedCommand(newAWSShellCommand(), "connect", "nakama aws shell"),
 	)
 	return cmd
 }

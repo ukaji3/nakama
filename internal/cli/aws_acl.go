@@ -143,7 +143,7 @@ removed.
 "delete all" removes every entry, and the added-at records with them.
 Browsers then get 403 from every nakama environment (Kiro Crew included),
 including yours, until an address is added again with
-"nakama aws acl add"; connect, ssh and tunnel do not use the allowlist.
+"nakama aws acl add"; shell, ssh and tunnel do not use the allowlist.
 It lists what it removes and asks first (--yes skips the question).
 With --keep-mine, entries that contain one of your current public IPs
 (detected as "acl add" does) are kept.`,
@@ -258,7 +258,7 @@ func aclDeleteAllPrompt(p *service.ACLDeleteAllPlan) string {
 		b.WriteString("Afterwards every nakama environment (Kiro Crew included) answers 403 to every browser,\n" +
 			"yours included, until an address is added with \"nakama aws acl add\".\n")
 	}
-	b.WriteString("connect, ssh and tunnel are not affected. [y/N]: ")
+	b.WriteString("shell, ssh and tunnel are not affected. [y/N]: ")
 	return b.String()
 }
 
@@ -344,7 +344,7 @@ func newAWSACLPruneCommand() *cobra.Command {
 whole days ("30d") or a Go duration ("36h").
 
 Only "acl add" records that time. It records it again on every run, also
-for an entry that is already there. Opening ("nakama aws open") or using
+for an entry that is already there. Opening ("nakama aws code") or using
 an environment does not, so an address you use every day still looks old
 if you have not run "acl add" from it since; run "nakama aws acl add"
 first to keep it. "nakama aws acl list" shows the time and its age.
@@ -463,7 +463,7 @@ func aclPrunePrompt(p *service.ACLPrunePlan, olderThan string, now time.Time) st
 	}
 	b.WriteString("Browsers at the deleted addresses will get 403 from every nakama environment (Kiro Crew included)\n" +
 		"until they are added again with \"nakama aws acl add\".\n")
-	b.WriteString("connect, ssh and tunnel are not affected. [y/N]: ")
+	b.WriteString("shell, ssh and tunnel are not affected. [y/N]: ")
 	return b.String()
 }
 

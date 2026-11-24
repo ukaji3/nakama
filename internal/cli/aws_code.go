@@ -24,7 +24,7 @@ import (
 	"github.com/ukaji3/nakama/internal/service"
 )
 
-// `nakama aws open` (ADR 0012, ADR 0027) opens code-server in the
+// `nakama aws code` (ADR 0012, ADR 0027) opens code-server in the
 // user's browser and, by default, completes the password login
 // automatically.
 //
@@ -47,7 +47,7 @@ import (
 // for the user to open (Issue #118); --print-url asks for the URLs
 // explicitly.
 
-// openBackend is the slice of the service layer that `open` needs.
+// openBackend is the slice of the service layer that `code` needs.
 // Tests substitute a fake; production wraps service.Service plus the
 // IP discoverer from awsx.Clients.
 type openBackend interface {
@@ -83,7 +83,7 @@ func (b *awsOpenBackend) EnsureBrowserForward(ctx context.Context, in service.Br
 	return b.svc.EnsureBrowserForward(ctx, in)
 }
 
-// openDeps bundles the collaborators of `nakama aws open` so tests can
+// openDeps bundles the collaborators of `nakama aws code` so tests can
 // exercise the full command without AWS, a real browser, or fixed
 // ports (same dependency-injection style as profileDeps).
 type openDeps struct {
@@ -148,7 +148,7 @@ const (
 	viaInternet = "internet"
 )
 
-// openResult is the machine-readable output of `open`. It NEVER
+// openResult is the machine-readable output of `code`. It NEVER
 // carries the password (JSON/YAML output must be safe to pipe/log).
 type openResult struct {
 	Name string `json:"name" yaml:"name"`
@@ -168,14 +168,14 @@ type openResult struct {
 	Note      string `json:"note,omitempty" yaml:"note,omitempty"`
 }
 
-func newAWSOpenCommand() *cobra.Command {
-	return newAWSOpenCommandWithDeps(defaultOpenDeps())
+func newAWSCodeCommand() *cobra.Command {
+	return newAWSCodeCommandWithDeps(defaultOpenDeps())
 }
 
-func newAWSOpenCommandWithDeps(deps openDeps) *cobra.Command {
+func newAWSCodeCommandWithDeps(deps openDeps) *cobra.Command {
 	f := &openFlags{}
 	cmd := &cobra.Command{
-		Use:   "open <name>",
+		Use:   "code <name>",
 		Short: "Open code-server in your browser over SSM, signed in",
 		Long: `Opens the instance's code-server in your browser and logs you in
 automatically.
@@ -211,7 +211,7 @@ request and shuts down. If the password is unavailable, code-server is
 opened without it; retrieve it with ` + "`nakama aws info <name> --show-password`" + `.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAWSOpen(cmd, args[0], f, deps)
+			return runAWSCode(cmd, args[0], f, deps)
 		},
 	}
 	addOpenFlags(cmd, f, openFlagHelp{
@@ -226,7 +226,7 @@ type openFlagHelp struct {
 	noAuth, printURL string
 }
 
-// addOpenFlags registers the flags `open` and `kirocrew` share.
+// addOpenFlags registers the flags `code` and `kirocrew` share.
 func addOpenFlags(cmd *cobra.Command, f *openFlags, help openFlagHelp) {
 	cmd.Flags().BoolVar(&f.noAuth, "no-auth", false, help.noAuth)
 	cmd.Flags().BoolVar(&f.printURL, "print-url", false, help.printURL)
@@ -240,7 +240,7 @@ func addOpenFlags(cmd *cobra.Command, f *openFlags, help openFlagHelp) {
 		"Also serve the SSM port forward on this local port, and open localhost:<port> in the browser instead of the nakama router address")
 }
 
-// validateOpenFlags checks the flags `open` and `kirocrew` share.
+// validateOpenFlags checks the flags `code` and `kirocrew` share.
 func validateOpenFlags(cmd *cobra.Command, f *openFlags) error {
 	if !cmd.Flags().Changed("local-port") {
 		return nil
@@ -254,7 +254,7 @@ func validateOpenFlags(cmd *cobra.Command, f *openFlags) error {
 	return nil
 }
 
-func runAWSOpen(cmd *cobra.Command, name string, f *openFlags, deps openDeps) error {
+func runAWSCode(cmd *cobra.Command, name string, f *openFlags, deps openDeps) error {
 	if err := validateOpenFlags(cmd, f); err != nil {
 		return err
 	}
@@ -264,9 +264,9 @@ func runAWSOpen(cmd *cobra.Command, name string, f *openFlags, deps openDeps) er
 		return err
 	}
 	if f.internet {
-		return runAWSOpenInternet(ctx, cmd, name, f, deps, backend)
+		return runAWSCodeInternet(ctx, cmd, name, f, deps, backend)
 	}
-	return runAWSOpenSSM(ctx, cmd, name, f, deps, backend)
+	return runAWSCodeSSM(ctx, cmd, name, f, deps, backend)
 }
 
 // fetchOpenInfo reads the instance, with the password when auto-login
@@ -301,7 +301,7 @@ func fetchOpenInfo(ctx context.Context, backend openBackend, name string, wantAu
 func requireCodeServer(info *service.InstanceInfo, name string) error {
 	if info.Kind == "bare" {
 		return fmt.Errorf("instance %q was created with --bare: it has no code-server to open in a browser.\n"+
-			"Use `nakama aws ssh setup %s` (desktop VS Code / JetBrains / ssh) or `nakama aws connect %s` instead", name, name, name)
+			"Use `nakama aws ssh setup %s` (desktop VS Code / JetBrains / ssh) or `nakama aws shell %s` instead", name, name, name)
 	}
 	if info.State != "running" {
 		return fmt.Errorf("instance %q is %s, not running; start it with `nakama aws start %s`",
@@ -310,9 +310,9 @@ func requireCodeServer(info *service.InstanceInfo, name string) error {
 	return nil
 }
 
-// runAWSOpenSSM opens code-server through the instance's SSM forward
+// runAWSCodeSSM opens code-server through the instance's SSM forward
 // (the default, ADR 0027).
-func runAWSOpenSSM(ctx context.Context, cmd *cobra.Command, name string, f *openFlags, deps openDeps, backend openBackend) error {
+func runAWSCodeSSM(ctx context.Context, cmd *cobra.Command, name string, f *openFlags, deps openDeps, backend openBackend) error {
 	stderr := cmd.ErrOrStderr()
 	info, wantAuth, authSkipReason, err := fetchOpenInfo(ctx, backend, name, !f.noAuth)
 	if err != nil {
@@ -343,8 +343,8 @@ func runAWSOpenSSM(ctx context.Context, cmd *cobra.Command, name string, f *open
 	return runPlainOpen(ctx, cmd, f, deps, view, bf.Origin, authSkipReason, stderr)
 }
 
-// runAWSOpenInternet opens the CloudFront URL (--internet, ADR 0012).
-func runAWSOpenInternet(ctx context.Context, cmd *cobra.Command, name string, f *openFlags, deps openDeps, backend openBackend) error {
+// runAWSCodeInternet opens the CloudFront URL (--internet, ADR 0012).
+func runAWSCodeInternet(ctx context.Context, cmd *cobra.Command, name string, f *openFlags, deps openDeps, backend openBackend) error {
 	stderr := cmd.ErrOrStderr()
 	info, wantAuth, authSkipReason, err := fetchOpenInfo(ctx, backend, name, !f.noAuth)
 	if err != nil {
@@ -491,7 +491,7 @@ func serveOneShot(ctx context.Context, cmd *cobra.Command, f *openFlags, deps op
 	}
 }
 
-// openView is what the result of `open` describes.
+// openView is what the result of `code` describes.
 type openView struct {
 	name      string
 	url       string
@@ -600,7 +600,7 @@ type allowlistChecker interface {
 // warnIfNotAllowlisted checks the caller's public IPv4 against the WAF
 // allowlist and prints a stderr warning when it is not covered. The
 // check is strictly best-effort (ADR 0012): any failure is logged at
-// debug level and must never break `open` or `cloudfront add`.
+// debug level and must never break `code` or `cloudfront add`.
 func warnIfNotAllowlisted(ctx context.Context, backend allowlistChecker, stderr io.Writer) {
 	ip, err := backend.PublicIPv4(ctx)
 	if err != nil {
@@ -629,7 +629,7 @@ func warnIfNotAllowlisted(ctx context.Context, backend allowlistChecker, stderr 
 			return
 		}
 	}
-	// Best-effort warning; a stderr write failure must not break `open`.
+	// Best-effort warning; a stderr write failure must not break `code`.
 	_, _ = fmt.Fprintf(stderr,
 		"warning: your public IP %s is not in the WAF allowlist; the URL will return 403. Add it with `nakama aws acl add`.\n", addr)
 }

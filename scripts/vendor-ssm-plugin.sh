@@ -2,7 +2,7 @@
 # vendor-ssm-plugin.sh
 #
 # Re-imports the AWS Session Manager plugin source into third_party/ so
-# that `nakama aws connect` can drive Session Manager from a single Go
+# that `nakama aws shell` can drive Session Manager from a single Go
 # binary (see docs/adr/0005-aws-connect-via-session-manager.md, 案3).
 #
 # The upstream repo (github.com/aws/session-manager-plugin) is NOT a

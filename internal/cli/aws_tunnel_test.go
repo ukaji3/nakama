@@ -8,7 +8,7 @@ import (
 	"github.com/ukaji3/nakama/internal/service"
 )
 
-// TestFormatTunnelStatusLabelsBrowserForwards: the forwards of `open`
+// TestFormatTunnelStatusLabelsBrowserForwards: the forwards of `code`
 // and `kirocrew` are named in `tunnel status`, and the idle state shows
 // as such (Issue #118).
 func TestFormatTunnelStatusLabelsBrowserForwards(t *testing.T) {
@@ -52,7 +52,7 @@ func TestFormatRouterSection(t *testing.T) {
 		t.Errorf("plain -L forwards without a router need no section: %q", got)
 	}
 	notRunning := formatRouterSection(nil, []*service.TunnelStatus{browser}, false)
-	if !strings.Contains(notRunning, "router: not running") || !strings.Contains(notRunning, "nakama aws open <name>") {
+	if !strings.Contains(notRunning, "router: not running") || !strings.Contains(notRunning, "nakama aws code <name>") {
 		t.Errorf("not running:\n%s", notRunning)
 	}
 	one := formatRouterSection(router, []*service.TunnelStatus{browser}, false)

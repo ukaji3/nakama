@@ -36,7 +36,7 @@ waits up to 30 seconds for the new session. A forward that has not been
 used for 5 minutes does not reconnect until the next connection
 arrives (state "idle"). After a credential error the daemon retries
 every minute, so ` + "`nakama aws login`" + ` is enough to bring it back.
-` + "`nakama aws open`" + ` and ` + "`nakama aws kirocrew`" + ` add their forwards to the
+` + "`nakama aws code`" + ` and ` + "`nakama aws kirocrew`" + ` add their forwards to the
 same daemon, on a free local port, and reach them through the nakama
 router (ADR 0029).
 
@@ -67,7 +67,7 @@ Examples:
 		Short: "Restart port forwarding with the same forwards (e.g. after re-login)",
 		Long: `Stop the tunnel daemon (if it is still alive) and start a new one
 with the forwards recorded in the tunnel state file (including those
-` + "`open`" + ` and ` + "`kirocrew`" + ` added). The new daemon picks up this
+` + "`code`" + ` and ` + "`kirocrew`" + ` added). The new daemon picks up this
 process's current AWS credentials and nakama version. A running daemon
 already retries after credential errors by itself, so this is mostly
 for a daemon started by an older nakama, or for dead forwards. To
@@ -249,7 +249,7 @@ func formatTunnelStatus(st *service.TunnelStatus, now time.Time) string {
 }
 
 // forwardLabel is the FORWARD column: the -L spec, plus what nakama
-// opened it for (`open` / `kirocrew`).
+// opened it for (`code` / `kirocrew`).
 func forwardLabel(f service.ForwardStatus) string {
 	if f.Purpose == service.ForwardPurposeNone {
 		return f.Spec
@@ -332,7 +332,7 @@ func formatRouterSection(router *service.RouterStatus, statuses []*service.Tunne
 		if !browser {
 			return ""
 		}
-		return "\nrouter: not running; `nakama aws open <name>` and `nakama aws kirocrew <name>` start it\n"
+		return "\nrouter: not running; `nakama aws code <name>` and `nakama aws kirocrew <name>` start it\n"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nrouter: running on localhost:%d (pid %d)\n", router.Port, router.PID)

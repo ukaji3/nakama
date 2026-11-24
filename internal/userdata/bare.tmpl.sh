@@ -3,7 +3,7 @@
 # Rendered from internal/userdata/bare.tmpl.sh
 #
 # A bare instance carries no browser IDE, no CloudFront distribution and
-# no password: it is reached with `nakama aws connect`, `nakama aws ssh`
+# no password: it is reached with `nakama aws shell`, `nakama aws ssh`
 # and `nakama aws tunnel` (Issue #52). This script therefore only makes
 # the instance a usable development box.
 #

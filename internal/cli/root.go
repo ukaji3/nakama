@@ -32,8 +32,8 @@ func NewRootCommand() *cobra.Command {
 
 Each instance runs coder/code-server on a private-subnet EC2 instance
 with no inbound rule. The browser reaches it through an AWS Systems
-Manager (SSM) Session Manager port forward (` + "`nakama aws open`" + `), and
-terminals through SSM as well (connect, ssh, tunnel).
+Manager (SSM) Session Manager port forward (` + "`nakama aws code`" + `), and
+terminals through SSM as well (shell, ssh, tunnel).
 
 An instance can also get an internet entry path: a CloudFront
 distribution that uses the VPC Origins feature, restricted by an AWS

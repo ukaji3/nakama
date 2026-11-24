@@ -177,7 +177,7 @@ func (s *Service) resolveCustomProfileSelection(ctx context.Context, roleName st
 
 	// Best-effort: warn when the role carries neither
 	// AmazonSSMManagedInstanceCore nor AdministratorAccess. Without SSM
-	// permissions, `nakama aws connect`/`update` (Session Manager, Run
+	// permissions, `nakama aws shell`/`update` (Session Manager, Run
 	// Command) and the userdata password fetch will not work.
 	s.warnIfRoleLacksCorePolicies(ctx, roleName)
 
@@ -246,7 +246,7 @@ func (s *Service) warnIfRoleLacksCorePolicies(ctx context.Context, roleName stri
 		marker = out.Marker
 	}
 	slog.Warn("iam: role has neither AmazonSSMManagedInstanceCore nor AdministratorAccess attached; "+
-		"SSM-based features (nakama aws connect/update) and the userdata password fetch may not work",
+		"SSM-based features (nakama aws shell/update) and the userdata password fetch may not work",
 		"role", roleName)
 }
 

@@ -142,13 +142,13 @@ func restoreSummary(r *service.RestoreResult) string {
 	switch {
 	case r.Bare:
 		s += "  kind              : bare (no code-server / CloudFront)\n" +
-			"  access            : nakama aws ssh setup " + r.Name + "  |  nakama aws connect " + r.Name
+			"  access            : nakama aws ssh setup " + r.Name + "  |  nakama aws shell " + r.Name
 	case r.CloudFront:
 		s += "  url               : " + r.URL + "\n" +
 			"  password          : new (use `nakama aws info " + r.Name + " --show-password`)"
 	default:
 		s += "  cloudfront        : none (add it with `nakama aws cloudfront add " + r.Name + "`)\n" +
-			"  open              : nakama aws open " + r.Name + "  (over SSM, once started)\n" +
+			"  open              : nakama aws code " + r.Name + "  (over SSM, once started)\n" +
 			"  password          : new (use `nakama aws info " + r.Name + " --show-password`)"
 	}
 	if r.IAMRole != "" {

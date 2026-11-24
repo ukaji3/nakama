@@ -60,7 +60,7 @@ func OpenSessionPayload() (*os.File, error) {
 	f := os.NewFile(sessionPayloadFD, "nakama-session-payload")
 	if f == nil {
 		return nil, fmt.Errorf("session payload fd %d is not open; "+
-			"`nakama aws session-runner` is an internal command spawned by `nakama aws connect`",
+			"`nakama aws session-runner` is an internal command spawned by `nakama aws shell`",
 			sessionPayloadFD)
 	}
 	return f, nil

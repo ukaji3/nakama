@@ -33,7 +33,7 @@ func TestInitSwitchPrompt(t *testing.T) {
 	for _, want := range []string{
 		"from the NAT instance to a NAT gateway", "Elastic IP", "terminate the NAT instance",
 		"IAM role and instance profile are kept", "charged hourly", "also when every instance is stopped",
-		"Running instances: dev01, dev02", "connect / ssh / tunnel sessions", "drop", "[y/N]: ",
+		"Running instances: dev01, dev02", "shell / ssh / tunnel sessions", "drop", "[y/N]: ",
 	} {
 		if !strings.Contains(toGateway, want) {
 			t.Errorf("to-gateway prompt lacks %q:\n%s", want, toGateway)

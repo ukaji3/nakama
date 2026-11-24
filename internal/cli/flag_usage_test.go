@@ -66,9 +66,9 @@ func TestCloudFrontFlagHelp(t *testing.T) {
 		flag string
 		want string
 	}{
-		{newAWSCreateCommand(), "cloudfront", "used by open --internet"},
+		{newAWSCreateCommand(), "cloudfront", "used by code --internet"},
 		{newAWSRestoreCommand(), "cloudfront", "as create --cloudfront does"},
-		{newAWSOpenCommand(), "internet", "added with nakama aws cloudfront add"},
+		{newAWSCodeCommand(), "internet", "added with nakama aws cloudfront add"},
 		{newAWSKirocrewCommand(), "internet", "added with nakama aws cloudfront add"},
 	} {
 		var line string

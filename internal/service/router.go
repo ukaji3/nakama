@@ -107,7 +107,7 @@ func parseRouterHost(host string, port int) (ForwardPurpose, string, bool) {
 
 // findBrowserForward returns the forward a browser uses for the
 // instance-side port remotePort: the first forward to that port of the
-// instance itself (no remote host) that is not dead. `open` / `kirocrew`
+// instance itself (no remote host) that is not dead. `code` / `kirocrew`
 // reuse exactly this forward (EnsureBrowserForward), and the router
 // routes to it, so the two never disagree. dead is the last dead
 // forward to the port, for explaining why none is usable.
@@ -472,7 +472,7 @@ var routerPageTemplate = template.Must(template.New("router").Parse(`<!DOCTYPE h
 `))
 
 // routerErrorHeader marks the router's own error pages, so the
-// readiness check of `open` does not take them for an answer of
+// readiness check of `code` does not take them for an answer of
 // code-server or Kiro Crew. Its value is the page title.
 const routerErrorHeader = "X-Nakama-Router-Error"
 
@@ -491,7 +491,7 @@ func openCommand(p ForwardPurpose, name string) string {
 	if p == ForwardPurposeKiroCrew {
 		return "nakama aws kirocrew " + name
 	}
-	return "nakama aws open " + name
+	return "nakama aws code " + name
 }
 
 func routeErrorPage(e *routeError) routerPage {

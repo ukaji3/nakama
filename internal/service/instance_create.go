@@ -44,7 +44,7 @@ type CreateInstanceInput struct {
 
 	// Bare creates a lightweight development box: no code-server, no
 	// password, no CloudFront distribution and no VPC origin. Reached
-	// with connect / ssh / tunnel instead of a browser (Issue #52).
+	// with shell / ssh / tunnel instead of a browser (Issue #52).
 	Bare bool
 
 	// CloudFront also builds the internet entry path: the security
@@ -84,7 +84,7 @@ type CreateInstanceOutput struct {
 
 	// CloudFront reports that the instance was given the CloudFront
 	// entry path (--cloudfront, ADR 0028). Without it URL is empty and
-	// the browser reaches code-server with `nakama aws open`.
+	// the browser reaches code-server with `nakama aws code`.
 	CloudFront bool `json:"cloudfront"`
 
 	// Provision reports the post-create provisioning outcome when

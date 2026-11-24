@@ -31,7 +31,7 @@ type ForwardSpec struct {
 	// RemotePort is the target port.
 	RemotePort string
 	// Purpose marks the forwards nakama opens for a browser itself
-	// (`nakama aws open` / `nakama aws kirocrew`). It selects the HTTP
+	// (`nakama aws code` / `nakama aws kirocrew`). It selects the HTTP
 	// health check the daemon runs through the forward and the label in
 	// `tunnel status`. Forwards given with -L have none.
 	Purpose ForwardPurpose
@@ -46,7 +46,7 @@ const (
 	// about its protocol and runs no health check through it.
 	ForwardPurposeNone ForwardPurpose = ""
 	// ForwardPurposeCodeServer is the code-server forward of
-	// `nakama aws open`.
+	// `nakama aws code`.
 	ForwardPurposeCodeServer ForwardPurpose = "code-server"
 	// ForwardPurposeKiroCrew is the Kiro Crew forward of
 	// `nakama aws kirocrew`.
@@ -307,7 +307,7 @@ func writeTunnelState(st *TunnelState) error {
 }
 
 // rewriteTunnelState replaces the state file of a running daemon (the
-// forward list grows when `open` adds a forward, Issue #118). It only
+// forward list grows when `code` adds a forward, Issue #118). It only
 // replaces a file that still carries st.Token, i.e. one this daemon
 // generation owns, and swaps it in with a rename so a reader never sees
 // a half-written file.
@@ -443,7 +443,7 @@ const (
 // daemon's control channel and rendered by `tunnel status`.
 type ForwardStatus struct {
 	Spec string `json:"spec"`
-	// Purpose is set for the forwards of `open` / `kirocrew`.
+	// Purpose is set for the forwards of `code` / `kirocrew`.
 	Purpose   ForwardPurpose `json:"purpose,omitempty"`
 	State     ForwardState   `json:"state"`
 	Detail    string         `json:"detail,omitempty"`
