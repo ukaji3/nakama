@@ -59,6 +59,15 @@
 ## 確認
 
 - 単体テスト: 古い名前が新しいものと同じ引数・フラグ・ヘルプの文を持ち、ヘルプの一覧に出ず、知らせが stderr だけに出ること (本物の `os.Stdout` と `os.Stderr` を差し替えて確かめる) と、`connect` が `<name>` の後ろをすべてリモートのコマンドとして扱うこと (`deprecated_test.go`)。`create` の位置引数と `--name` の組み合わせ (`aws_create_test.go`)。`--alias` と `--name` の組み合わせ、食い違いで sign-in も identity の解決も始めないこと (`aws_login_test.go`、`aws_profile_test.go`)。`cloudfront add --kirocrew` の順序・途中の失敗・JSON と YAML の出力、`cloudfront delete --kirocrew` の確認と後片付け (`aws_cloudfront_test.go`)。`kirocrew enable|disable` が元の処理のまま知らせを出すこと (`aws_kirocrew_test.go`)。`backup delete` の確認、`--yes`、答えが無いとき、知らないラベル (`aws_backup_test.go`、`backup_test.go`)。`-t` (`aws_shell_test.go`)。フラグの説明が大文字で始まること (`flag_usage_test.go`)。`Deprecated` の設定、`cloudfront delete --kirocrew` の確認の分岐、`EnableKiroCrewWeb` の呼び出し、`--show-nat` の説明の大文字を元に戻すと、テストが失敗することも確かめた。
+- 実機 (2026-11-24、一時インスタンス `t4g.medium`、Ubuntu 26.04、Kiro Crew 入り。このブランチを Issue #130 の gorilla/websocket の更新に載せたバイナリ。Linux の手元から直接の接続。ブラウザの代わりに、1 回限りのページを読んでフォームを送るスクリプトを使った)
+  - `create <name>` でインスタンスができた。`--name` を違う値で重ねたときと、名前が無いときは、AWS を呼ばずにエラーになった。
+  - `code --local-port` で code-server に自動でサインインし、セッションの Cookie と画面 (200) を得た。古い `open` も同じに動き、知らせは stderr だけに出て、`-o json` の stdout はそのまま JSON として読めた。`kirocrew --local-port` はトークンでサインインした。
+  - `shell <name> <cmd>` は stdout と stderr を分けて返し、終了コード 3 で終わった。古い `connect` は知らせを出して終了コード 4 を返した。`shell -t <name> tty` は `/dev/pts/N` を、`-t` なしは `not a tty` を返した。パイプから流した対話シェルも動いた。
+  - `provision --setup` が手順を実行した。古い `setup rerun` は知らせを出して同じことをした。フラグが無ければエラーになった。
+  - `backup delete` は、`n` で中止し、標準入力が無ければエラーで何も消さず、知らないラベルでは確認の前に止まり、`-y` で消した。
+  - `doctor -o json` の項目名は `capability: code`・`shell`・`cloudfront --kirocrew`・`update / provision` で、古い名前は無かった。
+  - `cloudfront add <name> --kirocrew` は約 25 分で終わり、2 つの distribution は WAF を通って応答した (code-server は 302、Kiro Crew は 401)。`code --internet` は自動でサインインした。`cloudfront delete --kirocrew` は、`n` で中止し、`y` で Kiro Crew の分 (distribution、nginx のサイト、code-server の drop-in) だけを消し、code-server の distribution は 302 を返し続けた。続けて `cloudfront delete --yes` と `delete` で片付けた。
+  - 確かめていないこと: ルーター経由で開くこと (手元で動いている利用者のルーターを置き換えないよう `--local-port` を使った。ルーターの変更はエラーのページの文言だけ)。`kirocrew --internet` のサインイン (代わりのスクリプトでは、改名の前のバイナリでも同じく 401 になった。本物のブラウザでは確かめていない)。会社のプロキシの配下、Windows、macOS。
 
 ## Alternatives considered
 
