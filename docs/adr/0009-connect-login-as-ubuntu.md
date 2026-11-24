@@ -1,6 +1,6 @@
 # ADR 0009: `nakama aws connect` は ubuntu ユーザーでログインする
 
-- Status: Accepted
+- Status: Accepted (コマンド名は ADR 0030 で `nakama aws shell` に変えた。`connect` は v0.30.x の間、非推奨の古い名前として動く)
 - Date: 2026-07-09
 - Context: nakama v1.x `connect` の UX 改善 (ADR 0005 の精緻化)
 

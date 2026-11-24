@@ -1,6 +1,6 @@
 # ADR 0021: connect のコマンド実行は出力を枠で包んで受け取り、標準入力を読まない
 
-- Status: Accepted
+- Status: Accepted (コマンド名は ADR 0030 で `nakama aws shell` に変えた。`connect` は v0.30.x の間、非推奨の古い名前として動く)
 - Date: 2026-10-06
 - Issue: [#70](https://github.com/ukaji3/nakama/issues/70)、[#75](https://github.com/ukaji3/nakama/issues/75)、[#77](https://github.com/ukaji3/nakama/issues/77)
 

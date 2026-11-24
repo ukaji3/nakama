@@ -1,6 +1,6 @@
 # ADR 0028: CloudFront はインスタンスごとの任意にし、既定では作らない
 
-- Status: Accepted
+- Status: Accepted (Kiro Crew の distribution を作る・消すのは、ADR 0030 で `cloudfront add|delete <name> --kirocrew` になった (旧 `kirocrew enable|disable`))
 - Date: 2026-11-20
 - Issue: [#120](https://github.com/ukaji3/nakama/issues/120)
 - 関連: ADR 0001 (CloudFront VPC Origins。すべての code-server インスタンスに作る前提を、この ADR が改める)、ADR 0002 (WAF。共有の IP set と web ACL は init が作るまま)、ADR 0020 (Kiro Crew の Web 画面。code-server の distribution の上に作る)、ADR 0023 (削除済みインスタンスの作り直し)、ADR 0027 (ブラウザは既定で SSM)
