@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -78,5 +79,22 @@ func TestShellTTYShorthand(t *testing.T) {
 		if got := cmd.Flags().Args(); fmt.Sprint(got) != fmt.Sprint(tc.wantArgs) {
 			t.Errorf("%v: args %v, want %v", tc.args, got, tc.wantArgs)
 		}
+	}
+}
+
+// TestShellAndCLIShellTellThemselvesApart: the instance shell and the
+// local aws CLI subshell share the word "shell", so each help points to
+// the other (Issue #129).
+func TestShellAndCLIShellTellThemselvesApart(t *testing.T) {
+	t.Parallel()
+	cliShell, _, err := newAWSCLICommand().Find([]string{"shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"nakama aws shell <name>"`; !strings.Contains(cliShell.Long, want) {
+		t.Errorf("cli shell help does not point to %s", want)
+	}
+	if want := `"nakama aws cli shell" (Windows)`; !strings.Contains(newAWSShellCommand().Long, want) {
+		t.Errorf("shell help does not point to %s", want)
 	}
 }
