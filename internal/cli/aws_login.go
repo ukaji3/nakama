@@ -59,12 +59,10 @@ func newAWSLoginCommand() *cobra.Command {
 }
 
 func newAWSLoginCommandWithDeps(deps loginDeps) *cobra.Command {
-	var (
-		remote bool
-		alias  string
-	)
+	var remote bool
+	aliases := &aliasFlags{}
 	cmd := &cobra.Command{
-		Use:   "login [--remote] [--name <alias>]",
+		Use:   "login [--remote] [--alias <alias>]",
 		Short: "Sign in with AWS Management Console credentials (no aws CLI required)",
 		Long: `Signs in for local development using your AWS Management Console session,
 natively implementing the ` + "`aws login`" + ` protocol (OAuth 2.0 authorization code
@@ -83,6 +81,12 @@ open it in a browser on another device and paste the verification code shown
 after signing in.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Before the browser opens: a conflicting alias is an
+			// error of this command line, not of the sign-in.
+			alias, err := aliases.resolve(cmd)
+			if err != nil {
+				return err
+			}
 			ctx := withCancel(cmd)
 			errOut := cmd.ErrOrStderr()
 
@@ -168,7 +172,6 @@ after signing in.`,
 	}
 	cmd.Flags().BoolVar(&remote, "remote", false,
 		"Do not start a local callback server or open a browser; display the URL and prompt for the pasted verification code (for SSH/headless hosts)")
-	cmd.Flags().StringVar(&alias, "name", "",
-		"Alias for the saved profile (default: the AWS account ID)")
+	addAliasFlags(cmd, aliases)
 	return cmd
 }
