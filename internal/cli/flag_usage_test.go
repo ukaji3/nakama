@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/spf13/cobra"
 )
@@ -82,5 +83,44 @@ func TestCloudFrontFlagHelp(t *testing.T) {
 		if !strings.Contains(line, "--"+c.flag+"  ") || !strings.Contains(line, c.want) {
 			t.Errorf("%s --%s: help line %q, want no value name and %q", c.cmd.Name(), c.flag, line, c.want)
 		}
+	}
+}
+
+// lowercaseUsageWords may start a flag's description in lowercase: the
+// names of programs, which are written that way.
+var lowercaseUsageWords = map[string]bool{"sshd": true}
+
+// TestFlagUsagesStartWithACapital: every flag description in the
+// public help starts like a sentence (`list --show-nat` did not, Issue
+// #129). Hidden commands (the daemons) are internal and not checked;
+// hidden flags do not appear in FlagUsages. Like the test above, it
+// reads flags through cobra only, so pflag stays an indirect module.
+// Not parallel: NewRootCommand writes the global flag variables, which
+// the other walk (parallel) writes too.
+func TestFlagUsagesStartWithACapital(t *testing.T) {
+	checked := 0
+	var visit func(cmd *cobra.Command)
+	visit = func(cmd *cobra.Command) {
+		if cmd.Hidden {
+			return
+		}
+		for _, m := range flagHelpLine.FindAllStringSubmatch(cmd.LocalNonPersistentFlags().FlagUsages(), -1) {
+			f := cmd.Flags().Lookup(m[1])
+			if f == nil || f.Usage == "" {
+				continue
+			}
+			checked++
+			first := strings.Fields(f.Usage)[0]
+			if r := []rune(first)[0]; unicode.IsLower(r) && !lowercaseUsageWords[first] {
+				t.Errorf("%s --%s: the description starts in lowercase: %q", cmd.CommandPath(), f.Name, f.Usage)
+			}
+		}
+		for _, sub := range cmd.Commands() {
+			visit(sub)
+		}
+	}
+	visit(NewRootCommand())
+	if checked < 50 {
+		t.Fatalf("checked only %d flags; the command tree walk is broken", checked)
 	}
 }
