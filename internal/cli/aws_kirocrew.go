@@ -26,7 +26,7 @@ type kirocrewBackend interface {
 
 type kirocrewDeps struct {
 	connect func(ctx context.Context) (kirocrewBackend, error)
-	open    openDeps // launcher, listener and page token, shared with `open`
+	open    openDeps // launcher, listener and page token, shared with `code`
 }
 
 func defaultKirocrewDeps() kirocrewDeps {
@@ -97,7 +97,7 @@ The same WAF allowlist as code-server applies (` + "`nakama aws acl add`" + `).
 Opening mints a dashboard token on the instance (returned encrypted to
 this process) and hands it to the browser through a one-shot page on
 127.0.0.1; with --internet the code-server password goes along, exactly
-like ` + "`nakama aws open --internet`" + `. Neither value is written to disk or
+like ` + "`nakama aws code --internet`" + `. Neither value is written to disk or
 logged.
 
 "enable" and "disable" are subcommands, so they cannot be used as

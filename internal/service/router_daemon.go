@@ -143,7 +143,7 @@ var (
 	// daemons.
 	routerIdleCheckInterval = 15 * time.Second
 	// routerIdleExit is how long the router keeps running without any
-	// tunnel daemon. `open` starts the router before the tunnel daemon,
+	// tunnel daemon. `code` starts the router before the tunnel daemon,
 	// so this also covers the start.
 	routerIdleExit = time.Minute
 )

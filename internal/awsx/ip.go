@@ -30,7 +30,7 @@ const IPCheckRounds = 3
 // the network configuration and to fail rather than guess.
 type IPDiscoverer interface {
 	// PublicIPv4 asks checkip.amazonaws.com once: a quick check for
-	// "is this machine allowlisted" (open, doctor).
+	// "is this machine allowlisted" (code, doctor).
 	PublicIPv4(ctx context.Context) (string, error)
 	// DetectPublicIPv4s asks every check site IPCheckRounds times and
 	// returns the distinct public IPv4 addresses seen, for the commands

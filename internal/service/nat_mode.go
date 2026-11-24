@@ -96,7 +96,7 @@ type InitPlan struct {
 	From   string `json:"from,omitempty"`
 	// ActiveInstances lists the code-server instances that are pending
 	// or running when Switch is set: their outbound connections, and the
-	// connect / ssh / tunnel sessions to them, drop when the private
+	// shell / ssh / tunnel sessions to them, drop when the private
 	// route is repointed.
 	ActiveInstances []string `json:"active_instances,omitempty"`
 }

@@ -315,8 +315,8 @@ func TestRouterErrorPagesSayWhatToDo(t *testing.T) {
 		host string
 		want []string
 	}{
-		{"code-server.dev01.nakama.localhost:18888", []string{"no tunnel is running for dev01", "nakama aws open dev01"}},
-		{"code-server.dev02.nakama.localhost:18888", []string{"has ended: the instance no longer exists &lt;script&gt;", "nakama aws open dev02", "nakama aws tunnel status dev02"}},
+		{"code-server.dev01.nakama.localhost:18888", []string{"no tunnel is running for dev01", "nakama aws code dev01"}},
+		{"code-server.dev02.nakama.localhost:18888", []string{"has ended: the instance no longer exists &lt;script&gt;", "nakama aws code dev02", "nakama aws tunnel status dev02"}},
 		{"kirocrew.dev03.nakama.localhost:18888", []string{"has no kirocrew forward", "nakama aws kirocrew dev03"}},
 	} {
 		resp := routerGet(t, router, http.MethodGet, tc.host, "/", nil)

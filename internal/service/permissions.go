@@ -57,7 +57,7 @@ var (
 		"ssm:GetParameter",
 	}
 
-	// sessionActions: SSM sessions as used by connect/ssh/tunnel.
+	// sessionActions: SSM sessions as used by shell/ssh/tunnel.
 	// ssm:ResumeSession is called inside the vendored
 	// session-manager-plugin, not via awsx (see implicitActions).
 	sessionActions = []string{
@@ -99,7 +99,7 @@ var (
 	egressActions = mergeActions(natLifecycleActions, []string{"ec2:DescribeNatGateways"})
 
 	// natLookupActions: currentNATMode (nat_instance.go), which names the
-	// NAT in the TargetNotConnected hint of connect / ssh / tunnel.
+	// NAT in the TargetNotConnected hint of shell / ssh / tunnel.
 	natLookupActions = []string{
 		"ec2:DescribeInstances",
 		"ec2:DescribeNatGateways",
@@ -300,8 +300,8 @@ func featurePermissionMatrix() []FeaturePermission {
 			Simulate: true,
 		},
 		{
-			Feature:  "open",
-			Commands: "nakama aws open",
+			Feature:  "code",
+			Commands: "nakama aws code",
 			Actions: mergeActions(
 				resolveInstanceActions,
 				sessionActions, // the SSM port forward (the default, ADR 0027)
@@ -374,8 +374,8 @@ func featurePermissionMatrix() []FeaturePermission {
 			Simulate: true,
 		},
 		{
-			Feature:  "connect",
-			Commands: "nakama aws connect",
+			Feature:  "shell",
+			Commands: "nakama aws shell",
 			Actions:  mergeActions(resolveInstanceActions, sessionActions, natLookupActions),
 			Note: "ec2:DescribeNatGateways は TargetNotConnected の案内で NAT の方式を調べるときだけ使い、" +
 				"失敗しても案内の内容が一般的になるだけ",

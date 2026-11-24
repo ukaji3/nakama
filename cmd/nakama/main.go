@@ -25,7 +25,7 @@ func main() {
 		var ec *service.ExitCodeError
 		isExitCode := errors.As(err, &ec)
 		// cobra already printed the error; the blank line separates it.
-		// A remote command's exit status (`nakama aws connect <name>
+		// A remote command's exit status (`nakama aws shell <name>
 		// <command>`, ADR 0021) is reported like ssh does: no output.
 		if !isExitCode || !ec.Remote {
 			fmt.Fprintln(os.Stderr)

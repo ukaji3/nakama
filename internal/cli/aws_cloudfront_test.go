@@ -86,7 +86,7 @@ func TestCloudFrontAdd(t *testing.T) {
 	if strings.Join(b.added, ",") != "dev01" {
 		t.Errorf("added %v", b.added)
 	}
-	for _, want := range []string{"CloudFront added", "https://d1.cloudfront.net", "nakama aws open --internet dev01"} {
+	for _, want := range []string{"CloudFront added", "https://d1.cloudfront.net", "nakama aws code --internet dev01"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -123,7 +123,7 @@ func TestCloudFrontDelete_AsksFirst(t *testing.T) {
 	}
 	for _, want := range []string{
 		`Delete the CloudFront access of "dev01"?`, "E1 (https://d1.cloudfront.net)", "E2 (https://d2.cloudfront.net)",
-		"vo-1", "8080/tcp", "sg-1", "new ones", "nakama aws open dev01", "[y/N]: ",
+		"vo-1", "8080/tcp", "sg-1", "new ones", "nakama aws code dev01", "[y/N]: ",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, out)
@@ -167,7 +167,7 @@ func TestCloudFrontDelete_WithoutCloudFront(t *testing.T) {
 	if asked || err != nil || len(b.deleted) != 1 {
 		t.Fatalf("asked %v, err %v, deleted %d", asked, err, len(b.deleted))
 	}
-	if !strings.Contains(out, "removed the leftover inbound rule") || strings.Contains(out, "nakama aws open") {
+	if !strings.Contains(out, "removed the leftover inbound rule") || strings.Contains(out, "nakama aws code") {
 		t.Errorf("summary for a bare instance:\n%s", out)
 	}
 	b.delOut = &service.DeleteCloudFrontOutput{Name: "box1"}
@@ -182,7 +182,7 @@ func TestCloudFrontDeleteSummary_StoppedInstanceNote(t *testing.T) {
 	s := cloudFrontDeleteSummary(withCloudFrontPlan(), &service.DeleteCloudFrontOutput{
 		Name: "dev01", KiroCrewDistributionID: "E2", InstanceSkipped: true,
 	})
-	for _, want := range []string{"not running", "nakama aws start dev01", "nakama aws kirocrew disable dev01", "nakama aws open dev01"} {
+	for _, want := range []string{"not running", "nakama aws start dev01", "nakama aws kirocrew disable dev01", "nakama aws code dev01"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("summary lacks %q:\n%s", want, s)
 		}
@@ -248,7 +248,7 @@ func TestCreateCommand_BareAndCloudFrontMutuallyExclusive(t *testing.T) {
 func TestFormatInfo_CloudFrontOrNot(t *testing.T) {
 	t.Parallel()
 	without := formatInfo(&service.InstanceInfo{Name: "dev01", Kind: "vscode"}, false)
-	for _, want := range []string{"cloudfront        : none", "nakama aws open dev01", "nakama aws cloudfront add dev01"} {
+	for _, want := range []string{"cloudfront        : none", "nakama aws code dev01", "nakama aws cloudfront add dev01"} {
 		if !strings.Contains(without, want) {
 			t.Errorf("info without CloudFront lacks %q:\n%s", want, without)
 		}

@@ -22,7 +22,7 @@ import (
 // instance name; each forward is a forwardRunner (tunnel_forward.go,
 // ADR 0027) that owns the local port and supervises the SSM
 // port-forwarding sessions behind it. Forwards can be added while the
-// daemon runs (`nakama aws open` / `kirocrew`, Issue #118).
+// daemon runs (`nakama aws code` / `kirocrew`, Issue #118).
 
 // forwardTracker holds the observable state of every forward. It is
 // written by the forward runners (through forwardReport) and read by
@@ -58,7 +58,7 @@ func (t *forwardTracker) add(f ForwardSpec) int {
 }
 
 // reset puts forward i back to the connecting state for a new runner
-// (a dead forward revived by `open`).
+// (a dead forward revived by `code`).
 func (t *forwardTracker) reset(i int, f ForwardSpec) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

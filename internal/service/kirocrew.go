@@ -515,7 +515,7 @@ func kirocrewSetupAdvice(name string, err error) error {
 		"Kiro Crew and its gateway service must be running on the instance first. Install (or repair) them with:\n"+
 		"  nakama aws setup rerun %s --preset kiro\n"+
 		"then run `nakama aws kirocrew enable %s` again; it continues where it stopped.\n"+
-		"If Kiro Crew is installed but only the service is missing: nakama aws connect %s 'chmod -R go-w ~/.kiro && kirocrew service install'",
+		"If Kiro Crew is installed but only the service is missing: nakama aws shell %s 'chmod -R go-w ~/.kiro && kirocrew service install'",
 		err, name, name, name)
 }
 

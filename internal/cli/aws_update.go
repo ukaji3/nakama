@@ -63,7 +63,7 @@ warning. Restarting Kiro Crew ends its running sessions.`,
 			if out.KiroCrew == service.KiroCrewFailed {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 					"warning: kirocrew update or kirocrew restart failed on %s; run them there as ubuntu "+
-						"(\"nakama aws connect %s\") to see why\n", name, name)
+						"(\"nakama aws shell %s\") to see why\n", name, name)
 			}
 			return renderOutput(cmd.OutOrStdout(), global.Output, out, updateSummary(name, out))
 		},

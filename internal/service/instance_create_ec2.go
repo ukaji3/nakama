@@ -51,7 +51,7 @@ func instanceResourceTags(instanceName, nameTag string) map[string]string {
 
 // upsertInstanceSecurityGroup ensures a nakama-tagged SG exists for
 // this instance. A new one has no inbound rules: the SSM paths
-// (connect, ssh, tunnel, open) need none, and the CloudFront rule is
+// (shell, ssh, tunnel, code) need none, and the CloudFront rule is
 // added only when the instance gets CloudFront (ensureSGIngress, ADR
 // 0028). The caller records the SG before anything else happens to it,
 // so that an interruption cannot leave the SG unrecorded.

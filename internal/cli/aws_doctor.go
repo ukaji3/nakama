@@ -27,7 +27,7 @@ with concrete advice:
   credentials     which account and identity nakama operates as
   waf-allowlist   whether this machine's public IP may reach code-server
                   through CloudFront (skipped when no instance has it)
-  capability: *   one line per feature (create, connect, backup, ...)
+  capability: *   one line per feature (create, shell, backup, ...)
                   stating whether the caller's IAM policies allow it
   tunnels         locally recorded tunnels and dead forwards
   version         whether a newer nakama release is out (asks

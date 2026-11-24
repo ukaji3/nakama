@@ -54,7 +54,7 @@ func formatInfo(i *service.InstanceInfo, showPassword bool) string {
 		fmt.Fprintf(&b, "distribution_id   : %s\n", i.DistributionID)
 		fmt.Fprintf(&b, "url               : %s\n", i.URL)
 	} else if i.Kind != "bare" {
-		fmt.Fprintf(&b, "cloudfront        : none (open over SSM with `nakama aws open %s`; "+
+		fmt.Fprintf(&b, "cloudfront        : none (open over SSM with `nakama aws code %s`; "+
 			"add CloudFront with `nakama aws cloudfront add %s`)\n", i.Name, i.Name)
 	}
 	fmt.Fprintf(&b, "code_server_ver   : %s\n", i.CodeServerVersion)

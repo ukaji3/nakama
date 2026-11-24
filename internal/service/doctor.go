@@ -257,7 +257,7 @@ func diagnoseWAF(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 			Name:   "waf-allowlist",
 			Status: CheckSkip,
 			Detail: "no instance has CloudFront, so the allowlist is not used " +
-				"(open/kirocrew over SSM, connect, tunnel and ssh do not need it)",
+				"(code/kirocrew over SSM, shell, tunnel and ssh do not need it)",
 		})
 		return
 	default:
@@ -299,7 +299,7 @@ func diagnoseWAF(ctx context.Context, opts DoctorOptions, rep *DoctorReport) {
 		Status: CheckWarn,
 		Detail: fmt.Sprintf("this machine (%s) is not in the allowlist (%d entr%s)", ip, len(entries), plural(len(entries))) + using,
 		Advice: "run `nakama aws acl add` to allow it if you open code-server or Kiro Crew with --internet (CloudFront); " +
-			"open/kirocrew over SSM (the default) and connect/tunnel/ssh do not use the allowlist",
+			"code/kirocrew over SSM (the default) and shell/tunnel/ssh do not use the allowlist",
 	})
 }
 

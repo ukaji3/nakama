@@ -60,7 +60,7 @@ type Clients struct {
 	Region string
 
 	// Credentials is the resolved credentials provider (after the
-	// login_session fallback, if it was needed). `nakama aws connect`
+	// login_session fallback, if it was needed). `nakama aws shell`
 	// injects these into the Session Manager data channel so that the
 	// vendored plugin reuses nakama's credential resolution instead of
 	// running its own chain.

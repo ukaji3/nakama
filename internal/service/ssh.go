@@ -29,7 +29,7 @@ const sshDocumentName = "AWS-StartSSHSession"
 const defaultSSHPort = 22
 
 // sshLoginUser is the account the ssh config snippet selects: the same
-// user `nakama aws connect` lands on (ADR 0009).
+// user `nakama aws shell` lands on (ADR 0009).
 const sshLoginUser = "ubuntu"
 
 // SSHProxyInput selects the instance to relay to.

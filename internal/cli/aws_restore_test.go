@@ -71,7 +71,7 @@ func TestRestoreSummary(t *testing.T) {
 	noCF := restoreSummary(&service.RestoreResult{
 		Name: "dev01", Mode: service.RestoreModeNewInstance, Label: "l1", InstanceID: "i-1", InstanceType: "t4g.medium",
 	})
-	for _, want := range []string{"cloudfront        : none", "nakama aws cloudfront add dev01", "nakama aws open dev01", "info dev01 --show-password"} {
+	for _, want := range []string{"cloudfront        : none", "nakama aws cloudfront add dev01", "nakama aws code dev01", "info dev01 --show-password"} {
 		if !strings.Contains(noCF, want) {
 			t.Errorf("summary without CloudFront lacks %q:\n%s", want, noCF)
 		}
@@ -80,7 +80,7 @@ func TestRestoreSummary(t *testing.T) {
 		t.Errorf("a summary without CloudFront has no URL:\n%s", noCF)
 	}
 	bare := restoreSummary(&service.RestoreResult{Name: "box1", Mode: service.RestoreModeNewInstance, Bare: true})
-	if strings.Contains(bare, "url") || !strings.Contains(bare, "nakama aws connect box1") {
+	if strings.Contains(bare, "url") || !strings.Contains(bare, "nakama aws shell box1") {
 		t.Errorf("bare summary: %s", bare)
 	}
 }

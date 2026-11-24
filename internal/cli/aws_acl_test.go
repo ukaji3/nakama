@@ -50,7 +50,7 @@ func TestACLDeleteAllPrompt(t *testing.T) {
 	for _, want := range []string{
 		"Delete all 2 entries", "203.0.113.5/32", "added 2026-09-01T00:00:00Z", "(added outside nakama)",
 		"403 to every browser", "yours included", "nakama aws acl add", "Kiro Crew",
-		"connect, ssh and tunnel are not affected", "[y/N]: ",
+		"shell, ssh and tunnel are not affected", "[y/N]: ",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("delete-all prompt lacks %q:\n%s", want, all)
@@ -259,7 +259,7 @@ func TestACLPrunePrompt(t *testing.T) {
 		"Keep, though old (contains your IP 153.242.166.137):", "153.242.0.0/16",
 		"Keep (confirmed since then):", "198.51.100.7/32", "5d ago",
 		"Keep (no added-at record):", "10.0.0.0/8", "(added outside nakama)",
-		"403", "nakama aws acl add", "connect, ssh and tunnel are not affected. [y/N]: ",
+		"403", "nakama aws acl add", "shell, ssh and tunnel are not affected. [y/N]: ",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prune prompt lacks %q:\n%s", want, got)
@@ -338,7 +338,7 @@ func TestACLPruneCommand(t *testing.T) {
 		}
 	}
 	// The time is only refreshed by acl add, and the help says so.
-	for _, want := range []string{`Only "acl add" records`, "nakama aws open", "does not", "30d", "36h", "--yes", "added outside nakama"} {
+	for _, want := range []string{`Only "acl add" records`, "nakama aws code", "does not", "30d", "36h", "--yes", "added outside nakama"} {
 		if !strings.Contains(cmd.Long, want) {
 			t.Errorf("acl prune help lacks %q:\n%s", want, cmd.Long)
 		}

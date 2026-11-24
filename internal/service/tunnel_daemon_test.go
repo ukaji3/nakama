@@ -108,7 +108,7 @@ func TestTunnelDaemonAddsForwards(t *testing.T) {
 	}
 }
 
-// TestTunnelDaemonReplacesADeadForward: `open` may add a forward on the
+// TestTunnelDaemonReplacesADeadForward: `code` may add a forward on the
 // local port of a dead one; the daemon swaps it in place.
 func TestTunnelDaemonReplacesADeadForward(t *testing.T) {
 	d, _ := newTestDaemon(t)

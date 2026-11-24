@@ -87,7 +87,7 @@ func OpenSessionPayload() (*os.File, error) {
 	v := os.Getenv(SessionPayloadHandleEnv)
 	if v == "" {
 		return nil, fmt.Errorf("%s is not set; "+
-			"`nakama aws session-runner` is an internal command spawned by `nakama aws connect`",
+			"`nakama aws session-runner` is an internal command spawned by `nakama aws shell`",
 			SessionPayloadHandleEnv)
 	}
 	h, err := strconv.ParseUint(v, 10, 64)

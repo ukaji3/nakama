@@ -276,7 +276,7 @@ func TestIPCheckSites(t *testing.T) {
 		}
 		names = append(names, s.name)
 	}
-	// PublicIPv4 (open, doctor) asks the first one.
+	// PublicIPv4 (code, doctor) asks the first one.
 	if strings.Join(names, ",") != "checkip.amazonaws.com,ifconfig.io" {
 		t.Errorf("sites = %v", names)
 	}

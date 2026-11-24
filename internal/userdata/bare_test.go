@@ -16,7 +16,7 @@ func TestRenderBare(t *testing.T) {
 	for _, want := range []string{
 		`INSTANCE_NAME="dev01"`,
 		`REGION="ap-northeast-1"`,
-		"amazon-ssm-agent", // connect / tunnel / ssh depend on the agent
+		"amazon-ssm-agent", // shell / tunnel / ssh depend on the agent
 		"systemctl enable --now ssh",
 		"git curl unzip unar jq build-essential gnupg",
 	} {

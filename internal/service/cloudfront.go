@@ -232,7 +232,7 @@ func (s *Service) existingInstanceCloudFront(ctx context.Context, m *cloudFrontM
 					ic.DistributionID, m.name, m.name, m.name)
 			}
 			// The domain is CloudFront's, not a guess: it is what the
-			// output and `open --internet` use.
+			// output and `code --internet` use.
 			if dom := aws.ToString(d.DomainName); dom != "" && dom != ic.DistributionDomain {
 				ic.DistributionDomain = dom
 				if err := s.writeInstanceMeta(ctx, m.name, map[string]string{ssmDistributionDomainPath(m.name): dom}); err != nil {

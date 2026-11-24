@@ -11,7 +11,7 @@ import (
 )
 
 // newAWSSessionRunnerCommand returns the hidden child command that
-// executes a single Session Manager session for `nakama aws connect`
+// executes a single Session Manager session for `nakama aws shell`
 // (ADR 0014). It is an internal re-exec target, not a user-facing
 // command: the vendored session-manager-plugin ends the whole process
 // with os.Exit, so the session must run in a disposable child while the
@@ -26,7 +26,7 @@ import (
 func newAWSSessionRunnerCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:    "session-runner",
-		Short:  "Internal: run one Session Manager session (used by connect)",
+		Short:  "Internal: run one Session Manager session (used by shell)",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

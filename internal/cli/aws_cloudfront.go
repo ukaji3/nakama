@@ -64,15 +64,15 @@ func newAWSCloudFrontCommandWithDeps(deps cloudfrontDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cloudfront",
 		Short: "Add or delete the CloudFront access of an existing instance",
-		Long: `Instances are reached over SSM by default (` + "`nakama aws open`" + `,
-connect, ssh, tunnel) and have no internet entry path (ADR 0028). These
+		Long: `Instances are reached over SSM by default (` + "`nakama aws code`" + `,
+shell, ssh, tunnel) and have no internet entry path (ADR 0028). These
 commands give an existing instance one, or take it away again:
 
   browser -> https://<distribution>.cloudfront.net (WAF allowlist)
           -> CloudFront VPC origin -> the instance's code-server
 
   nakama aws cloudfront add <name>       build it (as create --cloudfront does)
-  nakama aws open --internet <name>      open code-server through it
+  nakama aws code --internet <name>      open code-server through it
   nakama aws cloudfront delete <name>    remove it (Kiro Crew's too)
 
 ` + "`nakama aws info`" + ` and ` + "`nakama aws list`" + ` show whether an instance has it.`,
@@ -96,7 +96,7 @@ commands give an existing instance one, or take it away again:
 Disabling a distribution and deleting the VPC origin take several
 minutes each; the command waits. It prompts first unless --yes is given.
 The URLs stop working, and adding CloudFront again gives new ones.
-code-server stays reachable over SSM (` + "`nakama aws open <name>`" + `).
+code-server stays reachable over SSM (` + "`nakama aws code <name>`" + `).
 
 Safe to re-run: it continues where a stopped run left off. On an instance
 without CloudFront it only removes a leftover inbound rule (bare
@@ -127,7 +127,7 @@ take several minutes to deploy (~15-20 minutes in all); the command
 waits. Safe to re-run: it continues where a stopped run left off and
 never creates a second VPC origin or distribution.
 
-Open code-server through it with ` + "`nakama aws open --internet <name>`" + `.
+Open code-server through it with ` + "`nakama aws code --internet <name>`" + `.
 Kiro Crew's own distribution is separate: ` + "`nakama aws kirocrew enable`" + `.
 CloudFront and WAF add request charges.`,
 			Args: cobra.ExactArgs(1),
@@ -161,7 +161,7 @@ func runCloudFrontAdd(cmd *cobra.Command, name string, deps cloudfrontDeps) erro
 	if out.AlreadyPresent {
 		head = "CloudFront already in place"
 	}
-	text := fmt.Sprintf("%s\n  name : %s\n  url  : %s\n\nOpen it with: nakama aws open --internet %s",
+	text := fmt.Sprintf("%s\n  name : %s\n  url  : %s\n\nOpen it with: nakama aws code --internet %s",
 		head, out.Name, out.URL, out.Name)
 	return renderOutput(cmd.OutOrStdout(), global.Output, out, text)
 }
@@ -219,7 +219,7 @@ func cloudFrontDeletePrompt(p *service.DeleteCloudFrontPlan) string {
 			config.CodeServerPort, p.SecurityGroupID)
 	}
 	b.WriteString("The URLs stop working, and adding CloudFront again gives new ones.\n")
-	fmt.Fprintf(&b, "code-server stays reachable over SSM (nakama aws open %s). [y/N]: ", p.Name)
+	fmt.Fprintf(&b, "code-server stays reachable over SSM (nakama aws code %s). [y/N]: ", p.Name)
 	return b.String()
 }
 
@@ -250,7 +250,7 @@ func cloudFrontDeleteSummary(p *service.DeleteCloudFrontPlan, out *service.Delet
 			out.Name, out.Name, out.Name)
 	}
 	if !p.Bare {
-		fmt.Fprintf(&b, "\nOpen code-server over SSM with: nakama aws open %s", out.Name)
+		fmt.Fprintf(&b, "\nOpen code-server over SSM with: nakama aws code %s", out.Name)
 	}
 	return b.String()
 }
