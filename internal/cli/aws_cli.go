@@ -41,7 +41,10 @@ Double-clicking nakama.exe in Explorer opens the same kind of shell
 
 This command is Windows-only: on other systems nakama relies on
 HTTP(S)_PROXY being set conventionally, and the aws CLI can be pointed
-at a corporate CA with the AWS_CA_BUNDLE environment variable.`,
+at a corporate CA with the AWS_CA_BUNDLE environment variable.
+
+The shell runs on this machine. For a shell on a nakama instance, use
+"nakama aws shell <name>".`,
 		Args: cobra.NoArgs,
 		RunE: runCLIShell,
 	}

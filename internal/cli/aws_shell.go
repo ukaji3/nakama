@@ -26,7 +26,9 @@ func newAWSShellCommand() *cobra.Command {
 Session Manager (no SSH, no inbound ports). You are logged in as the
 "ubuntu" user (Session Manager authenticates as ssm-user, which nakama
 switches from via sudo); a single "exit" ends the session. For
-background port forwarding, see "nakama aws tunnel".
+background port forwarding, see "nakama aws tunnel". The shell is on
+the instance; "nakama aws cli shell" (Windows) is a different command
+that starts a shell on this machine set up for the aws CLI.
 
 Append a command to run it as ubuntu, non-interactively (like
 "ssh host ls"): its stdout and stderr arrive separately, and nakama
