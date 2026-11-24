@@ -154,7 +154,7 @@ func TestBuildProvisionScriptPresetKiro(t *testing.T) {
 func TestPresetKiroSharesTheUserDataScript(t *testing.T) {
 	if got := provisionPresets()["kiro"]; got != kiro.InstallScript() {
 		t.Error("the kiro preset must be exactly internal/kiro's install script, " +
-			"so `setup rerun --preset kiro` reproduces what the user-data did")
+			"so `provision --preset kiro` reproduces what the user-data did")
 	}
 }
 

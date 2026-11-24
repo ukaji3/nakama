@@ -53,7 +53,7 @@ const ProvisionLogPath = "/var/log/nakama-provision.log"
 // plus Kiro Crew with its gateway service, and shares the exact steps
 // with the cloud-init user-data (internal/kiro), where they now run by
 // default (Issue #68). The preset therefore stays useful as the
-// re-run path: `nakama aws setup rerun <name> --preset kiro` after a
+// re-run path: `nakama aws provision <name> --preset kiro` after a
 // failed install, or on an instance created with --no-kiro.
 func provisionPresets() map[string]string {
 	return map[string]string{
@@ -111,7 +111,7 @@ func isHTTPSURL(s string) bool {
 
 // Provision runs the requested provisioning steps on an existing
 // instance over SSM Run Command. It is used by `nakama aws create`
-// (after the instance is up) and by `nakama aws setup rerun`.
+// (after the instance is up) and by `nakama aws provision`.
 //
 // Idempotency is the script author's responsibility: nakama runs the
 // steps as given, in order, and reports which one failed.

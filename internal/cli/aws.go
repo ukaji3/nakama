@@ -28,7 +28,7 @@ func newAWSCommand() *cobra.Command {
 		newAWSTunnelCommand(),
 		newAWSSSHCommand(),
 		newAWSDoctorCommand(),
-		newAWSSetupCommand(),
+		newAWSProvisionCommand(),
 		newAWSSessionRunnerCommand(),
 		newAWSTunnelDaemonCommand(),
 		newAWSRouterDaemonCommand(),
@@ -38,6 +38,7 @@ func newAWSCommand() *cobra.Command {
 		// to the new name on stderr.
 		deprecatedCommand(newAWSCodeCommand(), "open", "nakama aws code"),
 		deprecatedCommand(newAWSShellCommand(), "connect", "nakama aws shell"),
+		newAWSSetupCommand(),
 	)
 	return cmd
 }

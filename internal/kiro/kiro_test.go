@@ -80,7 +80,7 @@ func TestInstallScriptRunsAsUbuntu(t *testing.T) {
 }
 
 // TestInstallScriptAddsPathIdempotently pins that re-running the script
-// (e.g. `setup rerun --preset kiro`) does not append the PATH line
+// (e.g. `provision --preset kiro`) does not append the PATH line
 // twice.
 func TestInstallScriptAddsPathIdempotently(t *testing.T) {
 	s := InstallScript()
@@ -100,8 +100,8 @@ func TestInstallScriptIsBestEffort(t *testing.T) {
 	if !strings.Contains(s, "WARNING") {
 		t.Error("a failed install must emit a warning")
 	}
-	if !strings.Contains(s, "setup rerun") {
-		t.Error("the warning must point at the retry path (`nakama aws setup rerun`)")
+	if !strings.Contains(s, "nakama aws provision <name> --preset kiro") {
+		t.Error("the warning must point at the retry path (`nakama aws provision`)")
 	}
 }
 

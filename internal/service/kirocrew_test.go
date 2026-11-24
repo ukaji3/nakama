@@ -423,7 +423,7 @@ func TestEnableKiroCrewWebResumesAfterRemoteFailure(t *testing.T) {
 		t.Fatalf("the remote reason must surface, got %v", err)
 	}
 	// ...with the way out (Issue #79).
-	if !strings.Contains(err.Error(), "nakama aws setup rerun dev01 --preset kiro") {
+	if !strings.Contains(err.Error(), "nakama aws provision dev01 --preset kiro") {
 		t.Errorf("a missing gateway must point at the kiro preset, got %v", err)
 	}
 	if got := sm.param(ssmKirocrewDistributionIDPath("dev01")); got != testCrewDistID {
@@ -626,7 +626,7 @@ func TestKirocrewSetupAdvice(t *testing.T) {
 	for _, reason := range []string{kirocrewErrNotInstalled, kirocrewErrNoGateway + "5476"} {
 		err := kirocrewSetupAdvice("dev01", fmt.Errorf("instance-side setup failed: %s", reason))
 		msg := err.Error()
-		for _, want := range []string{reason, "nakama aws setup rerun dev01 --preset kiro", "nakama aws cloudfront add dev01 --kirocrew", "kirocrew service install"} {
+		for _, want := range []string{reason, "nakama aws provision dev01 --preset kiro", "nakama aws cloudfront add dev01 --kirocrew", "kirocrew service install"} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("advice for %q lacks %q:\n%s", reason, want, msg)
 			}
