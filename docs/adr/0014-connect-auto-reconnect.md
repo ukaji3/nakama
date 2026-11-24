@@ -1,6 +1,6 @@
 # ADR 0014: `nakama aws connect` の切断検知・自動再接続は親プロセス監督方式 (child re-exec) で実現する
 
-- Status: Accepted (`tunnel` の転送については ADR 0027 で置き換え: 転送は専用の監督 (`forwardRunner`) で再接続し、exit 0・通信エラー・5xx でも張り直し、回数の上限を設けない。`connect` の方針はこの ADR のまま)
+- Status: Accepted (`tunnel` の転送については ADR 0027 で置き換え: 転送は専用の監督 (`forwardRunner`) で再接続し、exit 0・通信エラー・5xx でも張り直し、回数の上限を設けない。`connect` の方針はこの ADR のまま。コマンド名は ADR 0030 で `shell` (旧 `connect`) に変えた)
 - Date: 2026-08-26
 - Context: nakama v1.x `connect` の耐障害性改善 (issue #21、ADR 0005 / 0009 の精緻化)
 

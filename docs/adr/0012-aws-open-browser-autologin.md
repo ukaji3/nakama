@@ -1,6 +1,6 @@
 # ADR 0012: `nakama aws open` の自動ログインはローカル one-shot ページからの top-level form POST で実現する
 
-- Status: Accepted (一部を ADR 0027 で置き換え: 既定の送信先は SSM のポート転送の `http://localhost:<ポート>` になり、CloudFront は `--internet` のときだけ。SSM の経路では、ブラウザを起動できなければ URL を表示せずにエラーにする)
+- Status: Accepted (一部を ADR 0027 で置き換え: 既定の送信先は SSM のポート転送の `http://localhost:<ポート>` になり、CloudFront は `--internet` のときだけ。SSM の経路では、ブラウザを起動できなければ URL を表示せずにエラーにする。コマンド名は ADR 0030 で `nakama aws code` (旧 `open`) に変えた)
 - Date: 2026-08-05
 - Context: nakama v1.x のブラウザ起動・自動ログイン (`nakama aws open`)
 

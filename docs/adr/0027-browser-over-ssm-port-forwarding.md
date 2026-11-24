@@ -1,6 +1,6 @@
 # ADR 0027: ブラウザからの接続は既定で SSM のポート転送にし、転送の再接続を作り直す
 
-- Status: Accepted (Consequences の「CloudFront をインスタンスごとに作るかどうかを選べるようにする件」は ADR 0028 で扱った。新しいインスタンスは CloudFront も SG の受信の規則も持たない。Decision 2 の固定のローカルポートと Alternatives 7 の判断は ADR 0029 で改めた。ブラウザはローカルのルーター `http://<code-server|kirocrew>.<名前>.nakama.localhost:18888` を通り、転送のローカルポートは `--local-port` が無ければ空きポートになる)
+- Status: Accepted (Consequences の「CloudFront をインスタンスごとに作るかどうかを選べるようにする件」は ADR 0028 で扱った。新しいインスタンスは CloudFront も SG の受信の規則も持たない。Decision 2 の固定のローカルポートと Alternatives 7 の判断は ADR 0029 で改めた。ブラウザはローカルのルーター `http://<code-server|kirocrew>.<名前>.nakama.localhost:18888` を通り、転送のローカルポートは `--local-port` が無ければ空きポートになる。コマンド名は ADR 0030 で `code` (旧 `open`) と `shell` (旧 `connect`) に変えた)
 - Date: 2026-11-20
 - Issue: [#118](https://github.com/ukaji3/nakama/issues/118)
 - 関連: ADR 0012 (`open` の自動ログイン。送信先が CloudFront に限られなくなる)、ADR 0014 (`connect` の再接続。tunnel の転送には使わなくなる)、ADR 0017 (`tunnel`。中継プロキシを採らなかった判断と再接続の方針を、この ADR が置き換える)、ADR 0020 (Kiro Crew の Web 画面。`--internet` の経路として残る)

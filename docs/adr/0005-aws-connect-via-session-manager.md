@@ -1,6 +1,6 @@
 # ADR 0005: `nakama aws connect` via Session Manager (vendored plugin)
 
-- Status: Accepted
+- Status: Accepted (コマンド名は ADR 0030 で `nakama aws shell` に変えた。`connect` は v0.30.x の間、非推奨の古い名前として動く)
 - Date: 2026-05-30
 - Context: nakama v1.x 機能追加 (`connect`)
 
