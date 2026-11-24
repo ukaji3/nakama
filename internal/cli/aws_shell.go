@@ -34,11 +34,11 @@ exits with the command's exit status (255 when nakama itself failed or
 the status was not reported). Standard input is not read in this mode:
 Session Manager does not deliver it to the command.
 
---tty runs the command in a PTY. In a PTY, and in the shell, input is
-sent to the remote terminal. It may also come from a file or a pipe
-(the remote terminal echoes it, and its end is sent as Ctrl-D, which
-ends the shell), except on Windows, which needs a console. Session
-Manager reports no exit status for a PTY.
+--tty (-t, as in ssh) runs the command in a PTY. In a PTY, and in the
+shell, input is sent to the remote terminal. It may also come from a
+file or a pipe (the remote terminal echoes it, and its end is sent as
+Ctrl-D, which ends the shell), except on Windows, which needs a
+console. Session Manager reports no exit status for a PTY.
 
 When the session is permanently disconnected (e.g. the instance was
 hibernated or the network dropped for too long), nakama reconnects
@@ -54,7 +54,7 @@ Examples:
   nakama aws shell dev01 ls -la
   nakama aws shell dev01 test -d /srv/app || echo missing
   nakama aws shell dev01 'cd /srv/app && git status'
-  nakama aws shell --tty dev01 top
+  nakama aws shell -t dev01 top
   nakama aws shell dev01 < setup-steps.sh
   nakama aws shell --retry 0 dev01`,
 		Args: cobra.MinimumNArgs(1),
@@ -76,7 +76,7 @@ Examples:
 	// Treat everything after <name> as the remote command, so flags like
 	// --retry must precede <name> (ssh-style).
 	cmd.Flags().SetInterspersed(false)
-	cmd.Flags().BoolVar(&tty, "tty", false, "Run the command in an interactive PTY")
+	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "Run the command in an interactive PTY")
 	cmd.Flags().IntVar(&retries, "retry", defaultShellRetries,
 		"Max automatic reconnect attempts after a permanent disconnect (0 = disabled; default 0 in command mode)")
 	return cmd
