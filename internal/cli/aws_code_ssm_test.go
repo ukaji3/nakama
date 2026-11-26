@@ -50,8 +50,8 @@ func TestCodeSSM_AutoLoginThroughTheForward(t *testing.T) {
 	if urls := launcher.opened(); len(urls) != 1 || !strings.HasPrefix(urls[0], "http://127.0.0.1:") {
 		t.Errorf("the browser must open the local one-shot page only, got %v", urls)
 	}
-	if !strings.Contains(out, "http://code-server.dev01.nakama.localhost:18888") || !strings.Contains(out, "over SSM") || !strings.Contains(out, "auto-login") {
-		t.Errorf("stdout = %q", out)
+	if want := "url        : http://code-server.dev01.nakama.localhost:18888\nvia        : ssm\nmethod     : auto-login\nauto_login : completed\n"; out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
 	}
 	if !strings.Contains(errOut, "through the nakama router") || !strings.Contains(errOut, "nakama aws tunnel stop dev01") {
 		t.Errorf("stderr must say how to stop the forward:\n%s", errOut)
