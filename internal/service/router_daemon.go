@@ -158,8 +158,9 @@ type RouterDaemonInput struct {
 type routerDaemonDeps struct {
 	logger tunnelLogger
 	routes routeTable
-	// liveTunnels counts the tunnel daemons that answer.
-	liveTunnels func(ctx context.Context) int
+	// liveTunnels counts the tunnel daemons that answer, and says why the
+	// others did not.
+	liveTunnels func(ctx context.Context) (int, error)
 	listen      func(port string) ([]net.Listener, error)
 	version     string
 	// ready is called once the router serves (tests).
@@ -258,12 +259,9 @@ func runRouterDaemon(ctx context.Context, in RouterDaemonInput, deps routerDaemo
 			}
 		}()
 	}
-	controlServer := &http.Server{
-		Handler: newRouterControlHandler(state.Token, func() *RouterStatus {
-			return &RouterStatus{PID: state.PID, Port: state.Port, Version: state.Version, StartedAt: state.StartedAt}
-		}, requestStop),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	controlServer := newControlServer(newRouterControlHandler(state.Token, func() *RouterStatus {
+		return &RouterStatus{PID: state.PID, Port: state.Port, Version: state.Version, StartedAt: state.StartedAt}
+	}, requestStop))
 	go func() {
 		if err := controlServer.Serve(control); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Errorf("router: control channel: %v", err)
@@ -296,9 +294,13 @@ func runRouterDaemon(ctx context.Context, in RouterDaemonInput, deps routerDaemo
 }
 
 // watchRouterIdle stops the router once no tunnel daemon has answered
-// for routerIdleExit: without one there is nothing to route to.
-func watchRouterIdle(ctx context.Context, liveTunnels func(context.Context) int, stop func(), logger tunnelLogger) {
+// for routerIdleExit: without one there is nothing to route to. When a
+// recorded daemon stops answering, it logs why, once, and once more when
+// the daemons answer again (Issue #135): a router that exits although a
+// daemon runs must say what failed.
+func watchRouterIdle(ctx context.Context, liveTunnels func(context.Context) (int, error), stop func(), logger tunnelLogger) {
 	var idleSince time.Time
+	failing := false
 	t := time.NewTicker(routerIdleCheckInterval)
 	defer t.Stop()
 	for {
@@ -306,7 +308,16 @@ func watchRouterIdle(ctx context.Context, liveTunnels func(context.Context) int,
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
-			if liveTunnels(ctx) > 0 {
+			n, err := liveTunnels(ctx)
+			switch {
+			case err != nil && !failing:
+				failing = true
+				logger.Errorf("router: a tunnel daemon does not answer: %v", err)
+			case err == nil && failing:
+				failing = false
+				logger.Infof("router: the tunnel daemons answer again")
+			}
+			if n > 0 {
 				idleSince = time.Time{}
 				continue
 			}
@@ -322,24 +333,30 @@ func watchRouterIdle(ctx context.Context, liveTunnels func(context.Context) int,
 	}
 }
 
-// countLiveTunnels counts the recorded tunnel daemons that answer. It
-// only reads: leftover state files are cleaned up by the CLI commands.
-func countLiveTunnels(ctx context.Context) int {
+// countLiveTunnels counts the recorded tunnel daemons that answer, and
+// returns why the others did not (nil when all did, or none is
+// recorded). It only reads: leftover state files are cleaned up by the
+// CLI commands.
+func countLiveTunnels(ctx context.Context) (int, error) {
 	names, err := listTunnelStateNames()
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("list the tunnel state files: %w", err)
 	}
 	n := 0
+	var errs []error
 	for _, name := range names {
 		st, err := readTunnelState(name)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		if _, err := queryTunnelStatus(ctx, st, tunnelControlTimeout); err == nil {
-			n++
+		if _, err := queryTunnelStatus(ctx, st, tunnelControlTimeout); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			continue
 		}
+		n++
 	}
-	return n
+	return n, errors.Join(errs...)
 }
 
 // newRouterControlHandler serves GET /status and POST /stop, guarded by

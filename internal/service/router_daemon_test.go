@@ -73,7 +73,7 @@ type testRouter struct {
 
 // startTestRouter runs the router daemon in the background and waits
 // until it serves.
-func startTestRouter(t *testing.T, port int, live func(context.Context) int) *testRouter {
+func startTestRouter(t *testing.T, port int, live func(context.Context) (int, error)) *testRouter {
 	t.Helper()
 	tr := &testRouter{done: make(chan struct{}), logger: &memLogger{}}
 	ready := make(chan *RouterState, 1)
@@ -112,7 +112,7 @@ func startTestRouter(t *testing.T, port int, live func(context.Context) int) *te
 func TestRouterDaemonServesAndStops(t *testing.T) {
 	withTunnelStateDir(t)
 	port := freePort(t)
-	tr := startTestRouter(t, port, func(context.Context) int { return 1 })
+	tr := startTestRouter(t, port, func(context.Context) (int, error) { return 1, nil })
 
 	st, err := readRouterState()
 	if err != nil {
@@ -186,7 +186,7 @@ func TestRouterDaemonEndsWithoutTunnels(t *testing.T) {
 
 	var live atomic.Int32
 	live.Store(1)
-	tr := startTestRouter(t, freePort(t), func(context.Context) int { return int(live.Load()) })
+	tr := startTestRouter(t, freePort(t), func(context.Context) (int, error) { return int(live.Load()), nil })
 	select {
 	case <-tr.done:
 		t.Fatalf("the router ended while a tunnel runs: %v", tr.err)
@@ -218,7 +218,7 @@ func TestRouterDaemonPortTaken(t *testing.T) {
 	defer func() { _ = l.Close() }()
 	logger := &memLogger{}
 	err = runRouterDaemon(context.Background(), RouterDaemonInput{Port: l.Addr().(*net.TCPAddr).Port}, routerDaemonDeps{
-		logger: logger, routes: newFakeRoutes(), liveTunnels: func(context.Context) int { return 1 }, listen: listenLoopback, version: "v",
+		logger: logger, routes: newFakeRoutes(), liveTunnels: func(context.Context) (int, error) { return 1, nil }, listen: listenLoopback, version: "v",
 	})
 	var inUse *LocalPortInUseError
 	if !errors.As(err, &inUse) {
@@ -238,7 +238,7 @@ func TestRouterDaemonReplacesALeftoverStateFile(t *testing.T) {
 	if err := writeRouterState(&RouterState{PID: 1, Port: 1, ControlPort: closedPort(t), Token: "old"}); err != nil {
 		t.Fatal(err)
 	}
-	tr := startTestRouter(t, freePort(t), func(context.Context) int { return 1 })
+	tr := startTestRouter(t, freePort(t), func(context.Context) (int, error) { return 1, nil })
 	st, err := readRouterState()
 	if err != nil || st.Token != tr.state.Token {
 		t.Fatalf("the leftover must be replaced: %+v, %v", st, err)
@@ -258,7 +258,7 @@ func TestRouterDaemonLeavesARunningRouterAlone(t *testing.T) {
 	}
 	logger := &memLogger{}
 	err := runRouterDaemon(context.Background(), RouterDaemonInput{Port: freePort(t)}, routerDaemonDeps{
-		logger: logger, routes: newFakeRoutes(), liveTunnels: func(context.Context) int { return 1 }, listen: listenLoopback, version: "v",
+		logger: logger, routes: newFakeRoutes(), liveTunnels: func(context.Context) (int, error) { return 1, nil }, listen: listenLoopback, version: "v",
 	})
 	if err == nil || !strings.Contains(err.Error(), "another nakama router (pid 4242)") {
 		t.Fatalf("err = %v", err)
@@ -357,8 +357,8 @@ func TestRouterDaemonRoutesToATunnelForward(t *testing.T) {
 	case <-tr.done:
 		t.Fatalf("router: %v\n%s", tr.err, tr.logger.text())
 	}
-	if n := countLiveTunnels(context.Background()); n != 1 {
-		t.Errorf("live tunnels = %d", n)
+	if n, err := countLiveTunnels(context.Background()); n != 1 || err != nil {
+		t.Errorf("live tunnels = %d, %v", n, err)
 	}
 
 	host := RouterHost(ForwardPurposeCodeServer, "dev01", port)

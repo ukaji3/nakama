@@ -131,6 +131,46 @@ func tunnelControlRequest(ctx context.Context, st *TunnelState, method, path str
 	return controlRequest(ctx, st.ControlPort, st.Token, method, path, in, out)
 }
 
+// controlClient sends every control-channel request. It is shared and
+// keeps no connection open: a connection per request is closed once its
+// answer is read (Issue #135). Before, each request built its own
+// Transport with keep-alive and no idle timeout, so each one left a
+// loopback connection open in this process and in the daemon. The
+// router asks every 15 seconds, and more often while it routes, so after
+// a few days the connections to one daemon used up the local ephemeral
+// ports (28,232 with Linux's default range); the requests then failed
+// and the router took the running daemon for gone and exited. The
+// daemon is local, so a new connection per request costs nothing worth
+// pooling for.
+var controlClient = &http.Client{
+	Transport: &http.Transport{
+		// The daemon is local; never route control traffic through a
+		// proxy that HTTP_PROXY etc. might configure.
+		Proxy: nil,
+		DialContext: (&net.Dialer{
+			Timeout: 2 * time.Second,
+		}).DialContext,
+		DisableKeepAlives: true,
+	},
+}
+
+// controlIdleTimeout closes a control-channel connection that waits this
+// long for its next request. controlClient does not keep connections, but
+// clients of the versions before Issue #135 do, and a daemon or a router
+// can outlive the CLI that talks to it (a router of an older version asks
+// a newer tunnel daemon, and the other way round).
+var controlIdleTimeout = 30 * time.Second
+
+// newControlServer is the HTTP server of a daemon's control channel (the
+// tunnel daemons and the router).
+func newControlServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       controlIdleTimeout,
+	}
+}
+
 // controlRequest is the request side of every nakama daemon's control
 // channel (the tunnel daemons and the local router): a 127.0.0.1 HTTP
 // endpoint guarded by a bearer token from the daemon's state file.
@@ -154,17 +194,7 @@ func controlRequest(ctx context.Context, controlPort int, token, method, path st
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	client := &http.Client{
-		Transport: &http.Transport{
-			// The daemon is local; never route control traffic through a
-			// proxy that HTTP_PROXY etc. might configure.
-			Proxy: nil,
-			DialContext: (&net.Dialer{
-				Timeout: 2 * time.Second,
-			}).DialContext,
-		},
-	}
-	resp, err := client.Do(req) // #nosec G704 -- loopback control channel (127.0.0.1)
+	resp, err := controlClient.Do(req) // #nosec G704 -- loopback control channel (127.0.0.1)
 	if err != nil {
 		return err
 	}
