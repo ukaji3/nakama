@@ -46,21 +46,6 @@ func newAWSKirocrewCommand() *cobra.Command {
 	return newAWSKirocrewCommandWithDeps(defaultKirocrewDeps())
 }
 
-// kirocrewOpenResult is the machine-readable output of `kirocrew`. It
-// never carries the code-server password or the Kiro Crew token.
-type kirocrewOpenResult struct {
-	Name string `json:"name" yaml:"name"`
-	URL  string `json:"url" yaml:"url"`
-	// Via is "ssm" (port forward, the default) or "internet"
-	// (CloudFront, --internet).
-	Via       string `json:"via" yaml:"via"`
-	LocalPort int    `json:"local_port,omitempty" yaml:"local_port,omitempty"`
-	Method    string `json:"method" yaml:"method"` // auto-login | plain
-	Opened    bool   `json:"opened" yaml:"opened"`
-	AutoLogin string `json:"auto_login" yaml:"auto_login"`
-	Note      string `json:"note,omitempty" yaml:"note,omitempty"`
-}
-
 func newAWSKirocrewCommandWithDeps(deps kirocrewDeps) *cobra.Command {
 	f := &openFlags{}
 	cmd := &cobra.Command{
@@ -202,7 +187,7 @@ func runKirocrewOpenSSM(ctx context.Context, cmd *cobra.Command, name string, f 
 	if err != nil {
 		return err
 	}
-	view := kirocrewView{name: name, url: bf.Origin, via: viaSSM, localPort: bf.LocalPort}
+	view := openView{name: name, url: bf.Origin, via: viaSSM, localPort: bf.LocalPort}
 
 	if f.noAuth {
 		return openKirocrewURL(ctx, cmd, f, deps.open, view, bf.Origin+"/", nil)
@@ -215,7 +200,7 @@ func runKirocrewOpenSSM(ctx context.Context, cmd *cobra.Command, name string, f 
 	}
 	done, reason := runKirocrewTokenPage(ctx, cmd, f, deps.open, bf.Origin, token)
 	if done {
-		return renderKirocrewResult(cmd, view, "auto-login", !f.printURL, "completed", "")
+		return renderAutoLoginResult(cmd, f, view)
 	}
 	var launchErr *browserLaunchError
 	if errors.As(reason, &launchErr) {
@@ -252,7 +237,7 @@ func runKirocrewTokenPage(ctx context.Context, cmd *cobra.Command, f *openFlags,
 // openKirocrewURL launches the browser at target (over SSM, where a
 // browser that cannot be launched is an error) or prints it with
 // --print-url.
-func openKirocrewURL(ctx context.Context, cmd *cobra.Command, f *openFlags, deps openDeps, view kirocrewView, target string, skipReason error) error {
+func openKirocrewURL(ctx context.Context, cmd *cobra.Command, f *openFlags, deps openDeps, view openView, target string, skipReason error) error {
 	stderr := cmd.ErrOrStderr()
 	autoLogin, note := "skipped", ""
 	if skipReason != nil {
@@ -269,7 +254,7 @@ func openKirocrewURL(ctx context.Context, cmd *cobra.Command, f *openFlags, deps
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), target); err != nil {
 			return err
 		}
-		return renderKirocrewResultTo(cmd, view, "plain", false, autoLogin, note, true)
+		return renderOpenResultTo(cmd, view, "plain", false, autoLogin, note, true)
 	}
 	lctx, cancel := context.WithTimeout(ctx, f.timeout)
 	err := deps.newLauncher(f.browser).Open(lctx, target)
@@ -277,7 +262,7 @@ func openKirocrewURL(ctx context.Context, cmd *cobra.Command, f *openFlags, deps
 	if err != nil {
 		return noBrowserError(view.name, &browserLaunchError{err: err})
 	}
-	return renderKirocrewResult(cmd, view, "plain", true, autoLogin, note)
+	return renderOpenResult(cmd, view, "plain", true, autoLogin, note)
 }
 
 // runKirocrewOpenInternet opens the dashboard through its CloudFront
@@ -303,7 +288,7 @@ func runKirocrewOpenInternet(ctx context.Context, cmd *cobra.Command, name strin
 	}
 	extra := url.Values{"token": {token}}
 	dashboardURL := web.URL + "/?" + extra.Encode()
-	view := kirocrewView{name: name, url: web.URL, via: viaInternet}
+	view := openView{name: name, url: web.URL, via: viaInternet}
 
 	var skipReason error
 	if !f.noAuth {
@@ -316,7 +301,7 @@ func runKirocrewOpenInternet(ctx context.Context, cmd *cobra.Command, name strin
 		default:
 			done, reason := runKirocrewAutoLogin(ctx, cmd, f, deps.open, web, info.Password, extra)
 			if done {
-				return renderKirocrewResult(cmd, view, "auto-login", !f.printURL, "completed", "")
+				return renderAutoLoginResult(cmd, f, view)
 			}
 			skipReason = reason
 		}
@@ -352,7 +337,7 @@ func runKirocrewAutoLogin(ctx context.Context, cmd *cobra.Command, f *openFlags,
 // runKirocrewPlainOpen opens the dashboard URL (with its token) without
 // signing in to code-server; code-server shows its login page first and
 // returns to the dashboard afterwards (--internet).
-func runKirocrewPlainOpen(ctx context.Context, cmd *cobra.Command, f *openFlags, deps openDeps, view kirocrewView, dashboardURL string, skipReason error) error {
+func runKirocrewPlainOpen(ctx context.Context, cmd *cobra.Command, f *openFlags, deps openDeps, view openView, dashboardURL string, skipReason error) error {
 	stderr := cmd.ErrOrStderr()
 	autoLogin, note := "skipped", ""
 	if skipReason != nil {
@@ -368,7 +353,7 @@ func runKirocrewPlainOpen(ctx context.Context, cmd *cobra.Command, f *openFlags,
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), dashboardURL); err != nil {
 			return err
 		}
-		return renderKirocrewResultTo(cmd, view, "plain", false, autoLogin, note, true)
+		return renderOpenResultTo(cmd, view, "plain", false, autoLogin, note, true)
 	}
 	lctx, cancel := context.WithTimeout(ctx, f.timeout)
 	err := deps.newLauncher(f.browser).Open(lctx, dashboardURL)
@@ -382,37 +367,9 @@ func runKirocrewPlainOpen(ctx context.Context, cmd *cobra.Command, f *openFlags,
 		if _, perr := fmt.Fprintln(cmd.OutOrStdout(), dashboardURL); perr != nil {
 			return perr
 		}
-		return renderKirocrewResultTo(cmd, view, "plain", false, autoLogin, note, true)
+		return renderOpenResultTo(cmd, view, "plain", false, autoLogin, note, true)
 	}
-	return renderKirocrewResult(cmd, view, "plain", true, autoLogin, note)
-}
-
-// kirocrewView is what the result of `kirocrew` describes.
-type kirocrewView struct {
-	name      string
-	url       string
-	via       string
-	localPort int
-}
-
-func renderKirocrewResult(cmd *cobra.Command, view kirocrewView, method string, opened bool, autoLogin, note string) error {
-	return renderKirocrewResultTo(cmd, view, method, opened, autoLogin, note, false)
-}
-
-// renderKirocrewResultTo renders the result. The URL in the result is
-// the bare dashboard URL, never the token-carrying one.
-func renderKirocrewResultTo(cmd *cobra.Command, view kirocrewView, method string, opened bool, autoLogin, note string, urlAlreadyPrinted bool) error {
-	res := kirocrewOpenResult{Name: view.name, URL: view.url, Via: view.via, LocalPort: view.localPort,
-		Method: method, Opened: opened, AutoLogin: autoLogin, Note: note}
-	var b strings.Builder
-	if !urlAlreadyPrinted {
-		fmt.Fprintf(&b, "url        : %s\n", view.url)
-	}
-	fmt.Fprintf(&b, "via        : %s\nmethod     : %s\nauto_login : %s", view.via, method, autoLogin)
-	if note != "" {
-		fmt.Fprintf(&b, "\nnote       : %s", note)
-	}
-	return renderOutput(cmd.OutOrStdout(), global.Output, res, b.String())
+	return renderOpenResult(cmd, view, "plain", true, autoLogin, note)
 }
 
 func orNotFound(state string) string {

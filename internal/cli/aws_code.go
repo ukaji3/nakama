@@ -148,8 +148,9 @@ const (
 	viaInternet = "internet"
 )
 
-// openResult is the machine-readable output of `code`. It NEVER
-// carries the password (JSON/YAML output must be safe to pipe/log).
+// openResult is the machine-readable output of `code` and `kirocrew`.
+// It NEVER carries the code-server password or the Kiro Crew token
+// (JSON/YAML output must be safe to pipe/log): URL is the bare site URL.
 type openResult struct {
 	Name string `json:"name" yaml:"name"`
 	URL  string `json:"url" yaml:"url"`
@@ -332,7 +333,7 @@ func runAWSCodeSSM(ctx context.Context, cmd *cobra.Command, name string, f *open
 		target := loginTarget{origin: bf.Origin, label: "code-server"}
 		done, skipReason := runAutoLogin(ctx, cmd, f, deps, target, info.Password, bf.Origin)
 		if done {
-			return renderOpenResult(cmd, view, "auto-login", !f.printURL, "completed", "")
+			return renderAutoLoginResult(cmd, f, view)
 		}
 		var launchErr *browserLaunchError
 		if errors.As(skipReason, &launchErr) {
@@ -371,7 +372,7 @@ func runAWSCodeInternet(ctx context.Context, cmd *cobra.Command, name string, f 
 		target := loginTarget{origin: "https://" + info.DistributionDomain, label: "code-server"}
 		done, skipReason := runAutoLogin(ctx, cmd, f, deps, target, info.Password, info.URL)
 		if done {
-			return renderOpenResult(cmd, view, "auto-login", !f.printURL, "completed", "")
+			return renderAutoLoginResult(cmd, f, view)
 		}
 		authSkipReason = skipReason
 	}
@@ -449,7 +450,7 @@ func runAutoLogin(ctx context.Context, cmd *cobra.Command, f *openFlags, deps op
 	}
 	defer srv.Close()
 	return serveOneShot(ctx, cmd, f, deps, srv, displayURL, fmt.Sprintf("open on this machine within %s to auto-login", f.timeout),
-		"auto-login page delivered to the browser; signing in to "+displayURL)
+		"auto-login page delivered to the browser; signing in to "+target.label+" at "+displayURL)
 }
 
 // serveOneShot hands the one-shot page to the browser (or prints its
@@ -459,8 +460,10 @@ func serveOneShot(ctx context.Context, cmd *cobra.Command, f *openFlags, deps op
 	if f.printURL {
 		// Headless mode: hand both URLs to the operator. The one-shot
 		// URL must be printed BEFORE blocking so it can be pasted
-		// while the local server is still alive.
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "url       : %s\nlogin_url : %s  (%s)\n",
+		// while the local server is still alive. The labels have the
+		// width of the result's (renderOpenResultTo), which then leaves
+		// the url out (renderAutoLoginResult).
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "url        : %s\nlogin_url  : %s  (%s)\n",
 			displayURL, pageURL, printHint); err != nil {
 			return false, err
 		}
@@ -491,7 +494,7 @@ func serveOneShot(ctx context.Context, cmd *cobra.Command, f *openFlags, deps op
 	}
 }
 
-// openView is what the result of `code` describes.
+// openView is what the result of `code` and `kirocrew` describes.
 type openView struct {
 	name      string
 	url       string
@@ -520,7 +523,15 @@ func runPlainOpen(ctx context.Context, cmd *cobra.Command, f *openFlags, deps op
 	}
 
 	if f.printURL {
-		return renderOpenResult(cmd, view, "plain", false, autoLogin, note)
+		// The URL on a line of its own first, as kirocrew prints its
+		// URL (Issue #137). -o json|yaml carry it in the result alone.
+		if global.Output != "table" {
+			return renderOpenResult(cmd, view, "plain", false, autoLogin, note)
+		}
+		if _, err := fmt.Fprintln(stdout, openURL); err != nil {
+			return err
+		}
+		return renderOpenResultTo(cmd, view, "plain", false, autoLogin, note, true)
 	}
 
 	launcher := deps.newLauncher(f.browser)
@@ -546,16 +557,25 @@ func runPlainOpen(ctx context.Context, cmd *cobra.Command, f *openFlags, deps op
 	return renderOpenResult(cmd, view, "plain", true, autoLogin, note)
 }
 
-// renderOpenResult writes the final result via renderOutput (table
-// text for humans, structured object for --output json|yaml). The
-// password is never part of the result.
+// renderOpenResult writes the final result of `code` and `kirocrew` via
+// renderOutput: in table mode one "key : value" line per field (url,
+// via, method, auto_login, and note when there is one), otherwise the
+// openResult object. Both commands print it the same way (Issue #137).
+// The password and the Kiro Crew token are never part of it.
 func renderOpenResult(cmd *cobra.Command, view openView, method string, opened bool, autoLogin, note string) error {
 	return renderOpenResultTo(cmd, view, method, opened, autoLogin, note, false)
 }
 
-// renderOpenResultTo is renderOpenResult with urlAlreadyPrinted
-// controlling whether the table text repeats the URL (it is skipped
-// when the fallback path already printed the bare URL to stdout).
+// renderAutoLoginResult is the result of a completed auto-login. With
+// --print-url the url line was printed already, next to login_url
+// (serveOneShot).
+func renderAutoLoginResult(cmd *cobra.Command, f *openFlags, view openView) error {
+	return renderOpenResultTo(cmd, view, "auto-login", !f.printURL, "completed", "", f.printURL)
+}
+
+// renderOpenResultTo is renderOpenResult with urlAlreadyPrinted leaving
+// the url line out of the table text, for the paths that printed a URL
+// (the site's, or the one to open) on stdout already.
 func renderOpenResultTo(cmd *cobra.Command, view openView, method string, opened bool, autoLogin, note string, urlAlreadyPrinted bool) error {
 	res := openResult{
 		Name:      view.name,
@@ -567,27 +587,15 @@ func renderOpenResultTo(cmd *cobra.Command, view openView, method string, opened
 		AutoLogin: autoLogin,
 		Note:      note,
 	}
-	suffix := ""
-	if view.via == viaSSM {
-		suffix = " over SSM"
+	var b strings.Builder
+	if !urlAlreadyPrinted {
+		fmt.Fprintf(&b, "url        : %s\n", view.url)
 	}
-	var text string
-	switch {
-	case opened && method == "auto-login":
-		text = fmt.Sprintf("opened %s in your browser%s (auto-login)", view.url, suffix)
-	case opened:
-		text = fmt.Sprintf("opened %s in your browser%s", view.url, suffix)
-	case urlAlreadyPrinted:
-		// The bare URL is already on stdout; keep table mode quiet.
-		if global.Output == "table" {
-			return nil
-		}
-	case method == "auto-login":
-		text = fmt.Sprintf("auto-login page delivered; the browser is signing in to %s", view.url)
-	default:
-		text = view.url
+	fmt.Fprintf(&b, "via        : %s\nmethod     : %s\nauto_login : %s", view.via, method, autoLogin)
+	if note != "" {
+		fmt.Fprintf(&b, "\nnote       : %s", note)
 	}
-	return renderOutput(cmd.OutOrStdout(), global.Output, res, text)
+	return renderOutput(cmd.OutOrStdout(), global.Output, res, b.String())
 }
 
 // allowlistChecker is what warnIfNotAllowlisted needs: the WAF

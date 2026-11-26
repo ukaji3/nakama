@@ -207,7 +207,7 @@ func TestCode_EmptyPasswordFallsBack(t *testing.T) {
 	if len(urls) != 1 || urls[0] != backend.info.URL {
 		t.Errorf("opened %v, want exactly the plain URL %q", urls, backend.info.URL)
 	}
-	if strings.Contains(out, "auto-login") {
+	if !strings.Contains(out, "method     : plain\n") || strings.Contains(out, "method     : auto-login") {
 		t.Errorf("stdout claims auto-login despite the empty password:\n%s", out)
 	}
 }
