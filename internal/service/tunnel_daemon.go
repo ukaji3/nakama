@@ -382,16 +382,13 @@ func (s *Service) RunTunnelDaemon(ctx context.Context, in TunnelDaemonInput) err
 	cleanupSignals := notifyTunnelStopSignals(requestStop)
 	defer cleanupSignals()
 
-	server := &http.Server{
-		Handler: newTunnelControlHandler(token, tunnelControl{
-			status: d.status,
-			stop:   requestStop,
-			add: func(f ForwardSpec) (ForwardStatus, error) {
-				return d.startForward(f, true)
-			},
-		}),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	server := newControlServer(newTunnelControlHandler(token, tunnelControl{
+		status: d.status,
+		stop:   requestStop,
+		add: func(f ForwardSpec) (ForwardStatus, error) {
+			return d.startForward(f, true)
+		},
+	}))
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Errorf("%s: control channel: %v", in.Name, err)
