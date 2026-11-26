@@ -462,7 +462,12 @@ URL トークン認証が存在せず、CLI はブラウザの cookie store に�
    `--timeout <duration>`、`--internet`、`--local-port <port>` (SSM のときだけ。ルーターを使わず、そのポートで開く)
 7. **出力**: `-o json|yaml` は name / url / via (`ssm`|`internet`) / local_port / method (`auto-login`|`plain`) /
    opened / auto_login (`completed`|`skipped`|`timeout`) / note の
-   構造体。**パスワードはいかなる出力にも含めない**
+   構造体。table 形式では、そのうち url / via / method / auto_login / note (あるときだけ) を
+   `url        : <URL>` のように 1 行ずつ出す。`kirocrew` と同じ型と関数
+   (`openView`、`openResult`、`renderOpenResult`) を使うので、2 つのコマンドの出力は同じ形になる (Issue #137)。
+   先に URL だけの行を出す経路 (`--print-url --no-auth` の table 形式、`--internet` でブラウザを起動できないとき)
+   と、`--print-url` で `url` / `login_url` の 2 行を先に出す経路では、結果から url の行を省く。
+   **パスワードはいかなる出力にも含めない**
 
 実装: `internal/cli/aws_code.go` (one-shot サーバ含む)、
 `internal/browser` (detached なブラウザ起動、`Launcher` interface で注入
@@ -625,7 +630,7 @@ code-server のパス転送 (`/proxy/5476/`) では、Kiro Crew の Host 検査�
 - **enable** (`cloudfront add --kirocrew`、Issue #129 までは `kirocrew enable`。冪等、途中から再実行できる): code-server の distribution が前提である。CLI は先に `AddCloudFront` (冪等) を呼ぶので、その distribution は必ずある。`EnableKiroCrewWeb` は、それが無いとき (非推奨の `kirocrew enable` から呼ばれたとき) に `cloudfront add --kirocrew` を案内するエラーにする (ADR 0028、§8.30)。`GetKiroCrewWeb` (`kirocrew --internet`) も、Kiro Crew の distribution が無ければ `cloudfront add --kirocrew` を案内する。`EnableKiroCrewWeb` は次の順に進む。① インスタンスの確認 (bare は拒否、停止中は `start` を案内) → ② 既存の distribution の構成から VPC Origin と WAF を読む → ③ Kiro Crew 用 distribution を作り、**作った直後に ID とドメインをメタデータへ書く** → ④ Run Command でインスタンス側を設定する (nginx の導入と設定、`VSCODE_PROXY_URI` を固定する systemd drop-in、`config.yaml` の管理ブロック、code-server の再起動。結果は `NAKAMA_KIROCREW_OK` / `NAKAMA_KIROCREW_ERROR` で返す) → ⑤ Function を作成または更新して LIVE に公開 → ⑥ 既存の distribution に behavior を足す → ⑦ 2 つの distribution が Deployed になるのを並行して待つ。④ が失敗したら ⑥ は行わないので、壊れた設定へ誘導されることはない
 - **disable / delete**: `cloudfront delete` (§8.30) は Kiro Crew の分も消すので、disable (`cloudfront delete --kirocrew`、Issue #129 までは `kirocrew disable`) は Kiro Crew の画面だけをやめるときに使う。CLI は `PlanDeleteCloudFront` で Kiro Crew の distribution を確かめ、あれば確認してから (`--yes` で省略。非推奨の `kirocrew disable` は確認しない) `DisableKiroCrewWeb` を呼ぶ。distribution が無ければ確認せず、残りの部品だけを片付ける。disable は、behavior を外して反映を待つ → Function を削除する (CloudFront が使用中と返す間は再試行) → Kiro Crew 用 distribution を削除する → インスタンスが起動していれば後片付けのスクリプトを実行する (停止中なら飛ばして、そのことを知らせる) → 最後にメタデータを消す、の順に進む。delete は、Kiro Crew 用 distribution を**既存の distribution と VPC Origin より先に**消し (どちらも同じ VPC Origin を参照しているため)、Function は既存の distribution を消した後に消す
 - **トークン**: `MintKiroCrewToken` が、リクエストのたびに RSA-4096 の鍵を作り、公開鍵を埋め込んだスクリプトを Run Command で実行する。スクリプトは `kirocrew token` の出力からループバックの URL を取り出し、`openssl pkeyutl` (OAEP、SHA-256、MGF1 も SHA-256) で暗号化して `NAKAMA_KIROCREW_TOKEN_RSA <base64>` として返す。復号した値は `[A-Za-z0-9._-]` の 20〜1024 バイトかを確かめ、エラーメッセージにも値を含めない。Run Command の成功ログには、出力の中身を書かずバイト数だけを DEBUG で出す
-- **ブラウザの起動**: 1 回限りログインページ (ADR 0012) を `newOneShotLoginServerFor(…, loginTarget{origin, label, extra})` に汎用化した。Kiro Crew では送信先を `https://<crew>/login?to=/&token=…`、href を crew にする。`code` が生成する HTML は変わっていない (テストで固定)。`--no-auth` を付けると `https://<crew>/?token=…` を直接開くので、code-server のログイン画面が先に出る。以上は `--internet` のときの動きで、既定の SSM の経路は §8.29
+- **ブラウザの起動**: 1 回限りログインページ (ADR 0012) を `newOneShotLoginServerFor(…, loginTarget{origin, label, extra})` に汎用化した。Kiro Crew では送信先を `https://<crew>/login?to=/&token=…`、href を crew にする。`code` が生成する HTML は変わっていない (テストで固定)。`--no-auth` を付けると `https://<crew>/?token=…` を直接開くので、code-server のログイン画面が先に出る。以上は `--internet` のときの動きで、既定の SSM の経路は §8.29。結果の出力は `code` と共通 (§8.10 の 7)
 - **Ports パネル**: code-server は、`proxy-domain` があって `VSCODE_PROXY_URI` が未設定だと、`VSCODE_PROXY_URI=//{{port}}.<proxy-domain>` を自分で設定する (`src/node/cli.ts`)。このままでは Ports パネルとターミナルのリンクがすべて `<port>.kirocrew.nakama.internal` を指してしまう。そこで enable では、code-server を再起動する前に drop-in (`/etc/systemd/system/code-server@ubuntu.service.d/nakama-kirocrew.conf`) を置き、`VSCODE_PROXY_URI=./proxy/{{port}}/` (code-server 自身の既定値) に固定する。利用者が `VSCODE_PROXY_URI` を自分で設定していれば触らない。disable は drop-in を消し、code-server の再起動は 1 回にまとめる
 - **メタデータ**: `/nakama/<名前>/meta/kirocrew-distribution-id` と `kirocrew-distribution-domain`。`info` は後者から `kirocrew_url` を表示する
 - **予約名**: `enable` と `disable` は (非推奨の) サブコマンド名なので、インスタンス名として予約する。サブコマンドを消すまで予約は残す
