@@ -80,10 +80,16 @@ func runOpenCommand(t *testing.T, cmd *cobra.Command, fetch bool, args ...string
 	return out.String(), errOut.String(), err
 }
 
-// fetchingLauncher is a browser that loads whatever it is told to open.
+// fetchingLauncher is a browser that loads the local one-shot pages it
+// is told to open (http://127.0.0.1:<port>/...). A site URL is only
+// recorded: nothing serves the router's address in the tests, and the
+// machine running them may have a real router there.
 func fetchingLauncher(t *testing.T) *fakeLauncher {
 	l := &fakeLauncher{}
 	l.onOpen = func(u string) {
+		if !strings.HasPrefix(u, "http://127.0.0.1:") {
+			return
+		}
 		if _, _, err := httpGet(t, u); err != nil {
 			t.Errorf("fetch %s: %v", u, err)
 		}
