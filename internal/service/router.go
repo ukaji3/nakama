@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ukaji3/nakama/internal/peeruid"
 )
 
 // This file is the request side of the nakama router (Issue #124, ADR
@@ -33,6 +35,11 @@ import (
 // The router needs no AWS credentials: like `nakama aws tunnel status`
 // it reads the tunnel state files and asks each daemon's control
 // channel which local port serves the forward.
+//
+// It also sends http://control.nakama.localhost:<port>/ to the nakama
+// control panel (Issue #139, ADR 0031), which runs in the process of
+// `nakama ui` and records its loopback port in panel.json. On Linux the
+// router answers that address only for the OS user it runs as.
 
 const (
 	// DefaultRouterPort is the router's port when NAKAMA_ROUTER_PORT is
@@ -305,8 +312,13 @@ type routerHandler struct {
 	routes    routeTable
 	transport http.RoundTripper
 	logf      func(format string, args ...any)
+	// panel finds the control panel; peerCheck refuses its requests
+	// from other OS users (peeruid.Check).
+	panel     panelRoute
+	peerCheck func(*http.Request) error
 
-	// proxies holds one routeProxy per instance and purpose (routeKey).
+	// proxies holds one routeProxy per instance and purpose (routeKey),
+	// and the control panel's under panelProxyKey.
 	proxies sync.Map
 }
 
@@ -318,7 +330,8 @@ type routeProxy struct {
 }
 
 func newRouterHandler(port int, routes routeTable, transport http.RoundTripper, logf func(string, ...any)) *routerHandler {
-	return &routerHandler{port: port, routes: routes, transport: transport, logf: logf}
+	return &routerHandler{port: port, routes: routes, transport: transport, logf: logf,
+		panel: newLivePanelRoute(), peerCheck: peeruid.Check}
 }
 
 // publicOriginKey carries the browser-facing origin of a request into
@@ -326,11 +339,16 @@ func newRouterHandler(port int, routes routeTable, transport http.RoundTripper, 
 type publicOriginKey struct{}
 
 func (h *routerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isPanelHost(r.Host, h.port) {
+		h.servePanel(w, r)
+		return
+	}
 	p, name, ok := parseRouterHost(r.Host, h.port)
 	if !ok {
 		writeRouterPage(w, http.StatusMisdirectedRequest, routerPage{
-			Title:  "This is not a nakama address",
-			Detail: fmt.Sprintf("The nakama router on this port only serves http://<code-server|kirocrew>.<instance>.%s:%d/.", routerDomain, h.port),
+			Title: "This is not a nakama address",
+			Detail: fmt.Sprintf("The nakama router on this port only serves http://<code-server|kirocrew>.<instance>.%s:%d/ and http://%s/.",
+				routerDomain, h.port, PanelHost(h.port)),
 		})
 		return
 	}
@@ -446,6 +464,134 @@ func cutOriginPrefix(u, origin string) (string, bool) {
 		return rest, true
 	}
 	return "", false // e.g. http://localhost:54760
+}
+
+// isPanelHost reports whether host is the control panel's address on
+// the router port (control.nakama.localhost:<port>, an optional trailing
+// root dot allowed).
+func isPanelHost(host string, port int) bool {
+	h, p, err := net.SplitHostPort(host)
+	if err != nil || p != strconv.Itoa(port) {
+		return false
+	}
+	return strings.TrimSuffix(strings.ToLower(h), ".") == panelHostName
+}
+
+// errPanelNotRunning: no control panel answers for this router port.
+var errPanelNotRunning = errors.New("the nakama control panel is not running")
+
+// panelRoute finds the control panel behind the router.
+type panelRoute interface {
+	// resolve returns the panel's loopback port when a panel that
+	// answers for routerPort runs, errPanelNotRunning otherwise.
+	resolve(ctx context.Context, routerPort int) (string, error)
+	// forget drops a cached answer (after the panel failed).
+	forget()
+}
+
+// livePanelRoute is the production panelRoute: panel.json and the
+// panel's control channel, cached for routerLookupTTL like the forwards.
+type livePanelRoute struct {
+	lookup func(ctx context.Context) (*PanelState, *PanelStatus, error)
+	now    func() time.Time
+
+	mu      sync.Mutex
+	port    string
+	expires time.Time
+}
+
+func newLivePanelRoute() *livePanelRoute {
+	return &livePanelRoute{lookup: livePanel, now: time.Now}
+}
+
+func (l *livePanelRoute) resolve(ctx context.Context, routerPort int) (string, error) {
+	l.mu.Lock()
+	if l.port != "" && l.now().Before(l.expires) {
+		port := l.port
+		l.mu.Unlock()
+		return port, nil
+	}
+	l.mu.Unlock()
+	st, status, err := l.lookup(ctx)
+	if err != nil || status.RouterPort != routerPort {
+		return "", errPanelNotRunning
+	}
+	port := strconv.Itoa(st.Port)
+	l.mu.Lock()
+	l.port, l.expires = port, l.now().Add(routerLookupTTL)
+	l.mu.Unlock()
+	return port, nil
+}
+
+func (l *livePanelRoute) forget() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.port = ""
+}
+
+// panelProxyKey is the control panel's entry in routerHandler.proxies.
+const panelProxyKey = "control-panel"
+
+// servePanel sends a request to the control panel. The panel checks the
+// Host itself, so the Host goes through unchanged, and no forwarding
+// header is added. On Linux the request must come from the OS user the
+// router runs as: the panel's sign-in code is visible to other users on
+// the browser's command line (ADR 0031).
+func (h *routerHandler) servePanel(w http.ResponseWriter, r *http.Request) {
+	if err := h.peerCheck(r); err != nil {
+		h.logf("router: refused a control panel request: %v", err)
+		writeRouterPage(w, http.StatusForbidden, routerPage{
+			Title:  "This nakama control panel belongs to another user",
+			Detail: "The control panel only answers the OS user who runs it.",
+		})
+		return
+	}
+	backend, err := h.panel.resolve(r.Context(), h.port)
+	if err != nil {
+		writeRouterPage(w, http.StatusBadGateway, routerPage{
+			Title:    "The nakama control panel is not running",
+			Detail:   fmt.Sprintf("Nothing serves http://%s/ now. Start it on this machine; it opens this page by itself.", PanelHost(h.port)),
+			Commands: []string{panelCommand},
+		})
+		return
+	}
+	h.panelProxy(backend).ServeHTTP(w, r)
+}
+
+// panelCommand is the command that opens the control panel.
+const panelCommand = "nakama ui"
+
+// panelProxy returns the reverse proxy to the control panel on backend,
+// replacing the one of an earlier panel process.
+func (h *routerHandler) panelProxy(backend string) *httputil.ReverseProxy {
+	if v, ok := h.proxies.Load(panelProxyKey); ok {
+		if e := v.(routeProxy); e.backend == backend {
+			return e.rp
+		}
+	}
+	target := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", backend)}
+	rp := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.Host = pr.In.Host
+			pr.Out.Header.Del("X-Real-Ip")
+		},
+		Transport: h.transport,
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			h.panel.forget()
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			h.logf("router: control panel: %v", err)
+			writeRouterPage(w, http.StatusBadGateway, routerPage{
+				Title:    "The nakama control panel did not answer",
+				Detail:   "Its window may have been closed.",
+				Commands: []string{panelCommand},
+			})
+		},
+	}
+	h.proxies.Store(panelProxyKey, routeProxy{backend: backend, rp: rp})
+	return rp
 }
 
 // routerPage is an error page of the router.
