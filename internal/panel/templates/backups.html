@@ -1,0 +1,6 @@
+{{define "content"}}{{$d := .Data}}
+<h1>{{.T.backupsTitle}}</h1>
+<p class="note">{{.T.backupsLead}}</p>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+{{template "backupTable" (dict "Backups" $d.Backups "CSRF" .CSRF "T" .T "Busy" $d.Busy.All "Back" "/backups" "ShowName" true)}}
+{{end}}

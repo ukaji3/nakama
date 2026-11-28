@@ -1,0 +1,9 @@
+{{define "content"}}{{$d := .Data}}
+<h1>{{.T.opsTitle}}</h1>
+<p class="note">{{.T.opsLead}} {{.T.cliNote}}</p>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+{{if $d.Ops}}<table>
+<tr><th>{{.T.colStarted}}</th><th>{{.T.colOperation}}</th><th>{{.T.colState}}</th><th>{{.T.colEnded}}</th></tr>
+{{range $d.Ops}}<tr><td>{{ts .StartedAt}}</td><td><a href="/ops/{{.ID}}">{{.Title}}</a></td><td><span class="badge {{stateClass (printf "%s" .State)}}">{{.State}}</span></td><td>{{ts .EndedAt}}</td></tr>
+{{end}}</table>{{else if not $d.Err}}<p>{{.T.noOps}}</p>{{end}}
+{{end}}

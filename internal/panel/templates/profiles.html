@@ -1,0 +1,29 @@
+{{define "content"}}{{$csrf := .CSRF}}{{$t := .T}}{{$d := .Data}}
+<h1>{{.T.profilesTitle}}</h1>
+<p class="note">{{.T.profilesLead}}</p>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+{{if $d.Profiles}}<table>
+<tr><th></th><th>{{.T.colAccount}}</th><th>{{.T.colAlias}}</th><th>{{.T.colIdentity}}</th><th>{{.T.colSaved}}</th><th>{{.T.colStatus}}</th><th>{{.T.colActions}}</th></tr>
+{{range $d.Profiles}}<tr><td>{{if .Active}}★{{end}}</td><td>{{.AccountID}}</td><td>{{.Alias}}</td><td class="small">{{.Identity}}</td><td>{{.Saved}}</td><td><span class="badge {{stateClass .Status}}">{{.Status}}</span></td>
+<td class="actions">{{if not .Active}}<form method="post" action="/profiles" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="action" value="load"><input type="hidden" name="key" value="{{.AccountID}}"><button type="submit">{{$t.useProfile}}</button></form>{{end}}
+<form method="post" action="/profiles" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="action" value="delete"><input type="hidden" name="key" value="{{.AccountID}}"><button type="submit" class="danger">{{$t.delete}}</button></form></td></tr>
+{{end}}</table>{{else if not $d.Err}}<p>{{.T.noProfiles}}</p>{{end}}
+<div class="row">
+<form method="post" action="/login" class="box">{{template "csrf" $csrf}}
+<h3>{{.T.loginAnother}}</h3>
+<label>{{.T.aliasOptional}} <input type="text" name="alias" maxlength="64" autocomplete="off"></label>
+<button type="submit" class="primary">{{.T.loginButton}}</button>
+</form>
+<form method="post" action="/profiles" class="box">{{template "csrf" $csrf}}<input type="hidden" name="action" value="save">
+<h3>{{.T.profileSaveTitle}}</h3>
+<p class="note">{{.T.profileSaveLead}}</p>
+<label>{{.T.aliasOptional}} <input type="text" name="alias" maxlength="64" autocomplete="off"></label>
+<button type="submit">{{.T.save}}</button>
+</form>
+<form method="post" action="/profiles" class="box">{{template "csrf" $csrf}}<input type="hidden" name="action" value="unload">
+<h3>{{.T.profileUnloadTitle}}</h3>
+<p class="note">{{.T.profileUnloadLead}}</p>
+<button type="submit">{{.T.unload}}</button>
+</form>
+</div>
+{{end}}

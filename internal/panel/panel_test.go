@@ -46,6 +46,7 @@ type testPanel struct {
 	clock *testClock
 	h     http.Handler
 	logs  *[]string
+	fake  *fakeBackend
 }
 
 func newTestPanel(t *testing.T) *testPanel {
@@ -53,9 +54,11 @@ func newTestPanel(t *testing.T) *testPanel {
 	clock := &testClock{now: time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)}
 	var mu sync.Mutex
 	logs := &[]string{}
+	fake := newFakeBackend()
 	s := New(Config{
 		RouterPort: 18888,
 		Version:    "v9.9.9-test",
+		Backend:    fake,
 		Now:        clock.Now,
 		PeerCheck:  func(*http.Request) error { return nil },
 		Logf: func(format string, args ...any) {
@@ -64,7 +67,7 @@ func newTestPanel(t *testing.T) *testPanel {
 			*logs = append(*logs, fmt.Sprintf(format, args...))
 		},
 	})
-	return &testPanel{Server: s, clock: clock, h: s.Handler(), logs: logs}
+	return &testPanel{Server: s, clock: clock, h: s.Handler(), logs: logs, fake: fake}
 }
 
 // browserRequest is a request as a browser sends it from the panel's
@@ -185,7 +188,7 @@ func TestSignInCodesAreSingleUseAndShortLived(t *testing.T) {
 		t.Fatalf("first use: %d", w.Code)
 	}
 	w := p.do(t, browserRequest{method: http.MethodGet, path: SignInPath + "?c=" + code, site: "none", lang: "en"})
-	if w.Code != http.StatusForbidden || len(w.Result().Cookies()) != 0 || !strings.Contains(w.Body.String(), "<code>nakama ui</code>") {
+	if w.Code != http.StatusForbidden || len(w.Result().Cookies()) != 0 || !strings.Contains(w.Body.String(), "<code>nakama</code>") {
 		t.Errorf("second use = %d, cookies %v, body %s; want 403 naming nakama ui", w.Code, w.Result().Cookies(), w.Body)
 	}
 	late, _ := p.NewSignInCode()
@@ -217,7 +220,7 @@ func TestPagesNeedASession(t *testing.T) {
 	p := newTestPanel(t)
 	w := p.do(t, browserRequest{method: http.MethodGet, path: "/", site: "none", lang: "ja"})
 	body := w.Body.String()
-	if w.Code != http.StatusUnauthorized || !strings.Contains(body, "ログインしていません") || !strings.Contains(body, "<code>nakama ui</code>") ||
+	if w.Code != http.StatusUnauthorized || !strings.Contains(body, "ログインしていません") || !strings.Contains(body, "<code>nakama</code>") ||
 		!strings.Contains(body, `<html lang="ja">`) || strings.Contains(body, "nakama-csrf") {
 		t.Errorf("home without a session = %d %s", w.Code, body)
 	}

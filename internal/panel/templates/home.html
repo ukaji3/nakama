@@ -1,4 +1,51 @@
-{{define "content"}}<h1>{{.T.title}}</h1>
-<p>{{.T.homeLead}}</p>
-<p class="note">{{.T.sessionNote}}</p>
+{{define "content"}}{{$csrf := .CSRF}}{{$t := .T}}{{$d := .Data}}
+{{if not .Account}}
+<section class="card">
+<h1>{{.T.signInAWSTitle}}</h1>
+<p>{{.T.signInAWSLead}}</p>
+{{if .AccountErr}}<pre class="detail">{{.AccountErr}}</pre>{{end}}
+<form method="post" action="/login" class="inline">
+{{template "csrf" $csrf}}
+<label>{{.T.aliasOptional}} <input type="text" name="alias" maxlength="64" autocomplete="off"></label>
+<button type="submit" class="primary">{{.T.loginButton}}</button>
+</form>
+{{if $d.Profiles}}<h2>{{.T.savedProfiles}}</h2>
+<table>
+<tr><th>{{.T.colAccount}}</th><th>{{.T.colAlias}}</th><th>{{.T.colStatus}}</th><th></th></tr>
+{{range $d.Profiles}}<tr><td>{{.AccountID}}</td><td>{{.Alias}}</td><td><span class="badge {{stateClass .Status}}">{{.Status}}</span></td>
+<td><form method="post" action="/profiles" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="action" value="load"><input type="hidden" name="key" value="{{.AccountID}}"><button type="submit">{{$t.useProfile}}</button></form></td></tr>
+{{end}}</table>{{end}}
+</section>
+{{else}}
+<h1>{{.T.instancesTitle}}</h1>
+<p class="toolbar"><a class="button primary" href="/create">{{.T.navCreate}}</a>
+{{if $d.ShowNAT}}<a href="/">{{.T.hideNAT}}</a>{{else}}<a href="/?nat=1">{{.T.showNAT}}</a>{{end}}</p>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+{{if $d.Busy.All}}<p class="flash">{{.T.exclusiveRunning}}</p>{{end}}
+{{if $d.Instances}}<table>
+<tr><th>{{.T.colName}}</th><th>{{.T.colKind}}</th><th>{{.T.colState}}</th><th>{{.T.colInstanceType}}</th><th>{{.T.colCloudFront}}</th><th>{{.T.colActions}}</th></tr>
+{{range $d.Instances}}{{$busy := or $d.Busy.All (has $d.Busy.Instances .Name)}}<tr>
+<td>{{if or (eq .Type "nat") (eq .Type "natgw")}}{{.Name}}{{else}}<a href="/instances/{{.Name}}">{{.Name}}</a>{{end}}</td>
+<td>{{.Type}}</td>
+<td><span class="badge {{stateClass .State}}">{{.State}}</span>{{if $busy}} <span class="badge pending">{{$t.busy}}</span>{{end}}</td>
+<td>{{.InstanceType}}</td>
+<td>{{if .DistributionDomain}}{{.DistributionDomain}}{{else}}{{.PublicIP}}{{end}}</td>
+<td class="actions">{{if or (eq .Type "vscode") (eq .Type "bare")}}
+{{if eq .State "running"}}{{if eq .Type "vscode"}}<form method="post" action="/open/code/{{.Name}}" target="_blank" class="inline">{{template "csrf" $csrf}}<button type="submit" class="primary">code</button></form>{{end}}
+<form method="post" action="/open/kirocrew/{{.Name}}" target="_blank" class="inline">{{template "csrf" $csrf}}<button type="submit">kirocrew</button></form>{{end}}
+<form method="post" action="/run" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/"><input type="hidden" name="name" value="{{.Name}}">
+{{if eq .State "stopped"}}<button type="submit" name="action" value="start" {{if $busy}}disabled{{end}}>{{$t.start}}</button>{{end}}
+{{if eq .State "running"}}<button type="submit" name="action" value="stop" {{if $busy}}disabled{{end}}>{{$t.stop}}</button>{{end}}
+</form>
+<a href="/instances/{{.Name}}">{{$t.details}}</a>{{end}}</td>
+</tr>
+{{end}}</table>
+{{else if not $d.Err}}<p>{{.T.noInstances}}</p>{{end}}
+{{end}}
+{{if $d.Recent}}<h2>{{.T.recentOps}}</h2>
+<table>
+<tr><th>{{.T.colStarted}}</th><th>{{.T.colOperation}}</th><th>{{.T.colState}}</th></tr>
+{{range $d.Recent}}<tr><td>{{ts .StartedAt}}</td><td><a href="/ops/{{.ID}}">{{.Title}}</a></td><td><span class="badge {{stateClass (printf "%s" .State)}}">{{.State}}</span></td></tr>
+{{end}}</table>
+<p class="note">{{.T.cliNote}}</p>{{end}}
 {{end}}

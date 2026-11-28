@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/ukaji3/nakama/internal/cliproxy"
 	"github.com/ukaji3/nakama/internal/version"
@@ -56,6 +57,9 @@ type doubleClickLauncher struct {
 	// interrupts delivers Ctrl-C; one during the detection skips it.
 	interrupts <-chan os.Signal
 	run        func(path string, args, env []string, dir string) (int, error)
+	// startPanel opens the control panel next to the shell (Issue #139)
+	// and returns what stops it when the shell ends; nil skips it.
+	startPanel func(out io.Writer) (stop func())
 }
 
 // launch prints what the window is set up with, starts the shell and
@@ -90,6 +94,10 @@ func (l *doubleClickLauncher) launch() int {
 		printDetection(l.out, det)
 		env = cliShellEnv(l.environ, det, l.exeDir)
 	}
+	if l.startPanel != nil {
+		stop := l.startPanel(l.out)
+		defer stop()
+	}
 	_, _ = fmt.Fprintf(l.out, "\nType `nakama --help` to see the commands, and `exit` to close this window.\n\n")
 
 	code, err := l.run(l.shell, l.shellArgs, env, l.homeDir)
@@ -118,4 +126,44 @@ func (l *doubleClickLauncher) detectInterruptibly() (det *cliproxy.Detection, in
 	}()
 	det, err = l.detect(ctx)
 	return det, err != nil && ctx.Err() != nil, err
+}
+
+// startPanelBeside runs the control panel in the background of the
+// double-click window: it opens the browser and stays until the shell
+// ends (closing the window ends both). The shell owns the console, so
+// the panel's log is discarded and only one line about it is printed.
+func startPanelBeside(out io.Writer, deps uiDeps) (stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	readyCh := make(chan string, 1)
+	deps.quiet = true
+	deps.ready = func(origin string) {
+		select {
+		case readyCh <- origin:
+		default:
+		}
+	}
+	// Ctrl-C belongs to the shell; the panel ends with the window.
+	deps.stopSignals = func(parent context.Context) (context.Context, context.CancelFunc) {
+		return context.WithCancel(parent)
+	}
+	done := make(chan error, 1)
+	go func() { done <- runUI(ctx, io.Discard, "", deps) }()
+	select {
+	case origin := <-readyCh:
+		_, _ = fmt.Fprintf(out, "panel:  %s/ (opened in your browser; it runs until this window closes)\n", origin)
+	case err := <-done:
+		if err != nil {
+			_, _ = fmt.Fprintf(out, "panel:  WARNING: the control panel did not start: %v\n", err)
+		}
+	case <-time.After(30 * time.Second):
+		_, _ = fmt.Fprintf(out, "panel:  WARNING: the control panel did not open within 30 seconds\n")
+	}
+	return func() {
+		cancel()
+		select {
+		case err := <-done:
+			_ = err // already reported above, or the panel ended normally
+		case <-time.After(10 * time.Second):
+		}
+	}
 }

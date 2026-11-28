@@ -1,0 +1,20 @@
+{{define "backupTable"}}{{$csrf := .CSRF}}{{$t := .T}}{{$busy := .Busy}}{{$back := .Back}}{{$show := .ShowName}}
+{{if .Backups}}<table>
+<tr>{{if $show}}<th>{{$t.colName}}</th>{{end}}<th>{{$t.label}}</th><th>{{$t.colCreated}}</th><th>{{$t.colState}}</th><th>{{$t.colSize}}</th><th>{{$t.note}}</th><th>{{$t.colActions}}</th></tr>
+{{range .Backups}}<tr>
+{{if $show}}<td>{{.Name}}</td>{{end}}<td><code>{{.Label}}</code></td><td>{{.CreatedAt}}</td><td><span class="badge {{stateClass .State}}">{{.State}}</span></td><td>{{.SizeGiB}} GiB</td>
+<td><form method="post" action="/run" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="back" value="{{$back}}"><input type="hidden" name="action" value="backup_note"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="label" value="{{.Label}}"><input type="text" name="note" value="{{.Note}}" maxlength="255"><button type="submit">{{$t.save}}</button></form></td>
+<td class="actions">
+<form method="post" action="/run" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="back" value="{{$back}}"><input type="hidden" name="action" value="restore"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="label" value="{{.Label}}">
+<details><summary>{{$t.restoreOptions}}</summary>
+<label>{{$t.colInstanceType}} <input type="text" name="instance_type" maxlength="32" placeholder="{{.InstanceType}}"></label>
+<label><input type="checkbox" name="cloudfront" value="1"> CloudFront</label>
+<label><input type="checkbox" name="bare" value="1"> --bare</label>
+<label><input type="checkbox" name="with_admin" value="1"> --with-admin</label>
+<label>--with-role <input type="text" name="with_role" maxlength="64"></label>
+</details>
+<button type="submit" {{if or $busy (ne .State "completed")}}disabled title="{{$t.backupNotReady}}"{{end}}>{{$t.restore}}</button></form>
+<form method="post" action="/run" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="back" value="{{$back}}"><input type="hidden" name="action" value="backup_delete"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="label" value="{{.Label}}"><button type="submit" class="danger" {{if $busy}}disabled{{end}}>{{$t.delete}}</button></form>
+</td></tr>
+{{end}}</table>{{else}}<p>{{$t.noBackups}}</p>{{end}}
+{{end}}

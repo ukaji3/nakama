@@ -30,6 +30,10 @@ func NewRootCommand() *cobra.Command {
 		Short: "Manage AWS-hosted code-server instances in private subnets, reached over SSM",
 		Long: `nakama provisions and manages cloud development environments on AWS.
 
+Run nakama without arguments to open the control panel in your browser
+(the same as ` + "`nakama ui`" + `); the commands below do the same from the command
+line.
+
 Each instance runs coder/code-server on a private-subnet EC2 instance
 with no inbound rule. The browser reaches it through an AWS Systems
 Manager (SSM) Session Manager port forward (` + "`nakama aws code`" + `), and
@@ -44,6 +48,14 @@ only on request (` + "`nakama aws create --cloudfront`" + `, ` + "`nakama aws cl
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			configureLogger(cmd.ErrOrStderr(), global.Verbose)
 			return nil
+		},
+		// Without arguments, in a terminal, nakama opens the control
+		// panel (Issue #139, ADR 0031); scripts and pipes get the help.
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !isInteractive() {
+				return cmd.Help()
+			}
+			return runUI(withCancel(cmd), cmd.ErrOrStderr(), "", defaultUIDeps())
 		},
 	}
 

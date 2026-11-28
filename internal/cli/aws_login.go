@@ -54,6 +54,44 @@ type loginResultOutput struct {
 	SavedAt  string `json:"saved_at" yaml:"saved_at"`
 }
 
+// completeLogin confirms the identity of a fresh sign-in through STS
+// and registers and activates its profile (the same registry logic as
+// `nakama aws profile save` + `load`). `nakama aws login` and the
+// control panel's Login button (Issue #139) share it.
+func completeLogin(ctx context.Context, deps loginDeps, res *signin.LoginResult, alias string) (*loginResultOutput, error) {
+	// Confirm the identity through the freshly cached session (STS
+	// GetCallerIdentity via the native provider).
+	accountID, callerARN, err := deps.identity(ctx, res.LoginSession)
+	if err != nil {
+		return nil, fmt.Errorf("signed in, but confirming the identity via STS failed: %w", err)
+	}
+	resolvedAlias := alias
+	if resolvedAlias == "" {
+		resolvedAlias = accountID
+	}
+	store := deps.newStore()
+	data, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if err := checkAliasCollision(data, accountID, resolvedAlias); err != nil {
+		return nil, err
+	}
+	savedAt := deps.now().Format(time.RFC3339)
+	data.Upsert(profilestore.Profile{
+		AccountID:    accountID,
+		Alias:        resolvedAlias,
+		LoginSession: res.LoginSession,
+		IdentityARN:  callerARN,
+		SavedAt:      savedAt,
+	})
+	data.Active = accountID
+	if err := store.Save(data); err != nil {
+		return nil, err
+	}
+	return &loginResultOutput{Account: accountID, Alias: resolvedAlias, Identity: callerARN, SavedAt: savedAt}, nil
+}
+
 func newAWSLoginCommand() *cobra.Command {
 	return newAWSLoginCommandWithDeps(defaultLoginDeps())
 }
@@ -120,46 +158,9 @@ after signing in.`,
 			if err != nil {
 				return err
 			}
-
-			// Confirm the identity through the freshly cached session
-			// (STS GetCallerIdentity via the native provider).
-			accountID, callerARN, err := deps.identity(ctx, res.LoginSession)
-			if err != nil {
-				return fmt.Errorf("signed in, but confirming the identity via STS failed: %w", err)
-			}
-
-			// Register and activate the profile (same registry logic
-			// as `nakama aws profile save` + `load`).
-			resolvedAlias := alias
-			if resolvedAlias == "" {
-				resolvedAlias = accountID
-			}
-			store := deps.newStore()
-			data, err := store.Load()
+			out, err := completeLogin(ctx, deps, res, alias)
 			if err != nil {
 				return err
-			}
-			if err := checkAliasCollision(data, accountID, resolvedAlias); err != nil {
-				return err
-			}
-			savedAt := deps.now().Format(time.RFC3339)
-			data.Upsert(profilestore.Profile{
-				AccountID:    accountID,
-				Alias:        resolvedAlias,
-				LoginSession: res.LoginSession,
-				IdentityARN:  callerARN,
-				SavedAt:      savedAt,
-			})
-			data.Active = accountID
-			if err := store.Save(data); err != nil {
-				return err
-			}
-
-			out := loginResultOutput{
-				Account:  accountID,
-				Alias:    resolvedAlias,
-				Identity: callerARN,
-				SavedAt:  savedAt,
 			}
 			text := fmt.Sprintf("logged in:\n"+
 				"  account  : %s\n"+

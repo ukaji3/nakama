@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -182,7 +183,7 @@ func TestUIPassesTheBrowserFlag(t *testing.T) {
 	}
 }
 
-func TestUIIsHiddenAndTakesNoArguments(t *testing.T) {
+func TestUIIsListedAndTakesNoArguments(t *testing.T) {
 	_, deps := newUIFakes()
 	if _, _, err := runUICommand(t, deps, "extra"); err == nil {
 		t.Error("ui takes no arguments")
@@ -194,16 +195,89 @@ func TestUIIsHiddenAndTakesNoArguments(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if regexp.MustCompile(`(?m)^\s+ui\s`).MatchString(out.String()) {
-		t.Errorf("ui must stay hidden until the panel covers the CLI (Issue #139):\n%s", out.String())
+	if !regexp.MustCompile(`(?m)^\s+ui\s+Open the nakama control panel`).MatchString(out.String()) ||
+		!strings.Contains(out.String(), "Run nakama without arguments to open the control panel") {
+		t.Errorf("the help must list ui and say what nakama without arguments does:\n%s", out.String())
 	}
-	found := false
-	for _, c := range root.Commands() {
-		if c.Name() == "ui" {
-			found = c.Hidden
+}
+
+// TestNakamaWithoutArgumentsOutsideATerminalPrintsTheHelp: scripts and
+// pipes keep the old behavior (go test has no terminal).
+func TestNakamaWithoutArgumentsOutsideATerminalPrintsTheHelp(t *testing.T) {
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Available Commands:") {
+		t.Errorf("want the help, got:\n%s", out.String())
+	}
+	root = NewRootCommand()
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"nosuchcommand"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("an unknown command must stay an error: %v", err)
+	}
+}
+
+func TestPanelBesideTheDoubleClickShell(t *testing.T) {
+	f, deps := newUIFakes()
+	var out bytes.Buffer
+	stop := startPanelBeside(&out, deps)
+	if !strings.Contains(out.String(), "panel:  http://control.nakama.localhost:18888/ (opened in your browser") {
+		t.Errorf("window line = %q", out.String())
+	}
+	if len(f.launcher.urls) != 1 || !signInURLPattern.MatchString(f.launcher.urls[0]) {
+		t.Errorf("browser opened %v", f.launcher.urls)
+	}
+	stop()
+	// A failure is one warning line, and the shell still opens.
+	f, deps = newUIFakes()
+	f.launcher.err = errors.New("no browser")
+	out.Reset()
+	stop = startPanelBeside(&out, deps)
+	stop()
+	if !strings.Contains(out.String(), "panel:  WARNING: the control panel did not start") {
+		t.Errorf("window line = %q", out.String())
+	}
+}
+
+func TestRecordedCommandsReturnTheBinarysExitCode(t *testing.T) {
+	if code := runRecordedCommand([]string{"version"}); code != 0 {
+		t.Errorf("version = %d", code)
+	}
+	if code := runRecordedCommand([]string{"aws", "info"}); code != 1 {
+		t.Errorf("info without a name = %d", code)
+	}
+}
+
+func TestLoginNavigationIsTheOneShotLoginForm(t *testing.T) {
+	nav := loginNavigation("http://code-server.dev01.nakama.localhost:18888", "pw", url.Values{"token": {"t"}})
+	if nav.Method != "POST" || nav.Action != "http://code-server.dev01.nakama.localhost:18888/login?to=/&token=t" {
+		t.Errorf("nav = %+v", nav)
+	}
+	want := []string{"password=pw", "base=.", "href=http://code-server.dev01.nakama.localhost:18888/login"}
+	for i, f := range nav.Fields {
+		if f.Name+"="+f.Value != want[i] {
+			t.Errorf("field %d = %s=%s, want %s", i, f.Name, f.Value, want[i])
 		}
 	}
-	if !found {
-		t.Error("the root command must have a hidden ui command")
+	// The same form `nakama aws code` serves on its one-shot page.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newOneShotLoginServerFor(lis, "x", loginTarget{origin: "http://code-server.dev01.nakama.localhost:18888", label: "code-server", extra: url.Values{"token": {"t"}}}, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	page := string(srv.page)
+	if !strings.Contains(page, `action="http://code-server.dev01.nakama.localhost:18888/login?to=/&amp;token=t"`) ||
+		!strings.Contains(page, `name="href" value="http://code-server.dev01.nakama.localhost:18888/login"`) {
+		t.Errorf("the one-shot page differs:\n%s", page)
 	}
 }

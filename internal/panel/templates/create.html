@@ -1,0 +1,20 @@
+{{define "content"}}{{$t := .T}}
+<h1>{{.T.createTitle}}</h1>
+<form method="post" action="/run" class="box wide">
+{{template "csrf" .CSRF}}<input type="hidden" name="action" value="create"><input type="hidden" name="back" value="/create">
+<label>{{.T.colName}} <input type="text" name="name" required minlength="2" maxlength="32" pattern="[a-z0-9][a-z0-9-]*[a-z0-9]" autocomplete="off"></label>
+<p class="note">{{.T.nameRule}}</p>
+<label>{{.T.colInstanceType}} <input type="text" name="instance_type" required maxlength="32" placeholder="t3.medium"></label>
+<label><input type="checkbox" name="bare" value="1"> {{.T.createBare}}</label>
+<label><input type="checkbox" name="cloudfront" value="1"> {{.T.createCloudFront}}</label>
+<label><input type="checkbox" name="no_kiro" value="1"> {{.T.createNoKiro}}</label>
+<label>{{.T.codeServerVersion}} <input type="text" name="code_server_version" maxlength="16" placeholder="{{.T.latest}}"></label>
+<label>{{.T.setupScript}} <input type="text" name="setup" maxlength="2048" placeholder="~/setup.sh / https://…"></label>
+<label>{{.T.dotfiles}} <input type="text" name="dotfiles" maxlength="2048" placeholder="https://github.com/…"></label>
+<label>{{.T.preset}} <select name="preset"><option value="">—</option><option value="kiro">kiro</option></select></label>
+<label><input type="checkbox" name="with_admin" value="1"> {{.T.withAdmin}}</label>
+<label>{{.T.withRole}} <input type="text" name="with_role" maxlength="64"></label>
+<button type="submit" class="primary">{{.T.create}}</button>
+</form>
+<p class="note">{{.T.createNote}}</p>
+{{end}}

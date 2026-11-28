@@ -1,0 +1,26 @@
+{{define "content"}}{{$csrf := .CSRF}}{{$t := .T}}{{$d := .Data}}
+<h1>{{.T.aclTitle}}</h1>
+<p class="note">{{.T.aclLead}}</p>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/acl"><input type="hidden" name="action" value="acl_add">
+<label>{{.T.cidr}} <input type="text" name="cidr" maxlength="18" placeholder="{{.T.cidrMine}}"></label>
+<button type="submit" class="primary">{{.T.add}}</button>
+</form>
+{{if $d.Entries}}<table>
+<tr><th>{{.T.cidr}}</th><th>{{.T.colAdded}}</th><th></th></tr>
+{{range $d.Entries}}<tr><td><code>{{.CIDR}}</code></td><td>{{.AddedAt}}</td>
+<td><form method="post" action="/run" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/acl"><input type="hidden" name="action" value="acl_delete"><input type="hidden" name="cidr" value="{{.CIDR}}"><button type="submit" class="danger">{{$t.delete}}</button></form></td></tr>
+{{end}}</table>{{else if not $d.Err}}<p>{{.T.aclEmpty}}</p>{{end}}
+<div class="row">
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/acl"><input type="hidden" name="action" value="acl_prune">
+<h3>{{.T.aclPruneTitle}}</h3>
+<label>{{.T.olderThan}} <input type="text" name="older_than" required maxlength="8" placeholder="30d"></label>
+<button type="submit" class="danger">{{.T.prune}}</button>
+</form>
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/acl"><input type="hidden" name="action" value="acl_delete_all">
+<h3>{{.T.aclDeleteAllTitle}}</h3>
+<label><input type="checkbox" name="keep_mine" value="1" checked> {{.T.keepMine}}</label>
+<button type="submit" class="danger">{{.T.deleteAll}}</button>
+</form>
+</div>
+{{end}}

@@ -1,0 +1,15 @@
+{{define "content"}}{{$d := .Data}}
+<h1>{{.T.confirmTitle}}</h1>
+<p>{{.T.confirmLead}}</p>
+<pre class="detail">{{$d.Line}}</pre>
+{{if $d.Irreversible}}<p class="flash error">{{.T.confirmIrreversible}}</p>{{end}}
+<form method="post" action="/run" class="box">
+{{template "csrf" .CSRF}}
+{{range $d.Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">
+{{end}}<input type="hidden" name="confirmed" value="1">
+{{if $d.Irreversible}}<label>{{printf .T.confirmType $d.Word}} <input type="text" name="typed" required autocomplete="off"></label>
+{{if $d.Wrong}}<p class="flash error">{{.T.confirmWrong}}</p>{{end}}{{end}}
+<button type="submit" class="danger">{{.T.confirmRun}}</button>
+<a href="/">{{.T.cancel}}</a>
+</form>
+{{end}}

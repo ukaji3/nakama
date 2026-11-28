@@ -559,7 +559,7 @@ func (h *routerHandler) servePanel(w http.ResponseWriter, r *http.Request) {
 }
 
 // panelCommand is the command that opens the control panel.
-const panelCommand = "nakama ui"
+const panelCommand = "nakama"
 
 // panelProxy returns the reverse proxy to the control panel on backend,
 // replacing the one of an earlier panel process.

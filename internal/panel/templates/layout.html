@@ -3,22 +3,35 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{{if .CSRF}}<meta name="nakama-csrf" content="{{.CSRF}}">
+{{if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">
+{{end}}{{if .CSRF}}<meta name="nakama-csrf" content="{{.CSRF}}">
 {{end}}<title>{{.T.title}}</title>
 <link rel="stylesheet" href="/assets/panel.css">
 </head>
 <body>
 <header class="bar">
-<span class="brand">nakama</span>
-{{if .CSRF}}<form method="post" action="/logout" class="sign-out">
+<a class="brand" href="/">nakama</a>
+{{if .CSRF}}<nav>
+<a href="/" {{if eq .Nav "home"}}class="current"{{end}}>{{.T.navInstances}}</a>
+<a href="/create" {{if eq .Nav "create"}}class="current"{{end}}>{{.T.navCreate}}</a>
+<a href="/backups" {{if eq .Nav "backups"}}class="current"{{end}}>{{.T.navBackups}}</a>
+<a href="/acl" {{if eq .Nav "acl"}}class="current"{{end}}>{{.T.navACL}}</a>
+<a href="/profiles" {{if eq .Nav "profiles"}}class="current"{{end}}>{{.T.navProfiles}}</a>
+<a href="/system" {{if eq .Nav "system"}}class="current"{{end}}>{{.T.navSystem}}</a>
+<a href="/ops" {{if eq .Nav "ops"}}class="current"{{end}}>{{.T.navOps}}</a>
+</nav>
+<span class="account">{{if .Account}}{{if .Account.Alias}}{{.Account.Alias}} · {{end}}{{.Account.AccountID}}{{else}}{{.T.notSignedInAWS}}{{end}}</span>
+<form method="post" action="/logout" class="sign-out">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <button type="submit">{{.T.signOut}}</button>
 </form>{{end}}
 </header>
 <main>
-{{template "content" .}}
+{{if .Flash}}<pre class="flash{{if .FlashErr}} error{{end}}">{{.Flash}}</pre>
+{{end}}{{template "content" .}}
 </main>
-<footer>{{.T.version}} {{.Version}}</footer>
+<footer>{{.T.version}} {{.Version}} · {{.T.sessionNote}}</footer>
 </body>
 </html>
 {{end}}
+{{define "csrf"}}<input type="hidden" name="csrf" value="{{.}}">{{end}}
