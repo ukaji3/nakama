@@ -57,7 +57,10 @@ nakama の操作は、すべて CLI のコマンドである。CLI に慣れて�
 6. **確認と同時実行**: 元に戻せない操作 (delete、restore、backup delete、acl delete all、acl prune) は対象の名前を入力させ、停止や料金を伴う操作 (stop、edit、update、init の NAT 方式の変更、cloudfront add / delete) は確認のダイアログを出してから、CLI に `--yes` を渡す。同じインスタンスへの状態の変更は、画面では 1 つずつにする。init はほかの操作と並べない。ターミナルからの CLI の実行は防げないので、画面に注意を書く。
 7. **画面に載せるもの**: login、profile (list / save / load / unload / delete)、init、doctor、version (`--check`)、list (`--show-nat`)、info、start、stop、create、delete、edit、update、provision、backup (list / create / note / delete)、restore、code と kirocrew (`--internet`、`--no-auth`)、cloudfront add / delete (`--kirocrew`)、acl (list / add / delete / prune)、tunnel (status / stop / restart / suggest)。載せないもの: shell (対話の端末。code-server のターミナルを案内する)、ssh setup / ssh proxy、cli shell、tunnel start の任意の `-L`、login の `--remote` (画面と同じ端末のブラウザを使うので不要)、code / kirocrew の `--print-url` / `--browser` / `--local-port` / `--timeout`。パスワードは、詳細の「パスワードを表示」を押したときだけ出す。create の `--setup` / `--dotfiles` は、パスか URL を文字で入れる。
 8. **画面の作り**: html/template と少しの素の JavaScript で作り、`go:embed` でバイナリに入れる。npm やビルドの手順は足さない。日本語と英語を、ブラウザの Accept-Language で選ぶ (どちらも無ければ英語)。
-9. **順序**: Issue #139 の 10 本のプルリクエストに分ける。`nakama ui` は 9 本目まで隠しコマンドにし、引数なしの `nakama` と Windows のダブルクリック (ADR 0022 の改訂) は 9 本目で変える。リリースは 10 本がそろってから。
+9. **順序**: 最初は Issue #139 の 10 本のプルリクエストに分ける予定だった。1 本目 (#140: ルーターの転送、管理画面のプロセス、セッション管理) のあと、利用者の指示 (「使うことができないような意味の無い機能ごとに PR を作成するな」) で、残りの機能 (AWS のログインとアカウント、一覧と詳細、操作の実行基盤と全操作、code / kirocrew、ポート転送、診断と版、引数なしの `nakama`、Windows のダブルクリック、ドキュメント) を 1 本にまとめた。リリースはそれがマージされてから。
+10. **入口**: 引数なしの `nakama` は、標準入力と標準出力が端末のときだけ管理画面を開き (`nakama ui` と同じ)、それ以外 (スクリプト、パイプ) は今までどおりヘルプを出す。`nakama ui` は表に出し、`--browser` を受け付ける。Windows で nakama.exe をダブルクリックすると、今までどおり PowerShell を開き (ADR 0022)、同じプロセスで管理画面も動かしてブラウザを開く。PowerShell の Ctrl-C は管理画面を止めず、ウィンドウを閉じると両方が終わる。管理画面のログは捨て、ウィンドウには管理画面のアドレスか起動の失敗を 1 行だけ出す。画面とルーターのページが案内するコマンドは `nakama` にした。
+11. **操作の実行の仕組み** (`internal/service/ops.go`、隠しコマンド `nakama aws op-runner --id <id>`): 管理画面は `op.json` (コマンドラインとインスタンス) を書き、標準出力と標準エラーを `stdout` と `log` に向けて、runner を tunnel のデーモンと同じく切り離して起動する (Windows は DETACHED_PROCESS)。runner はコマンドの木を自分のプロセスで実行し、127.0.0.1 の制御のチャネル (`/status`、`/stop`、bearer token、`runner.json`) に答え、終了コードを `exit.json` に書く。`/stop` は `exit.json` に中止と書いてから終了コード 130 で終わる (Ctrl-C と同じく、コマンドの途中で止まる)。状態は、`exit.json` があれば成功・失敗・中止、runner が答えれば実行中、どちらも無ければ中断 (起動から 30 秒までは実行中とみなす)。同じインスタンスの操作と init との重なりは、開始のときに断る。7 日を過ぎた終わった操作は消す。
+12. **ログインの戻り**: `signin.LoginOptions.RedirectURL` を足し、コールバックは固定のページの代わりに管理画面の `/login/done?login=ok|failed` へ 303 で戻す (結果だけで、認可コードは渡さない)。トークンの交換とプロファイルの保存は、その間に裏で終わるので、`/login/done` は 1 秒ごとに読み直して待つ。
 
 ## Consequences
 
@@ -65,7 +68,8 @@ nakama の操作は、すべて CLI のコマンドである。CLI に慣れて�
 - ルーターの役割が 1 つ増える。中継するだけで、資格情報は持たない。ルーターが別の版に入れ替わっても、管理画面のプロセスとセッションはそのまま残る。
 - Linux 以外では、ほかの OS のユーザーからの接続を接続の段階では拒めない。サインインのコードとセッション Cookie を持たない要求は、どの OS でも拒む。
 - 同じ OS のユーザーで動くプログラムからは守れない。これは今の CLI と同じで、ドキュメントに書く。
-- Safari (macOS 26) が http の `*.localhost` で `__Host-` の Cookie を受け付けなければ、Cookie の名前を変える必要がある (1 本目のプルリクエストの段階で、利用者が確かめる)。
+- Safari (macOS 26) が http の `*.localhost` で `__Host-` の Cookie を受け付けなければ、Cookie の名前を変える必要がある (利用者が確かめる)。
+- 操作のログ (`~/.config/nakama/ops/<id>/`) にはコマンドの出力が残る。パスワードは含まない (`--show-password` を付けず、create の JSON はそれが無ければパスワードを空にする)。
 
 ## 確認
 
@@ -74,7 +78,9 @@ nakama の操作は、すべて CLI のコマンドである。CLI に慣れて�
 - `internal/service/panel_test.go`: 状態ファイル、制御のチャネル、2 つ目の管理画面、残った状態ファイル、ルーターの中継 (Host をそのまま、転送用のヘッダーを渡さない)、止まっているときのページ、ほかのユーザー、ルーターが管理画面のあいだ終わらないこと。
 - `internal/cli/ui_test.go`: 起動、動いている管理画面の再利用、別の版の置き換え、ブラウザを起動できないとき、`--browser`、隠しコマンド。
 - 一時的な設定ディレクトリと別のルーターのポートで、ビルドした nakama の `nakama ui` を headless の Chrome で開き、サインイン、`/api/session`、ログアウト、使用済みのコード、2 回目の `nakama ui`、SIGTERM での停止、ルーターが 1 分後に終わることを確かめた。
-- Safari (macOS 26)、Windows、本物の AWS のサインインは、まだ確かめていない。
+- 機能をまとめたプルリクエストでは、`internal/panel/pages_test.go` (全ページを日英で描画、フォームから組み立てる CLI のコマンドライン、受け付けない値、確認の 2 段階と名前の入力、重なりのメッセージ、戻り先の制限、開くときの進み方と送り先の検査、ログインの往復と失敗、アカウントの操作、テンプレートと処理が使う文言がすべてあること)、`internal/service/ops_test.go` (記録、状態、重なり、中止、残った runner、出力の末尾、整理、起動の失敗)、`internal/signin/callback_test.go` (コールバックの戻り)、`internal/cli/ui_test.go` (表に出た `ui`、端末でないときのヘルプ、ダブルクリックの横の管理画面、runner の終了コード、code の 1 回限りのページと同じフォーム) を足した。
+- 実際の AWS アカウントで、一時的な設定ディレクトリと別のルーターのポートを使い、ビルドした nakama の管理画面を headless の Chrome で操作して確かめた。結果は Issue #139 の PR に書く。
+- Safari (macOS 26)、Windows、本物の AWS のサインインを最後まで (利用者の資格情報が要る) は、利用者が確かめる。
 
 ## Alternatives considered
 

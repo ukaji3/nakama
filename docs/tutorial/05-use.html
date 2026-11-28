@@ -37,6 +37,7 @@
     <li><a href="#ssh">手元の VS Code から使う (ssh)</a></li>
     <li><a href="#tunnel">ポートを手元に持ってくる (tunnel)</a></li>
     <li><a href="#kirocrew">Kiro Crew の画面を開く (kirocrew)</a></li>
+    <li><a href="#panel">ブラウザの管理画面から使う (nakama)</a></li>
   </ol>
 </nav>
 
@@ -323,6 +324,22 @@ FORWARD                   STATE         SINCE       DETAIL
 </table>
 </div>
 <p><code>--bare</code> で作った環境には code-server が無いので、<code>--internet</code> の方法は使えません。SSM 経由 (<code>--internet</code> なし) で開いてください。</p>
+
+<h2 id="panel">7. ブラウザの管理画面から使う (nakama)</h2>
+<p>コマンドを打つ代わりに、ブラウザの画面のボタンで操作することもできます。</p>
+<p class="cmd-caption">PowerShell で実行</p>
+<pre><code>nakama</code></pre>
+<p>引数を付けずに <code>nakama</code> とだけ打つと (<code>nakama ui</code> も同じ)、ブラウザで <code>http://control.nakama.localhost:18888/</code> の管理画面が開きます。Windows で <code>nakama.exe</code> をダブルクリックしたときも、PowerShell のウィンドウと一緒に開きます。</p>
+<ul>
+  <li><strong>ログイン</strong>: AWS にログインしていなければ、「ログイン」のボタンが出ます。押すと AWS のサインインのページに移り、終わると管理画面に戻ります (<code>nakama aws login</code> と同じ)。</li>
+  <li><strong>インスタンスの一覧</strong>: 動いている環境には <code>code</code> と <code>kirocrew</code> のボタンが出ます。押すと新しいタブで開き、パスワードの入力も自動で通過します。</li>
+  <li><strong>作成・起動・停止・バックアップ・復元・削除など</strong>: それぞれの画面のボタンで行います。止まる操作や料金がかかる操作は、実行するコマンドを示して確認を求めます。削除や復元のように元に戻せない操作は、名前の入力も求めます。</li>
+  <li><strong>操作の履歴</strong>: 時間のかかる操作 (作成や復元など) は、管理画面のウィンドウを閉じても止まりません。進み具合と結果は「操作の履歴」で見られます。</li>
+</ul>
+<div class="callout tip" role="note">
+  <p class="callout-title">管理画面のウィンドウ</p>
+  <p>管理画面は、<code>nakama</code> を実行したウィンドウで動いています。使っているあいだは、そのウィンドウを開いたままにしてください。閉じると管理画面は止まり、ブラウザのページは「動いていません」と表示します。もう一度 <code>nakama</code> を実行すれば開き直せます。管理画面に入れるのは、nakama が開いたブラウザだけです。</p>
+</div>
 
 <nav class="pager" aria-label="章の移動">
   <a href="04-create.html">← 前へ: 第 4 章 開発環境を作る</a>

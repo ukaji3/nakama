@@ -9,6 +9,8 @@ nakama aws create dev01 --instance-type t3.medium
 nakama aws code dev01                  # SSM 経由でブラウザで開く (パスワードの入力も自動)
 ```
 
+コマンドに慣れていなければ、引数なしで `nakama` を実行してください (Windows では `nakama.exe` をダブルクリック)。ブラウザで管理画面 (`http://control.nakama.localhost:18888/`) が開き、ログインから作成・起動・バックアップ・復元・削除、code-server と Kiro Crew を開くところまで、ボタンで操作できます。
+
 初めての人は、[チュートリアル](docs/tutorial/index.html)から読んでください。
 
 ## 特徴
@@ -19,12 +21,13 @@ nakama aws code dev01                  # SSM 経由でブラウザで開く (パ
 - **会社のプロキシにそのまま対応**: Windows のプロキシ設定と OS の証明書ストアを自動で使う
 - **安全側の既定**: ブラウザは SSM 経由 (IAM で認証)。開発環境の security group は受信の規則を持たない。CloudFront は求めたときだけ作り、アクセスを IP の許可リスト制にする。パスワードは AWS 上で管理し、手元のディスクには残さない。`~/.aws/config` は書き換えない
 - **Kiro CLI と Kiro Crew を最初から導入** (`create --no-kiro` で省略)
+- **ブラウザの管理画面**: `nakama` (または `nakama ui`) で開く。画面の操作は同じ nakama のコマンドを実行し、ウィンドウを閉じても途中で止まらない。管理画面に入れるのは、nakama が開いたブラウザだけ (1 回限りのコードとセッション。Linux では、ほかの OS のユーザーからの接続も断る)
 
 ## インストール
 
 [Releases](https://github.com/ukaji3/nakama/releases) から、OS とアーキテクチャに合うアーカイブを取得します (Linux / macOS は `tar.gz`、Windows は `zip`。macOS には Intel と Apple Silicon の両方で動く `universal` もあります)。`checksums.txt` で SHA-256 を確かめてください。
 
-**Windows**: zip を展開し、`nakama.exe` を好きな場所に置いて**ダブルクリック**します。PowerShell のウィンドウが開き、そのウィンドウでは `nakama` とだけ打てば動きます。会社のプロキシの設定も自動で入ります。レジストリやユーザー環境変数は変更しません。
+**Windows**: zip を展開し、`nakama.exe` を好きな場所に置いて**ダブルクリック**します。PowerShell のウィンドウとブラウザの管理画面が開き、そのウィンドウでは `nakama` とだけ打てば動きます。ウィンドウを閉じると管理画面も止まります。会社のプロキシの設定も自動で入ります。レジストリやユーザー環境変数は変更しません。
 
 **macOS / Linux** (例: Linux amd64、`X.Y.Z` は版):
 
@@ -44,6 +47,7 @@ tar -xzf "nakama_${VERSION}_linux_amd64.tar.gz" nakama && sudo install -m 0755 n
 
 | コマンド | 用途 |
 |---|---|
+| `nakama` / `nakama ui` | ブラウザの管理画面を開く (端末で引数なしの `nakama` も同じ。ウィンドウを開いているあいだ動く) |
 | `nakama aws login` / `profile` | サインイン / 複数の AWS アカウントの切り替え |
 | `nakama aws init` | 共通の土台を作る。外向き通信の中継 (`--nat gateway` / `--nat instance`) の選択と切り替え、NAT インスタンスの点検と修理も行う |
 | `nakama aws acl add` / `list` / `delete` / `prune` | CloudFront 経由 (`--internet`) のアクセスを許可する IP の管理 (`prune` は長く `acl add` していない IP をまとめて消す)。CloudFront を足した開発環境でだけ使う |
