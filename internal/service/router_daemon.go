@@ -143,8 +143,8 @@ var (
 	// daemons.
 	routerIdleCheckInterval = 15 * time.Second
 	// routerIdleExit is how long the router keeps running without any
-	// tunnel daemon. `code` starts the router before the tunnel daemon,
-	// so this also covers the start.
+	// tunnel daemon or control panel. `code` starts the router before
+	// the tunnel daemon, so this also covers the start.
 	routerIdleExit = time.Minute
 )
 
@@ -161,8 +161,11 @@ type routerDaemonDeps struct {
 	// liveTunnels counts the tunnel daemons that answer, and says why the
 	// others did not.
 	liveTunnels func(ctx context.Context) (int, error)
-	listen      func(port string) ([]net.Listener, error)
-	version     string
+	// panelAlive reports whether a control panel answers (nil: none is
+	// looked for); the router keeps running while one does.
+	panelAlive func(ctx context.Context) bool
+	listen     func(port string) ([]net.Listener, error)
+	version    string
 	// ready is called once the router serves (tests).
 	ready func(st *RouterState)
 }
@@ -176,6 +179,7 @@ func RunRouterDaemon(ctx context.Context, in RouterDaemonInput) error {
 		logger:      logger,
 		routes:      newTunnelRoutes(),
 		liveTunnels: countLiveTunnels,
+		panelAlive:  panelAlive,
 		listen:      listenLoopback,
 		version:     version.String(),
 	})
@@ -270,10 +274,10 @@ func runRouterDaemon(ctx context.Context, in RouterDaemonInput, deps routerDaemo
 	}()
 	monitorCtx, cancelMonitor := context.WithCancel(ctx)
 	defer cancelMonitor()
-	go watchRouterIdle(monitorCtx, deps.liveTunnels, requestStop, logger)
+	go watchRouterIdle(monitorCtx, withPanel(deps.liveTunnels, deps.panelAlive), requestStop, logger)
 
-	logger.Infof("router: serving http://<code-server|kirocrew>.<instance>.%s:%d/ (pid %d, %s)",
-		routerDomain, in.Port, state.PID, state.Version)
+	logger.Infof("router: serving http://<code-server|kirocrew>.<instance>.%s:%d/ and http://%s/ (pid %d, %s)",
+		routerDomain, in.Port, PanelHost(in.Port), state.PID, state.Version)
 	if deps.ready != nil {
 		deps.ready(state)
 	}
@@ -293,8 +297,24 @@ func runRouterDaemon(ctx context.Context, in RouterDaemonInput, deps routerDaemo
 	return nil
 }
 
-// watchRouterIdle stops the router once no tunnel daemon has answered
-// for routerIdleExit: without one there is nothing to route to. When a
+// withPanel counts a control panel that answers as one more client of
+// the router, so the router stays while the panel runs (Issue #139).
+func withPanel(liveTunnels func(context.Context) (int, error), panelAlive func(context.Context) bool) func(context.Context) (int, error) {
+	if panelAlive == nil {
+		return liveTunnels
+	}
+	return func(ctx context.Context) (int, error) {
+		n, err := liveTunnels(ctx)
+		if panelAlive(ctx) {
+			n++
+		}
+		return n, err
+	}
+}
+
+// watchRouterIdle stops the router once no tunnel daemon (and no control
+// panel) has answered for routerIdleExit: without one there is nothing
+// to route to. When a
 // recorded daemon stops answering, it logs why, once, and once more when
 // the daemons answer again (Issue #135): a router that exits although a
 // daemon runs must say what failed.
@@ -325,7 +345,7 @@ func watchRouterIdle(ctx context.Context, liveTunnels func(context.Context) (int
 				idleSince = now
 			}
 			if now.Sub(idleSince) >= routerIdleExit {
-				logger.Infof("router: no tunnel daemon for %s; exiting", routerIdleExit)
+				logger.Infof("router: no tunnel daemon and no control panel for %s; exiting", routerIdleExit)
 				stop()
 				return
 			}
