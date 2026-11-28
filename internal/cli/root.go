@@ -54,6 +54,7 @@ only on request (` + "`nakama aws create --cloudfront`" + `, ` + "`nakama aws cl
 	root.AddCommand(
 		newAWSCommand(),
 		newVersionCommand(),
+		newUICommand(),
 	)
 
 	return root
