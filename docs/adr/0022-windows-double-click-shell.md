@@ -1,6 +1,6 @@
 # ADR 0022: Windows で nakama.exe をダブルクリックすると、設定済みの PowerShell を開く
 
-- Status: Accepted
+- Status: Accepted (ADR 0031: ダブルクリックしたときは、PowerShell と同時にブラウザの管理画面も開く。ウィンドウを閉じると両方が終わる)
 - Date: 2026-10-13
 - Issue: [#85](https://github.com/ukaji3/nakama/issues/85)
 

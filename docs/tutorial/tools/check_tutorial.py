@@ -49,6 +49,7 @@ KNOWN_COMMANDS = {
     "nakama",
     "nakama version",
     "nakama completion",
+    "nakama ui",
     # サブコマンドを束ねるグループ (単体では実行しないが実在する)
     "nakama aws",
     "nakama aws acl",
@@ -103,6 +104,7 @@ KNOWN_COMMANDS = {
 KNOWN_FLAGS = {
     "nakama": {"--help", "--output", "-o", "--verbose", "-v"},
     "nakama version": {"--check"},
+    "nakama ui": {"--browser"},
     "nakama aws login": {"--remote", "--alias"},
     "nakama aws profile save": {"--alias"},
     "nakama aws init": {"--nat", "--yes", "-y"},
@@ -343,8 +345,8 @@ def check_known_commands_against_binary(binary: str) -> None:
                 found.add(line.split()[0])
         return found
 
-    stack = [["aws"]]
-    actual = {"nakama", "nakama aws", "nakama version", "nakama completion"}
+    stack: list[list[str]] = [[]]
+    actual = {"nakama", "nakama completion"}
     while stack:
         path = stack.pop()
         for sub in sub_commands(path):

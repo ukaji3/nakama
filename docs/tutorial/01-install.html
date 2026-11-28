@@ -84,8 +84,10 @@ detecting the proxy settings for the aws CLI (Ctrl-C skips this)...
 proxy:  none (direct connection)
 ca:     no TLS interception detected; the aws CLI's default CA bundle works
 check:  AWS endpoint reachable with these settings
+panel:  http://control.nakama.localhost:18888/ (opened in your browser; it runs until this window closes)
 
 Type `nakama --help` to see the commands, and `exit` to close this window.</code></pre>
+    <p>同時に、ブラウザで nakama の管理画面が開きます。コマンドを打たずに、ボタンで操作したいときに使います (<a href="05-use.html#panel">第 5 章</a>)。ウィンドウを閉じると管理画面も止まります。</p>
     <p>このウィンドウでは、どのフォルダーにいても <code>nakama</code> と打つだけで実行できます (<code>path:</code> の行のとおり、nakama.exe の場所が PATH = コマンドを探す場所の一覧の先頭に入っています)。会社のプロキシの設定も自動で入ります (<code>proxy:</code> 以降の行。読み方は<a href="02-proxy-cert.html#cli-shell">第 2 章</a>)。ウィンドウは自分のユーザーフォルダーで開きます。<code>exit</code> と打つか、ウィンドウを閉じれば終わります。</p>
     <div class="callout warn" role="note">
       <span class="title">「Windows によって PC が保護されました」と出た場合</span>
