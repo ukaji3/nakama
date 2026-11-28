@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -60,19 +61,36 @@ type CallbackServer struct {
 	strayError string
 
 	// redirect, when set, is where the browser is sent (303) after the
-	// redirect instead of the fixed page, with ?login=ok or
-	// ?login=failed: the control panel's own page (Issue #139). It is
-	// set by the caller, never taken from the request.
+	// redirect instead of the fixed page, with login=ok or
+	// login=failed added to its query: the control panel's own page
+	// (Issue #139). It is set by the caller, never taken from the
+	// request.
 	redirectMu sync.Mutex
-	redirect   string
+	redirect   *url.URL
 }
 
-// SetRedirect makes the callback send the browser to url (with
-// ?login=ok or ?login=failed) instead of showing the fixed page.
-func (s *CallbackServer) SetRedirect(url string) {
+// SetRedirect makes the callback send the browser to u (with login=ok
+// or login=failed added to its query, which keeps the other parameters
+// and the fragment) instead of showing the fixed page. A nil u restores
+// the fixed page. The server keeps its own copy of u.
+func (s *CallbackServer) SetRedirect(u *url.URL) {
 	s.redirectMu.Lock()
 	defer s.redirectMu.Unlock()
-	s.redirect = url
+	if u == nil {
+		s.redirect = nil
+		return
+	}
+	c := *u
+	s.redirect = &c
+}
+
+// redirectWithOutcome returns u with login=<outcome> set in its query.
+func redirectWithOutcome(u *url.URL, outcome string) string {
+	next := *u
+	q := next.Query()
+	q.Set("login", outcome)
+	next.RawQuery = q.Encode()
+	return next.String()
 }
 
 // StartCallbackServer binds 127.0.0.1 on an ephemeral port and starts
@@ -144,14 +162,14 @@ func (s *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	redirect := s.redirect
 	s.redirectMu.Unlock()
 	switch {
-	case redirect != "":
+	case redirect != nil:
 		outcome := "ok"
 		if res.err != nil {
 			outcome = "failed"
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		http.Redirect(w, r, redirect+"?login="+outcome, http.StatusSeeOther)
+		http.Redirect(w, r, redirectWithOutcome(redirect, outcome), http.StatusSeeOther)
 	case res.err != nil:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprint(w, callbackErrorHTML)

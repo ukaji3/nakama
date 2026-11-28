@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 )
 
@@ -28,9 +29,11 @@ type LoginOptions struct {
 	// (the caller renders the prompt text). Required when Remote.
 	Prompt func(ctx context.Context) (string, error)
 	// RedirectURL, when set, is where the local callback sends the
-	// browser after the sign-in (with ?login=ok or ?login=failed)
-	// instead of its fixed "return to the CLI" page. The control panel
-	// uses its own page (Issue #139). Ignored with Remote.
+	// browser after the sign-in (with login=ok or login=failed added
+	// to its query) instead of its fixed "return to the CLI" page. The
+	// control panel uses its own page (Issue #139). It must be an
+	// absolute http or https URL; Login refuses anything else before
+	// the browser opens. Ignored with Remote.
 	RedirectURL string
 
 	// Test hooks; zero values mean the real implementations.
@@ -53,6 +56,17 @@ type LoginResult struct {
 	Token *Token
 }
 
+// parseRedirectURL checks LoginOptions.RedirectURL: the callback
+// answers on 127.0.0.1, so only an absolute http or https URL takes the
+// browser to the intended page.
+func parseRedirectURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("signin.Login: RedirectURL must be an absolute http or https URL, got %q", raw)
+	}
+	return u, nil
+}
+
 // Login runs the full sign-in flow: authorization (same-device local
 // callback or cross-device paste), auth-code exchange with a fresh
 // DPoP key, and an AWS-CLI-compatible cache write. It returns the
@@ -63,6 +77,14 @@ func Login(ctx context.Context, opts LoginOptions) (*LoginResult, error) {
 	}
 	if opts.Remote && opts.Prompt == nil {
 		return nil, errors.New("signin.Login: Prompt is required for the remote flow")
+	}
+	var redirect *url.URL
+	if opts.RedirectURL != "" && !opts.Remote {
+		u, err := parseRedirectURL(opts.RedirectURL)
+		if err != nil {
+			return nil, err
+		}
+		redirect = u
 	}
 	client := opts.Client
 	if client == nil {
@@ -136,8 +158,8 @@ func Login(ctx context.Context, opts LoginOptions) (*LoginResult, error) {
 			return nil, err
 		}
 		defer func() { _ = server.Close() }()
-		if opts.RedirectURL != "" {
-			server.SetRedirect(opts.RedirectURL)
+		if redirect != nil {
+			server.SetRedirect(redirect)
 		}
 		redirectURI = server.RedirectURI()
 		opts.OnAuthURL(BuildAuthorizeURL(client.baseURL(), clientID, state, redirectURI, challenge))
