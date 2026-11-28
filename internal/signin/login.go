@@ -27,6 +27,11 @@ type LoginOptions struct {
 	// Prompt reads the pasted verification code in the Remote flow
 	// (the caller renders the prompt text). Required when Remote.
 	Prompt func(ctx context.Context) (string, error)
+	// RedirectURL, when set, is where the local callback sends the
+	// browser after the sign-in (with ?login=ok or ?login=failed)
+	// instead of its fixed "return to the CLI" page. The control panel
+	// uses its own page (Issue #139). Ignored with Remote.
+	RedirectURL string
 
 	// Test hooks; zero values mean the real implementations.
 	newState      func() (string, error)
@@ -131,6 +136,9 @@ func Login(ctx context.Context, opts LoginOptions) (*LoginResult, error) {
 			return nil, err
 		}
 		defer func() { _ = server.Close() }()
+		if opts.RedirectURL != "" {
+			server.SetRedirect(opts.RedirectURL)
+		}
 		redirectURI = server.RedirectURI()
 		opts.OnAuthURL(BuildAuthorizeURL(client.baseURL(), clientID, state, redirectURI, challenge))
 
