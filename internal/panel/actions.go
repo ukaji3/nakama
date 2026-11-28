@@ -377,7 +377,7 @@ func planOperation(f url.Values) (*plannedOp, error) {
 		return nil, errors.New("unknown operation")
 	}
 	op.args = append(op.args, "-o", "json")
-	op.title = strings.TrimSpace(strings.ReplaceAll(strings.TrimPrefix(action, ""), "_", " ") + " " + op.instance)
+	op.title = strings.TrimSpace(strings.ReplaceAll(action, "_", " ") + " " + op.instance)
 	return op, nil
 }
 
