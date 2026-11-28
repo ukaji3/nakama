@@ -58,6 +58,21 @@ type CallbackServer struct {
 	// request, surfaced in the timeout message for diagnosability
 	// (e.g. if the endpoint ever omitted state on error redirects).
 	strayError string
+
+	// redirect, when set, is where the browser is sent (303) after the
+	// redirect instead of the fixed page, with ?login=ok or
+	// ?login=failed: the control panel's own page (Issue #139). It is
+	// set by the caller, never taken from the request.
+	redirectMu sync.Mutex
+	redirect   string
+}
+
+// SetRedirect makes the callback send the browser to url (with
+// ?login=ok or ?login=failed) instead of showing the fixed page.
+func (s *CallbackServer) SetRedirect(url string) {
+	s.redirectMu.Lock()
+	defer s.redirectMu.Unlock()
+	s.redirect = url
 }
 
 // StartCallbackServer binds 127.0.0.1 on an ephemeral port and starts
@@ -125,10 +140,23 @@ func (s *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if res.err != nil {
+	s.redirectMu.Lock()
+	redirect := s.redirect
+	s.redirectMu.Unlock()
+	switch {
+	case redirect != "":
+		outcome := "ok"
+		if res.err != nil {
+			outcome = "failed"
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		http.Redirect(w, r, redirect+"?login="+outcome, http.StatusSeeOther)
+	case res.err != nil:
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprint(w, callbackErrorHTML)
-	} else {
+	default:
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprint(w, callbackSuccessHTML)
 	}
 
