@@ -1,0 +1,24 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if .CSRF}}<meta name="nakama-csrf" content="{{.CSRF}}">
+{{end}}<title>{{.T.title}}</title>
+<link rel="stylesheet" href="/assets/panel.css">
+</head>
+<body>
+<header class="bar">
+<span class="brand">nakama</span>
+{{if .CSRF}}<form method="post" action="/logout" class="sign-out">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<button type="submit">{{.T.signOut}}</button>
+</form>{{end}}
+</header>
+<main>
+{{template "content" .}}
+</main>
+<footer>{{.T.version}} {{.Version}}</footer>
+</body>
+</html>
+{{end}}
