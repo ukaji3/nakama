@@ -173,6 +173,28 @@ func TestOperationsBuildTheCLICommandLines(t *testing.T) {
 	}
 }
 
+func TestOperationTitlesReadLikeTheCommand(t *testing.T) {
+	// The title names the operation in the list and in conflicts: the
+	// action with spaces for underscores, then the instance if any.
+	for want, form := range map[string]url.Values{
+		"start dev01":          {"action": {"start"}, "name": {"dev01"}},
+		"tunnel restart dev01": {"action": {"tunnel_restart"}, "name": {"dev01"}},
+		"backup delete dev01":  {"action": {"backup_delete"}, "name": {"dev01"}, "label": {"pre"}},
+		"acl delete all":       {"action": {"acl_delete_all"}},
+		"acl prune":            {"action": {"acl_prune"}, "older_than": {"30d"}},
+		"init":                 {"action": {"init"}},
+	} {
+		op, err := planOperation(form)
+		if err != nil {
+			t.Errorf("%v: %v", form, err)
+			continue
+		}
+		if op.title != want {
+			t.Errorf("%v: title %q, want %q", form, op.title, want)
+		}
+	}
+}
+
 func TestOperationsRefuseMalformedValues(t *testing.T) {
 	for _, form := range []url.Values{
 		{"action": {"start"}, "name": {"-rf"}},
