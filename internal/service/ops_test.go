@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -91,13 +92,18 @@ func TestOperationRunsAndRecordsItsExit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
-		if want := os.FileMode(0o600); f == "" {
+		// Windows has no POSIX modes: Go reports 0o666/0o777 from the
+		// read-only attribute, and the record lives under the user's
+		// own profile instead.
+		if runtime.GOOS == "windows" {
+			continue
+		}
+		want := os.FileMode(0o600)
+		if f == "" {
 			want = 0o700
-			if info.Mode().Perm() != want {
-				t.Errorf("dir mode %v", info.Mode().Perm())
-			}
-		} else if info.Mode().Perm() != want {
-			t.Errorf("%s mode %v, want %v", f, info.Mode().Perm(), want)
+		}
+		if info.Mode().Perm() != want {
+			t.Errorf("%q mode %v, want %v", f, info.Mode().Perm(), want)
 		}
 	}
 	got := waitState(t, op.ID, OperationRunning)
