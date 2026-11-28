@@ -1,0 +1,11 @@
+{{define "content"}}{{$d := .Data}}
+<p><a href="/system">← {{.T.navSystem}}</a></p>
+<h1>{{.T.versionTitle}}</h1>
+<table class="kv">
+<tr><th>{{.T.versionCurrent}}</th><td>{{$d.Result.Current}}</td></tr>
+<tr><th>{{.T.versionLatest}}</th><td>{{if $d.Result.Latest}}{{$d.Result.Latest}}{{else}}—{{end}}</td></tr>
+<tr><th>{{.T.colStatus}}</th><td><span class="badge {{stateClass (printf "%s" $d.Result.Status)}}">{{$d.Result.Status}}</span></td></tr>
+{{if $d.Result.URL}}<tr><th>{{.T.versionPage}}</th><td><a href="{{$d.Result.URL}}" rel="noreferrer noopener" target="_blank">{{$d.Result.URL}}</a></td></tr>{{end}}
+</table>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+{{end}}

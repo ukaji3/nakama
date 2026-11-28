@@ -1,0 +1,18 @@
+{{define "content"}}{{$d := .Data}}{{with $d.Op}}
+<p><a href="/ops">← {{$.T.navOps}}</a></p>
+<h1>{{.Title}} <span class="badge {{stateClass (printf "%s" .State)}}">{{.State}}</span></h1>
+<table class="kv">
+<tr><th>{{$.T.colCommand}}</th><td><code>{{cmdline .Args}}</code></td></tr>
+<tr><th>{{$.T.colStarted}}</th><td>{{ts .StartedAt}}</td></tr>
+{{if .Done}}<tr><th>{{$.T.colEnded}}</th><td>{{ts .EndedAt}}</td></tr>
+<tr><th>{{$.T.exitCode}}</th><td>{{.ExitCode}}</td></tr>{{end}}
+</table>
+{{if not .Done}}<form method="post" action="/ops/{{.ID}}/cancel" class="inline">{{template "csrf" $.CSRF}}<button type="submit" class="danger">{{$.T.cancelOp}}</button></form>
+<p class="note">{{$.T.opRunningNote}}</p>{{end}}
+{{if .Instance}}<p><a href="/instances/{{.Instance}}">{{.Instance}}</a></p>{{end}}
+{{end}}
+{{if $d.Result}}<h2>{{.T.opResult}}</h2>
+<pre class="detail">{{pretty $d.Result}}</pre>{{end}}
+<h2>{{.T.opLog}}</h2>
+<pre class="log">{{$d.Log}}</pre>
+{{end}}

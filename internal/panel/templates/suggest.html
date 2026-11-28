@@ -1,0 +1,12 @@
+{{define "content"}}{{$d := .Data}}
+<p><a href="/system">← {{.T.navSystem}}</a></p>
+<h1>{{printf .T.suggestTitle $d.Name}}</h1>
+<p class="note">{{.T.suggestLead}}</p>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+{{with $d.Suggestion}}{{if .Ports}}<table>
+<tr><th>{{$.T.colPort}}</th><th>{{$.T.colAddress}}</th><th>{{$.T.colProcess}}</th><th></th></tr>
+{{range .Ports}}<tr><td>{{.Port}}</td><td>{{.Address}}</td><td>{{.Process}}</td><td>{{.Label}}</td></tr>
+{{end}}</table>
+{{if .Command}}<p>{{$.T.suggestCommand}}</p><pre class="detail">{{.Command}}</pre>{{end}}
+{{else}}<p>{{$.T.suggestNone}}</p>{{end}}{{end}}
+{{end}}

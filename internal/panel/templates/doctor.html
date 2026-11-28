@@ -1,0 +1,10 @@
+{{define "content"}}{{$d := .Data}}
+<p><a href="/system">← {{.T.navSystem}}</a></p>
+<h1>{{.T.doctorTitle}}</h1>
+{{with $d}}<p>ok {{.OKs}} · warn {{.Warns}} · fail {{.Fails}} · skip {{.Skips}}</p>
+<table>
+<tr><th>{{$.T.colCheck}}</th><th>{{$.T.colStatus}}</th><th>{{$.T.colDetail}}</th></tr>
+{{range .Checks}}<tr><td>{{.Name}}</td><td><span class="badge {{stateClass (printf "%s" .Status)}}">{{.Status}}</span></td><td><pre class="detail">{{.Detail}}{{if .Advice}}
+→ {{.Advice}}{{end}}</pre></td></tr>
+{{end}}</table>{{end}}
+{{end}}

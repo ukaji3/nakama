@@ -302,7 +302,7 @@ func TestRouterSaysHowToStartThePanel(t *testing.T) {
 	_, router, _ := startPanelRouter(t, &fakePanelRoute{}, func(*http.Request) error { return nil })
 	got := routerGet(t, router, http.MethodGet, "control.nakama.localhost:18888", "/", nil)
 	if got.StatusCode != http.StatusBadGateway || got.Header.Get(routerErrorHeader) == "" ||
-		!strings.Contains(got.Body, "<code>nakama ui</code>") || got.Header.Get("Cache-Control") != "no-store" {
+		!strings.Contains(got.Body, "<code>nakama</code>") || got.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("no panel = %d %v %s", got.StatusCode, got.Header, got.Body)
 	}
 }

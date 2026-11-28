@@ -1,0 +1,8 @@
+{{define "content"}}{{$d := .Data}}
+{{if $d.Waiting}}<h1>{{.T.loginWaitingTitle}}</h1>
+<p>{{.T.loginWaitingBody}}</p>
+{{else}}<h1>{{.T.loginFailedTitle}}</h1>
+<pre class="flash error">{{$d.Err}}</pre>
+<form method="post" action="/login" class="inline">{{template "csrf" .CSRF}}<button type="submit" class="primary">{{.T.loginRetry}}</button></form>
+<p><a href="/">{{.T.backHome}}</a></p>{{end}}
+{{end}}

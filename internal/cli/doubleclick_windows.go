@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"os/signal"
 
@@ -43,6 +44,7 @@ func HandleDoubleClick() (code int, handled bool) {
 		detect:     cliproxy.NewDetector().Detect,
 		interrupts: interrupts,
 		run:        runShell,
+		startPanel: func(out io.Writer) func() { return startPanelBeside(out, defaultUIDeps()) },
 	}
 	return l.launch(), true
 }

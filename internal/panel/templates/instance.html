@@ -1,0 +1,91 @@
+{{define "content"}}{{$csrf := .CSRF}}{{$t := .T}}{{$d := .Data}}
+<p><a href="/">← {{.T.navInstances}}</a></p>
+<h1>{{$d.Name}}</h1>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+{{if $d.Busy}}<p class="flash">{{.T.instanceBusy}} <a href="/ops">{{.T.navOps}}</a></p>{{end}}
+{{with $d.Info}}
+<table class="kv">
+<tr><th>{{$t.colState}}</th><td><span class="badge {{stateClass .State}}">{{.State}}</span></td></tr>
+<tr><th>{{$t.colKind}}</th><td>{{.Kind}}</td></tr>
+<tr><th>{{$t.colInstanceType}}</th><td>{{.InstanceType}}</td></tr>
+<tr><th>{{$t.colInstanceID}}</th><td>{{.InstanceID}}</td></tr>
+{{if .CodeServerVersion}}<tr><th>code-server</th><td>{{.CodeServerVersion}}</td></tr>{{end}}
+<tr><th>{{$t.colCloudFront}}</th><td>{{if .CloudFront}}{{.URL}}{{else}}{{$t.none}}{{end}}</td></tr>
+{{if .KiroCrewURL}}<tr><th>Kiro Crew (CloudFront)</th><td>{{.KiroCrewURL}}</td></tr>{{end}}
+<tr><th>{{$t.password}}</th><td>{{if $d.Password}}<code class="secret">{{$d.Password}}</code>{{else}}<form method="post" action="/instances/{{$d.Name}}/password" class="inline">{{template "csrf" $csrf}}<button type="submit">{{$t.showPassword}}</button></form>{{end}}</td></tr>
+</table>
+
+{{if eq .State "running"}}<h2>{{$t.openTitle}}</h2>
+<div class="row">
+{{if ne .Kind "bare"}}<form method="post" action="/open/code/{{$d.Name}}" target="_blank" class="box">{{template "csrf" $csrf}}
+<label><input type="checkbox" name="internet" value="1"> {{$t.viaInternet}}</label>
+<label><input type="checkbox" name="noauth" value="1"> {{$t.noAuth}}</label>
+<button type="submit" class="primary">code</button></form>{{end}}
+<form method="post" action="/open/kirocrew/{{$d.Name}}" target="_blank" class="box">{{template "csrf" $csrf}}
+<label><input type="checkbox" name="internet" value="1"> {{$t.viaInternet}}</label>
+<label><input type="checkbox" name="noauth" value="1"> {{$t.noAuth}}</label>
+<button type="submit" class="primary">kirocrew</button></form>
+</div>{{end}}
+
+<h2>{{$t.operationsTitle}}</h2>
+<div class="row">
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}">
+<h3>{{$t.powerTitle}}</h3>
+{{if eq .State "stopped"}}<button type="submit" name="action" value="start" {{if $d.Busy}}disabled{{end}}>{{$t.start}}</button>
+{{else if eq .State "running"}}<button type="submit" name="action" value="stop" {{if $d.Busy}}disabled{{end}}>{{$t.stop}}</button>
+{{else}}<p class="note">{{$t.stateChanging}}</p>{{end}}
+</form>
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}"><input type="hidden" name="action" value="edit_type">
+<h3>{{$t.editTypeTitle}}</h3>
+<label>{{$t.colInstanceType}} <input type="text" name="instance_type" required placeholder="t3.large" maxlength="32"></label>
+<button type="submit" {{if $d.Busy}}disabled{{end}}>{{$t.apply}}</button>
+</form>
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}"><input type="hidden" name="action" value="edit_ebs">
+<h3>{{$t.editEBSTitle}}</h3>
+<label>{{$t.ebsSize}} <input type="number" name="ebs" required min="1" max="65536"></label>
+<button type="submit" {{if $d.Busy}}disabled{{end}}>{{$t.apply}}</button>
+</form>
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}"><input type="hidden" name="action" value="update">
+<h3>{{$t.updateTitle}}</h3>
+<p class="note">{{$t.updateLead}}</p>
+<label>{{$t.keepBackups}} <input type="number" name="keep" min="0" max="10000"></label>
+<button type="submit" {{if $d.Busy}}disabled{{end}}>{{$t.update}}</button>
+</form>
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}"><input type="hidden" name="action" value="provision">
+<h3>{{$t.provisionTitle}}</h3>
+<label>{{$t.setupScript}} <input type="text" name="setup" maxlength="2048" placeholder="~/setup.sh / https://…"></label>
+<label>{{$t.dotfiles}} <input type="text" name="dotfiles" maxlength="2048" placeholder="https://github.com/…"></label>
+<label>{{$t.preset}} <select name="preset"><option value="">—</option><option value="kiro">kiro</option></select></label>
+<button type="submit" {{if $d.Busy}}disabled{{end}}>{{$t.run}}</button>
+</form>
+{{if ne .Kind "bare"}}<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}">
+<h3>CloudFront</h3>
+<label><input type="checkbox" name="kirocrew" value="1"> {{$t.kirocrewAccess}}</label>
+<button type="submit" name="action" value="cloudfront_add" {{if $d.Busy}}disabled{{end}}>{{$t.cloudfrontAdd}}</button>
+<button type="submit" name="action" value="cloudfront_delete" {{if $d.Busy}}disabled{{end}}>{{$t.cloudfrontDelete}}</button>
+</form>{{end}}
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}">
+<h3>{{$t.tunnelTitle}}</h3>
+<button type="submit" name="action" value="tunnel_restart" {{if $d.Busy}}disabled{{end}}>{{$t.tunnelRestart}}</button>
+<button type="submit" name="action" value="tunnel_stop" {{if $d.Busy}}disabled{{end}}>{{$t.tunnelStop}}</button>
+<a href="/tunnels/{{$d.Name}}/suggest">{{$t.tunnelSuggest}}</a>
+</form>
+</div>
+
+<h2>{{$t.backupsTitle}}</h2>
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}"><input type="hidden" name="action" value="backup_create">
+<label>{{$t.label}} <input type="text" name="label" maxlength="40" placeholder="{{$t.optional}}"></label>
+<label>{{$t.note}} <input type="text" name="note" maxlength="255"></label>
+<label>{{$t.keepBackups}} <input type="number" name="keep" min="0" max="10000"></label>
+<button type="submit" {{if $d.Busy}}disabled{{end}}>{{$t.backupCreate}}</button>
+</form>
+{{template "backupTable" (dict "Backups" $d.Backups "CSRF" $csrf "T" $t "Busy" $d.Busy "Back" (printf "/instances/%s" $d.Name) "ShowName" false)}}
+
+<h2 class="danger">{{$t.deleteTitle}}</h2>
+<form method="post" action="/run" class="box danger">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/instances/{{$d.Name}}"><input type="hidden" name="name" value="{{$d.Name}}"><input type="hidden" name="action" value="delete">
+<p>{{$t.deleteLead}}</p>
+<label><input type="checkbox" name="force" value="1"> {{$t.deleteForce}}</label>
+<button type="submit" class="danger" {{if $d.Busy}}disabled{{end}}>{{$t.delete}}</button>
+</form>
+{{end}}
+{{end}}

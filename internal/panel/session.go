@@ -42,6 +42,10 @@ type session struct {
 	csrf     string
 	created  time.Time
 	lastSeen time.Time
+	// flash is a one-time message for the next page (after a POST
+	// that redirects); flashErr marks it as an error.
+	flash    string
+	flashErr bool
 }
 
 // expiresAt is when the session ends at the latest.
@@ -183,4 +187,26 @@ func (s *store) pruneLocked(now time.Time) {
 
 func expired(s *session, now time.Time) bool {
 	return !now.Before(s.lastSeen.Add(sessionIdleTimeout)) || !now.Before(s.expiresAt())
+}
+
+// setFlash stores a message the next page of the session shows once.
+func (s *store) setFlash(id, msg string, isErr bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[id]; ok {
+		sess.flash, sess.flashErr = msg, isErr
+	}
+}
+
+// takeFlash returns and clears the session's message.
+func (s *store) takeFlash(id string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	if !ok {
+		return "", false
+	}
+	msg, isErr := sess.flash, sess.flashErr
+	sess.flash, sess.flashErr = "", false
+	return msg, isErr
 }

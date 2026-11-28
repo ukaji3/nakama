@@ -32,6 +32,7 @@ func newAWSCommand() *cobra.Command {
 		newAWSSessionRunnerCommand(),
 		newAWSTunnelDaemonCommand(),
 		newAWSRouterDaemonCommand(),
+		newAWSOpRunnerCommand(),
 		newAWSUpdateCommand(),
 		newAWSProfileCommand(),
 		// The names before Issue #129 (ADR 0030): hidden, and pointing

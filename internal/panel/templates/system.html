@@ -1,0 +1,33 @@
+{{define "content"}}{{$csrf := .CSRF}}{{$t := .T}}{{$d := .Data}}
+<h1>{{.T.systemTitle}}</h1>
+<div class="row">
+<form method="post" action="/run" class="box">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/system"><input type="hidden" name="action" value="init">
+<h3>{{.T.initTitle}}</h3>
+<p class="note">{{.T.initLead}}</p>
+<label>{{.T.natMode}} <select name="nat"><option value="">{{.T.natKeep}}</option><option value="gateway">{{.T.natGateway}}</option><option value="instance">{{.T.natInstance}}</option></select></label>
+<button type="submit" {{if $d.Busy.Running}}disabled{{end}}>{{.T.initRun}}</button>
+{{if $d.Busy.Running}}<p class="note">{{.T.initBusy}}</p>{{end}}
+</form>
+<div class="box">
+<h3>{{.T.doctorTitle}}</h3>
+<p class="note">{{.T.doctorLead}}</p>
+<p><a class="button" href="/doctor">{{.T.doctorRun}}</a></p>
+</div>
+<div class="box">
+<h3>{{.T.versionTitle}}</h3>
+<p>{{.Version}}</p>
+<p><a class="button" href="/version">{{.T.versionCheck}}</a></p>
+</div>
+</div>
+<h2>{{.T.tunnelsTitle}}</h2>
+{{if $d.Err}}<pre class="flash error">{{$d.Err}}</pre>{{end}}
+{{if $d.Tunnels}}<table>
+<tr><th>{{.T.colName}}</th><th>{{.T.forwards}}</th><th>{{.T.colActions}}</th></tr>
+{{range $d.Tunnels}}<tr><td>{{.Name}}</td>
+<td>{{if .Status}}{{range .Status.Forwards}}<div><code>{{.Spec}}</code> <span class="badge {{stateClass (printf "%s" .State)}}">{{.State}}</span>{{if .URL}} <span class="small">{{.URL}}</span>{{end}}</div>{{end}}{{else if .Stale}}{{$t.tunnelStale}}{{else}}{{.Err}}{{end}}</td>
+<td class="actions"><form method="post" action="/run" class="inline">{{template "csrf" $csrf}}<input type="hidden" name="back" value="/system"><input type="hidden" name="name" value="{{.Name}}">
+<button type="submit" name="action" value="tunnel_restart">{{$t.tunnelRestart}}</button>
+<button type="submit" name="action" value="tunnel_stop">{{$t.tunnelStop}}</button></form>
+<a href="/tunnels/{{.Name}}/suggest">{{$t.tunnelSuggest}}</a></td></tr>
+{{end}}</table>{{else if not $d.Err}}<p>{{.T.noTunnels}}</p>{{end}}
+{{end}}
