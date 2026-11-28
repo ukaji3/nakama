@@ -1,6 +1,6 @@
 # ADR 0029: ブラウザ用の転送は、ホスト名で振り分けるローカルのルーターを通す
 
-- Status: Accepted
+- Status: Accepted (ADR 0031 で、`control.nakama.localhost` を管理画面へ中継することと、管理画面が動いているあいだはルーターが終わらないことを足した)
 - Date: 2026-11-22
 - Issue: [#124](https://github.com/ukaji3/nakama/issues/124)
 - 関連: ADR 0027 (ブラウザは既定で SSM。決定 2 の固定のローカルポートと、不採用案 7 の判断を、この ADR が改める)、ADR 0017 (tunnel のデーモン)、ADR 0020 (Kiro Crew の Web 画面と、その Host の検査)、ADR 0012 (open の自動ログイン)
