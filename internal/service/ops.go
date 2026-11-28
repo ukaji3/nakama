@@ -92,6 +92,19 @@ type operationExit struct {
 	EndedAt   time.Time `json:"endedAt"`
 }
 
+// finish sets the operation's end from its exit record.
+func (op *Operation) finish(ex operationExit) {
+	op.ExitCode, op.EndedAt = ex.Code, ex.EndedAt
+	switch {
+	case ex.Cancelled:
+		op.State = OperationCancelled
+	case ex.Code == 0:
+		op.State = OperationSucceeded
+	default:
+		op.State = OperationFailed
+	}
+}
+
 // OperationConflictError reports that a running operation blocks a new
 // one (the same instance, or an exclusive operation).
 type OperationConflictError struct {
@@ -270,15 +283,7 @@ func readOperation(ctx context.Context, id string) (*Operation, error) {
 	var ex operationExit
 	switch err := readJSONFile(filepath.Join(d, "exit.json"), &ex); {
 	case err == nil:
-		op.ExitCode, op.EndedAt = ex.Code, ex.EndedAt
-		switch {
-		case ex.Cancelled:
-			op.State = OperationCancelled
-		case ex.Code == 0:
-			op.State = OperationSucceeded
-		default:
-			op.State = OperationFailed
-		}
+		op.finish(ex)
 		return &op, nil
 	case !os.IsNotExist(err):
 		return nil, err
@@ -292,9 +297,11 @@ func readOperation(ctx context.Context, id string) (*Operation, error) {
 			op.State = OperationRunning
 			return &op, nil
 		}
-		// The runner may have ended between the two reads.
+		// The runner may have ended between the two reads: it writes
+		// exit.json before it stops answering.
 		if err := readJSONFile(filepath.Join(d, "exit.json"), &ex); err == nil {
-			return readOperation(ctx, id)
+			op.finish(ex)
+			return &op, nil
 		}
 		op.State = OperationInterrupted
 		return &op, nil
