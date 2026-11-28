@@ -398,6 +398,52 @@ func TestSessionsAndCodesAreBounded(t *testing.T) {
 	}
 }
 
+// TestLimitsOfZeroOrLessKeepTheNewest: the eviction loops end on an
+// empty map, so a bound of zero or less neither hangs the panel nor
+// dereferences a missing oldest entry (review of #140).
+func TestLimitsOfZeroOrLessKeepTheNewest(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			st := newStore(nil)
+			st.maxCodes, st.maxSessions = limit, limit
+			var codes []string
+			for i := 0; i < 3; i++ {
+				c, err := st.newSignInCode()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				codes = append(codes, c)
+			}
+			if len(st.codes) != 1 {
+				t.Errorf("limit %d: %d codes kept, want the newest only", limit, len(st.codes))
+			}
+			if _, ok, _ := st.redeem(codes[0]); ok {
+				t.Errorf("limit %d: an older code must be gone", limit)
+			}
+			first, ok, err := st.redeem(codes[2])
+			if !ok || err != nil {
+				t.Errorf("limit %d: the newest code must work: %v %v", limit, ok, err)
+				return
+			}
+			c, _ := st.newSignInCode()
+			if _, ok, _ := st.redeem(c); !ok {
+				t.Errorf("limit %d: second sign-in failed", limit)
+			}
+			if _, ok := st.lookup(first.id); ok || len(st.sessions) != 1 {
+				t.Errorf("limit %d: %d sessions, the first kept=%v; want the newest only", limit, len(st.sessions), ok)
+			}
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("limit %d: minting or redeeming does not end", limit)
+		}
+	}
+}
+
 func TestEveryResponseCarriesTheSecurityHeaders(t *testing.T) {
 	p := newTestPanel(t)
 	id, _ := p.signIn(t)

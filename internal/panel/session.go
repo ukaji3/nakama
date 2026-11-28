@@ -51,6 +51,10 @@ func (s *session) expiresAt() time.Time { return s.created.Add(sessionMaxAge) }
 type store struct {
 	now    func() time.Time
 	random io.Reader
+	// maxCodes and maxSessions bound the pending codes and the sessions
+	// (maxSignInCodes, maxSessions; tests lower them). A bound of zero or
+	// less keeps only the newest entry.
+	maxCodes, maxSessions int
 
 	mu       sync.Mutex
 	codes    map[string]time.Time // code -> expiry
@@ -61,7 +65,8 @@ func newStore(now func() time.Time) *store {
 	if now == nil {
 		now = time.Now
 	}
-	return &store{now: now, random: rand.Reader, codes: map[string]time.Time{}, sessions: map[string]*session{}}
+	return &store{now: now, random: rand.Reader, maxCodes: maxSignInCodes, maxSessions: maxSessions,
+		codes: map[string]time.Time{}, sessions: map[string]*session{}}
 }
 
 func (s *store) randomBytes(n int) ([]byte, error) {
@@ -88,7 +93,7 @@ func (s *store) newSignInCode() (string, error) {
 			delete(s.codes, c)
 		}
 	}
-	for len(s.codes) >= maxSignInCodes {
+	for len(s.codes) > 0 && len(s.codes) >= s.maxCodes {
 		oldest, first := "", time.Time{}
 		for c, exp := range s.codes {
 			if oldest == "" || exp.Before(first) {
@@ -131,7 +136,7 @@ func (s *store) redeem(code string) (*session, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneLocked(now)
-	for len(s.sessions) >= maxSessions {
+	for len(s.sessions) > 0 && len(s.sessions) >= s.maxSessions {
 		var oldest *session
 		for _, x := range s.sessions {
 			if oldest == nil || x.created.Before(oldest.created) {
