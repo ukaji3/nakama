@@ -195,3 +195,44 @@ func TestCallbackServer_StrayErrorSurfacesInTimeout(t *testing.T) {
 		t.Errorf("timeout message leaks the state: %v", err)
 	}
 }
+
+// TestCallbackServer_RedirectsToTheControlPanel: with a redirect set
+// (the control panel, Issue #139), the browser is sent back with the
+// outcome only; the code still reaches WaitForCode and is never in the
+// redirect.
+func TestCallbackServer_RedirectsToTheControlPanel(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		query, want string
+		wantCode    bool
+	}{
+		{"code=the-code&state=s", "http://control.nakama.localhost:18888/login/done?login=ok", true},
+		{"error=access_denied&state=s", "http://control.nakama.localhost:18888/login/done?login=failed", false},
+	} {
+		s, err := StartCallbackServer("s")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.SetRedirect("http://control.nakama.localhost:18888/login/done")
+		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err := client.Get(s.RedirectURI() + "?" + tc.query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != tc.want {
+			t.Errorf("%s: %d Location %q, want 303 %q", tc.query, resp.StatusCode, resp.Header.Get("Location"), tc.want)
+		}
+		if strings.Contains(resp.Header.Get("Location"), "the-code") {
+			t.Error("the redirect must not carry the authorization code")
+		}
+		code, err := s.WaitForCode(context.Background(), "s")
+		if tc.wantCode && (err != nil || code != "the-code") {
+			t.Errorf("%s: code %q, %v", tc.query, code, err)
+		}
+		if !tc.wantCode && err == nil {
+			t.Errorf("%s: the endpoint's error must reach WaitForCode", tc.query)
+		}
+		_ = s.Close()
+	}
+}
