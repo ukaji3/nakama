@@ -3,11 +3,16 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -253,6 +258,47 @@ func TestOperationStatesOfGoneRunners(t *testing.T) {
 	for _, keep := range []string{"20261128T120000Z-00000001", "20261128T110000Z-00000002", "20261128T100000Z-00000003"} {
 		if _, err := os.Stat(filepath.Join(dir, keep)); err != nil {
 			t.Errorf("%s must stay: %v", keep, err)
+		}
+	}
+}
+
+func TestOperationThatEndsDuringTheStatusCheck(t *testing.T) {
+	// The runner writes exit.json and then stops answering. A status
+	// check that lands in between must report the recorded end, not an
+	// interrupted operation.
+	withTunnelStateDir(t)
+	dir, _ := opsDir()
+	for i, tc := range []struct {
+		exit operationExit
+		want OperationState
+	}{
+		{operationExit{Code: 0}, OperationSucceeded},
+		{operationExit{Code: 3}, OperationFailed},
+		{operationExit{Code: 130, Cancelled: true}, OperationCancelled},
+	} {
+		id := fmt.Sprintf("20261128T120000Z-0000001%d", i)
+		d := filepath.Join(dir, id)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_ = writeJSONFile(filepath.Join(d, "op.json"), Operation{ID: id, Title: id, Args: []string{"aws", "start", "x"}, StartedAt: time.Now().Add(-time.Hour)})
+		ended := time.Date(2026, 11, 28, 12, 30, 0, 0, time.UTC)
+		tc.exit.EndedAt = ended
+		var checks atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			checks.Add(1)
+			_ = writeJSONFile(filepath.Join(d, "exit.json"), tc.exit)
+			http.Error(w, "shutting down", http.StatusServiceUnavailable)
+		}))
+		port := srv.Listener.Addr().(*net.TCPAddr).Port
+		_ = writeJSONFile(filepath.Join(d, "runner.json"), operationRunner{ControlPort: port, Token: "t"})
+		op, err := GetOperation(context.Background(), id)
+		srv.Close()
+		if err != nil || op.State != tc.want || op.ExitCode != tc.exit.Code || !op.EndedAt.Equal(ended) {
+			t.Errorf("exit %+v: got %+v, %v; want %s", tc.exit, op, err, tc.want)
+		}
+		if n := checks.Load(); n != 1 {
+			t.Errorf("exit %+v: %d status checks, want 1", tc.exit, n)
 		}
 	}
 }
