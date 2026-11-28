@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -202,18 +203,27 @@ func TestCallbackServer_StrayErrorSurfacesInTimeout(t *testing.T) {
 // redirect.
 func TestCallbackServer_RedirectsToTheControlPanel(t *testing.T) {
 	t.Parallel()
+	const panel = "http://control.nakama.localhost:18888/login/done"
 	for _, tc := range []struct {
-		query, want string
-		wantCode    bool
+		redirect, query, want string
+		wantCode              bool
 	}{
-		{"code=the-code&state=s", "http://control.nakama.localhost:18888/login/done?login=ok", true},
-		{"error=access_denied&state=s", "http://control.nakama.localhost:18888/login/done?login=failed", false},
+		{panel, "code=the-code&state=s", panel + "?login=ok", true},
+		{panel, "error=access_denied&state=s", panel + "?login=failed", false},
+		// An existing query keeps its other parameters and loses a stale
+		// outcome; the fragment stays at the end.
+		{panel + "?from=home&login=stale#top", "code=the-code&state=s", panel + "?from=home&login=ok#top", true},
 	} {
 		s, err := StartCallbackServer("s")
 		if err != nil {
 			t.Fatal(err)
 		}
-		s.SetRedirect("http://control.nakama.localhost:18888/login/done")
+		u, err := url.Parse(tc.redirect)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.SetRedirect(u)
+		u.Path = "/changed-after-set" // the server keeps its own copy
 		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		resp, err := client.Get(s.RedirectURI() + "?" + tc.query)
 		if err != nil {

@@ -240,3 +240,86 @@ func TestLogin_RequiredCallbacks(t *testing.T) {
 		t.Error("expected error when Prompt is missing in remote mode")
 	}
 }
+
+// TestLogin_SendsTheBrowserToRedirectURL: with RedirectURL (the control
+// panel, Issue #139), the same-device callback sends the browser there
+// with the outcome added to the URL's own query.
+func TestLogin_SendsTheBrowserToRedirectURL(t *testing.T) {
+	t.Parallel()
+	var exchanged map[string]any
+	ts := newSigninServer(t, &exchanged)
+	defer ts.Close()
+
+	var location string
+	_, err := Login(context.Background(), LoginOptions{
+		Client:      &Client{BaseURL: ts.URL, HTTPClient: ts.Client(), Now: fixedNow},
+		Cache:       &TokenCache{Dir: t.TempDir()},
+		now:         fixedNow,
+		RedirectURL: "http://control.nakama.localhost:18888/login/done?from=home",
+		OnAuthURL: func(authURL string) {
+			u, err := url.Parse(authURL)
+			if err != nil {
+				t.Errorf("parse auth URL: %v", err)
+				return
+			}
+			q := u.Query()
+			browser := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			resp, err := browser.Get(q.Get("redirect_uri") + "?code=browser-code&state=" + url.QueryEscape(q.Get("state"))) // #nosec G107 -- 127.0.0.1 test callback
+			if err != nil {
+				t.Errorf("GET callback: %v", err)
+				return
+			}
+			_ = resp.Body.Close()
+			location = resp.Header.Get("Location")
+		},
+	})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if want := "http://control.nakama.localhost:18888/login/done?from=home&login=ok"; location != want {
+		t.Errorf("the browser went to %q, want %q", location, want)
+	}
+}
+
+// TestLogin_RefusesABadRedirectURL: a RedirectURL that is not an
+// absolute http or https URL fails before the callback starts or the
+// browser opens. The remote flow ignores RedirectURL.
+func TestLogin_RefusesABadRedirectURL(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{
+		"/login/done",
+		"control.nakama.localhost:18888/login/done",
+		"javascript:alert(1)",
+		"file:///etc/passwd",
+		"ftp://example.com/",
+		"http://",
+		"http://[::1",
+	} {
+		_, err := Login(context.Background(), LoginOptions{
+			Cache:       &TokenCache{Dir: t.TempDir()},
+			RedirectURL: bad,
+			OnAuthURL:   func(string) { t.Errorf("%q: the browser must not open", bad) },
+			startCallback: func(string) (*CallbackServer, error) {
+				t.Errorf("%q: the callback must not start", bad)
+				return nil, errors.New("unexpected start")
+			},
+		})
+		if err == nil || !strings.Contains(err.Error(), "RedirectURL must be an absolute http or https URL") {
+			t.Errorf("%q: err = %v", bad, err)
+		}
+	}
+
+	_, err := Login(context.Background(), LoginOptions{
+		Remote:      true,
+		RedirectURL: "/login/done",
+		Client:      &Client{BaseURL: "http://127.0.0.1:0"},
+		Cache:       &TokenCache{Dir: t.TempDir()},
+		OnAuthURL:   func(string) {},
+		Prompt: func(context.Context) (string, error) {
+			return "", errors.New("stdin closed")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "verification code") {
+		t.Errorf("remote flow with a RedirectURL: %v, want the prompt's error", err)
+	}
+}
